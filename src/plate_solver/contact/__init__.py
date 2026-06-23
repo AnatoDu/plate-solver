@@ -7,5 +7,6 @@ RFM-структуры. Это положение на защиту № 2/№ 4:
 """
 
 from .mor import generalized_reaction
+from .mor1d import ContactStrip1D, solve_mor_1d
 
-__all__ = ["generalized_reaction"]
+__all__ = ["generalized_reaction", "ContactStrip1D", "solve_mor_1d"]

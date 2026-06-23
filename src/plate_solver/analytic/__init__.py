@@ -12,10 +12,14 @@ from .circular import (
     simply_supported_uniform,
     simply_supported_uniform_wmax,
 )
+from .strip_contact import W_MAPLE, X_MAPLE, deflection_maple
 
 __all__ = [
     "clamped_uniform",
     "clamped_uniform_wmax",
     "simply_supported_uniform",
     "simply_supported_uniform_wmax",
+    "X_MAPLE",
+    "W_MAPLE",
+    "deflection_maple",
 ]
