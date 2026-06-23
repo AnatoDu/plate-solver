@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plate-solver"
+version = "0.0.1"
+description = "Расчёт изгиба и контактного взаимодействия упругих пластин произвольного очертания (уточнённая теория КТН + R-функции + метод обобщённой реакции)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "А. А. Дуркин" }]
+keywords = [
+    "plates", "bending", "contact-problem", "R-functions",
+    "generalized-reaction-method", "biharmonic", "computational-mechanics",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+examples = ["matplotlib>=3.7"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/<your-username>/plate-solver"
+Repository = "https://github.com/<your-username>/plate-solver"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# pythonpath = ["src"] позволяет запускать `pytest` без установки пакета.
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
