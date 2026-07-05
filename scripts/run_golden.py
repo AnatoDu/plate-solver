@@ -84,6 +84,8 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
     A(f"| пик реакции | точка ({contact['peak_xy'][0]:.3f}, {contact['peak_xy'][1]:.3f}), "
       f"`d` до угла (0.5,0.5) = {contact['d_corner']:.3f} |")
     A(f"| max w под контактом | {contact['w_under_max']:.6e} ≈ Δ = {Delta:.6e} |")
+    A(f"| комплементарность max\\|r·(w−Δ)\\|/(q0·Δ) | {contact['comp_residual']:.2e} |")
+    A(f"| перелёт зазора (max w_cont − Δ)/Δ | {contact['gap_overshoot']:.2e} |")
 
     # --- 4.3 КТН ---
     A("\n## Таблица 4.3 — поправки КТН (классика ↔ КТН)\n")

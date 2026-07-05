@@ -41,7 +41,7 @@ from .plate import PlateBending
 
 @dataclass
 class ContactResult:
-    """Результат контактной задачи (поля на сетке + источники истины в узлах).
+    r"""Результат контактной задачи (поля на сетке + источники истины в узлах).
 
     Attributes
     ----------
@@ -55,6 +55,19 @@ class ContactResult:
     peak_xy : координаты узла с максимальной реакцией.
     plate, cw : решатель и коэффициенты прогиба при сошедшейся реакции.
     w_ktn_nodes : КТН-поправленный прогиб в узлах (None для классики).
+    comp_residual : безразмерная невязка комплементарности условий Синьорини
+
+        .. math:: \max_i |r_i\,(u_i - \Delta)| \,/\, (q_0\,\Delta),
+
+        где ``u`` — смещение контактной поверхности (классика: ``u = w``;
+        КТН: с поправками). В точном решении ``r·(u−Δ) ≡ 0`` (либо нет
+        контакта и r=0, либо контакт и u=Δ), поэтому величина — прямая
+        мера недосхождения, не зависящая от нормировки нагрузки и зазора.
+    gap_overshoot : относительный «перелёт» зазора в зоне контакта
+
+        .. math:: (\max_{i:\,r_i>0} u_i - \Delta) \,/\, \Delta
+
+        (насколько прогиб в контакте превышает зазор; NaN, если контакта нет).
     """
 
     Xg: np.ndarray
@@ -71,6 +84,8 @@ class ContactResult:
     plate: PlateBending
     cw: np.ndarray
     w_ktn_nodes: np.ndarray | None = None
+    comp_residual: float = float("nan")
+    gap_overshoot: float = float("nan")
 
 
 class ContactMOR:
@@ -140,9 +155,13 @@ class ContactMOR:
         if self.ktn is not None:
             lap_w = -self.plate.moment(cM, q.x, q.y) / self.plate.D
             w_ktn = self.ktn.corrected_deflection(w, lap_w, cfg.q0, r)
+        # Диагностика комплементарности по финальному состоянию (алгоритм не меняется):
+        # то же смещение u, что входит в условие контакта (классика: u = w).
+        disp = self._contact_disp(cM, w, r)
+        comp_residual, gap_overshoot = self._complementarity(disp, r)
         peak = int(np.argmax(r))
         return self._package(r, w, cw, iters, converged, np.array(hist),
-                             (q.x[peak], q.y[peak]), w_ktn)
+                             (q.x[peak], q.y[peak]), w_ktn, comp_residual, gap_overshoot)
 
     def _contact_disp(self, cM, w, r) -> np.ndarray:
         """Смещение контактной поверхности: классика (w) или КТН (с Δw = −M/D)."""
@@ -151,8 +170,20 @@ class ContactMOR:
         lap_w = -self.plate.moment(cM, self.plate.quad.x, self.plate.quad.y) / self.plate.D
         return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
 
+    def _complementarity(self, disp, r) -> tuple[float, float]:
+        r"""Безразмерные метрики Синьорини по финальному состоянию (Δ > 0).
+
+        comp_residual = max|r·(u−Δ)| / (q0·Δ);  gap_overshoot = (max u|_{r>0} − Δ)/Δ.
+        """
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self.gap))
+        contact = r > 0.0
+        over = (float(disp[contact].max() - self.gap) / self.gap
+                if contact.any() else float("nan"))
+        return comp, over
+
     # -- вывод на сетку ------------------------------------------------- #
-    def _package(self, r, w, cw, iters, converged, hist, peak_xy, w_ktn=None) -> ContactResult:
+    def _package(self, r, w, cw, iters, converged, hist, peak_xy, w_ktn=None,
+                 comp_residual=float("nan"), gap_overshoot=float("nan")) -> ContactResult:
         from scipy.interpolate import griddata
 
         cfg, dom, q = self.cfg, self.plate.domain, self.plate.quad
@@ -173,7 +204,7 @@ class ContactMOR:
             Xg=Xg, Yg=Yg, w_grid=w_grid, r_grid=r_grid, contact_zone=contact_zone,
             r_nodes=r, w_nodes=w, iters=iters, converged=converged,
             residual_history=hist, peak_xy=peak_xy, plate=self.plate, cw=cw,
-            w_ktn_nodes=w_ktn,
+            w_ktn_nodes=w_ktn, comp_residual=comp_residual, gap_overshoot=gap_overshoot,
         )
 
 

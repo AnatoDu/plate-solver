@@ -58,3 +58,41 @@ def test_peak_interior_near_reentrant_corner(contact_run):
     assert 0.0 < px < 1.0 and 0.0 < py < 1.0        # пик строго внутри
     # тяготеет к области входящего угла (0.5,0.5), но не в самой вершине (w=0 там)
     assert np.hypot(px - 0.5, py - 0.5) < 0.45
+
+
+def test_complementarity_metrics_small_run(contact_run):
+    """Метрики Синьорини заполнены и имеют правильный (малый) масштаб.
+
+    Малый прогон останавливается по max_iter=2000 (tol=1e-12 недостижим), поэтому
+    метрики отличны от нуля: факт comp_residual ≈ 2.7e-2, gap_overshoot ≈ 2.6e-3.
+    Проверяем безразмерный масштаб, а не точную сходимость.
+    """
+    _, res = contact_run
+    assert np.isfinite(res.comp_residual) and res.comp_residual >= 0.0
+    assert np.isfinite(res.gap_overshoot)
+    assert res.comp_residual < 0.1       # r·(w−Δ) мало́ по сравнению с q0·Δ
+    assert abs(res.gap_overshoot) < 0.01  # прогиб в контакте ≈ Δ (доли процента)
+
+
+# --------------------------------------------------------------------------- #
+#  Ворота комплементарности золотой серии (P1.1) — честность Табл. 4.2
+# --------------------------------------------------------------------------- #
+def test_gate_golden_complementarity():
+    """ВОРОТА: метрики Синьорини золотой контактной серии — фиксированный диапазон.
+
+    Факт золотого прогона (L-форма, h=h_ktn, Q=120, p=10, β=1.2, 8000 итераций):
+    comp_residual = 8.59e-2, gap_overshoot = 3.05e-3 — честное недосхождение МОР
+    при лимите итераций. Выход из диапазона В ЛЮБУЮ сторону означает изменение
+    метода/параметров и требует пересмотра golden (числа golden неприкосновенны).
+    """
+    from golden_config import GoldenConfig
+    from run_lshape_contact import compute_w_free_lshape, lshape_lab_config
+
+    g = GoldenConfig()
+    delta = g.gap_factor * compute_w_free_lshape(g)
+    dom = geometry.make_L(g.L_side, g.L_cut)
+    lab = lshape_lab_config(g)
+    pb = PlateBending.from_config(dom, lab)
+    res = ContactMOR(pb, lab, gap=delta).solve()
+    assert 0.07 <= res.comp_residual <= 0.10        # факт 8.585e-2
+    assert 2.0e-3 <= res.gap_overshoot <= 4.0e-3    # факт 3.050e-3
