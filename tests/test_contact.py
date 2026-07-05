@@ -75,6 +75,39 @@ def test_complementarity_metrics_small_run(contact_run):
 
 
 # --------------------------------------------------------------------------- #
+#  Критерий останова stop="dr"|"comp" (P1.2)
+# --------------------------------------------------------------------------- #
+def test_stop_comp_certifies_kkt():
+    """stop='comp': остановка сертифицирует условия Синьорини с точностью tol.
+
+    KKT-невязка η = max( max|r·(u−Δ)|/(q0·Δ), max(u−Δ)₊/Δ ) — безразмерная;
+    факт: tol=5e-2 достигается за ~184 итерации (β=1.0, Q=40). Старт r≡0
+    критерий НЕ проходит (проникание u>Δ), поэтому остановка нетривиальна.
+    """
+    dom = geometry.make_L(1.0, 0.5)
+    pb = PlateBending.from_config(dom, Config(nu=0.3, q0=4.0, p=8, Q=40))
+    q = pb.quad
+    _, cw = pb.solve_uniform(4.0)
+    wmax = float(pb.deflection(cw, q.x, q.y).max())
+    cfg = Config(nu=0.3, q0=4.0, p=8, Q=40, beta=1.0, max_iter=50_000, tol=5e-2,
+                 stop="comp", grid_n=36)
+    res = ContactMOR(pb, cfg, gap=0.6 * wmax).solve()
+    assert res.converged
+    assert 1 < res.iters < 1000                 # не мгновенно и задолго до max_iter
+    assert res.comp_residual <= cfg.tol         # комплементарность в допуске
+    assert abs(res.gap_overshoot) <= cfg.tol    # проникание в допуске
+
+
+def test_stop_default_dr_and_validation():
+    """Дефолт stop='dr' — поведение прежнее; неизвестный критерий отвергается."""
+    assert Config().stop == "dr"
+    dom = geometry.make_L(1.0, 0.5)
+    pb = PlateBending.from_config(dom, Config(p=4, Q=16))
+    with pytest.raises(ValueError, match="stop"):
+        ContactMOR(pb, Config(p=4, Q=16, stop="bogus"))
+
+
+# --------------------------------------------------------------------------- #
 #  Ворота комплементарности золотой серии (P1.1) — честность Табл. 4.2
 # --------------------------------------------------------------------------- #
 def test_gate_golden_complementarity():

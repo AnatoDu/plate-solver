@@ -114,6 +114,11 @@ class ContactMOR:
         self.plate = plate
         self.cfg = cfg
         self.ktn = ktn
+        if cfg.stop not in ("dr", "comp"):
+            raise ValueError(
+                f"Неизвестный критерий останова stop={cfg.stop!r} (ожидается 'dr' или 'comp')."
+            )
+        self.stop = cfg.stop
         self.gap = float(cfg.Delta if gap is None else gap)
         q = plate.quad
         if foundation_mask is None:
@@ -127,17 +132,52 @@ class ContactMOR:
         self.beta_eff = cfg.beta / self.gain
 
     def solve(self) -> ContactResult:
-        """Запустить внешний цикл МОР и вернуть :class:`ContactResult`."""
+        r"""Запустить внешний цикл МОР и вернуть :class:`ContactResult`.
+
+        Критерий останова выбирается полем ``cfg.stop`` (порог — ``cfg.tol``):
+
+        * ``"dr"`` (по умолчанию; поведение прежнее) — малость шага реакции
+          в квадратурной норме :math:`L_2(\Omega)`:
+
+          .. math:: \|r_k - r_{k-1}\|_{L_2} =
+                    \Big(\textstyle\sum_m w_m\,(r_k - r_{k-1})_m^2\Big)^{1/2}
+                    < \mathrm{tol},
+
+          где :math:`w_m` — веса квадратуры. Критерий абсолютный (наследует
+          размерность реакции), поэтому ``tol`` согласуется с масштабом
+          нагрузки ``q0`` конкретной задачи.
+
+        * ``"comp"`` — безразмерная KKT-невязка условий Синьорини для
+          состояния :math:`(r_k,\,u(r_k))` (``u`` — смещение контактной
+          поверхности; классика: :math:`u = w`):
+
+          .. math:: \eta_k = \max\!\Big(
+                    \frac{\max_i |r_i\,(u_i - \Delta)|}{q_0\,\Delta},\;
+                    \frac{\max_i (u_i - \Delta)_+}{\Delta}\Big) < \mathrm{tol}.
+
+          Первый член — нарушение комплементарности
+          :math:`r\,(u-\Delta) = 0`, второй — проникание (:math:`u \le \Delta`
+          на основании). Одной комплементарности недостаточно: она тривиально
+          равна нулю при :math:`r \equiv 0`. Критерий не зависит от нормировки
+          нагрузки и зазора; остановка сертифицирует приближённое выполнение
+          всех условий Синьорини с точностью ``tol``.
+
+        В обоих режимах ``residual_history`` хранит :math:`\|r_k - r_{k-1}\|`
+        (диагностика сходимости не меняется).
+        """
         cfg, q = self.cfg, self.plate.quad
         r = np.zeros(q.x.size)
         hist: list[float] = []
         converged = False
         iters = 0
 
-        for iters in range(1, cfg.max_iter + 1):
+        for iters in range(1, cfg.max_iter + 1):  # noqa: B007 — iters нужен после цикла
             cM, cw = self.plate.solve(cfg.q0 - r)             # f = q0 − r → (M, w)
             w = self.plate.deflection(cw, q.x, q.y)
             disp = self._contact_disp(cM, w, r)               # классика: disp = w
+            if self.stop == "comp" and self._kkt_residual(disp, r) < cfg.tol:
+                converged = True                              # (r, u(r)) уже KKT-точно
+                break
             r_new = r.copy()
             r_new[self.fmask] = r[self.fmask] + self.beta_eff * (disp[self.fmask] - self.gap)
             np.maximum(r_new, 0.0, out=r_new)                 # проекция r ≥ 0
@@ -145,7 +185,7 @@ class ContactMOR:
             res = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
             hist.append(res)
             r = r_new
-            if res < cfg.tol:
+            if self.stop == "dr" and res < cfg.tol:
                 converged = True
                 break
 
@@ -169,6 +209,18 @@ class ContactMOR:
             return w
         lap_w = -self.plate.moment(cM, self.plate.quad.x, self.plate.quad.y) / self.plate.D
         return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
+
+    def _kkt_residual(self, disp, r) -> float:
+        r"""Безразмерная KKT-невязка Синьорини состояния (r, u(r)); Δ > 0.
+
+        .. math:: \eta = \max\Big(\frac{\max_i |r_i (u_i - \Delta)|}{q_0 \Delta},\;
+                  \frac{\max_i (u_i - \Delta)_+}{\Delta}\Big)
+
+        (комплементарность + проникание; см. докстринг :meth:`solve`).
+        """
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self.gap))
+        pen = float(np.max(np.maximum(disp[self.fmask] - self.gap, 0.0), initial=0.0) / self.gap)
+        return max(comp, pen)
 
     def _complementarity(self, disp, r) -> tuple[float, float]:
         r"""Безразмерные метрики Синьорини по финальному состоянию (Δ > 0).
