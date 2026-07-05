@@ -1,0 +1,28 @@
+# CI: MMS на круге (пол маски ~1/Q).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 8
+Q = 128
+grid_n = 16
+
+[verify]
+reference = "mms"
+tol = 5.0e-2
+
+[output]
+dir = "results/ci/circle_mms"
+

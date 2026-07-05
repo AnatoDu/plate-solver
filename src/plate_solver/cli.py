@@ -134,36 +134,234 @@ def _parse_for_selfcheck(text: str) -> dict:
     return tomllib.loads(text)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Точка входа ``plate-solve`` (v0.2: только --new; решение случаев — P4)."""
-    parser = argparse.ArgumentParser(
-        prog="plate-solve",
-        description="Комплекс plate-solver: постановка задачи case-файлом "
-                    "(docs/CASE_SCHEMA.md).",
-    )
-    parser.add_argument("case", nargs="?", help="case-файл TOML (решение — начиная с P4)")
-    parser.add_argument("--new", dest="new_kind", metavar="KIND",
-                        help=f"создать шаблон case-файла: {' | '.join(_TEMPLATE_KINDS)}")
-    parser.add_argument("--out", metavar="PATH", default=None,
-                        help="куда писать шаблон (по умолчанию <KIND>.toml)")
-    args = parser.parse_args(argv)
+# --------------------------------------------------------------------------- #
+#  Свип по дискретизации (P4.2): --sweep p=2:12:2 [--sweep Q=64:256:64]
+# --------------------------------------------------------------------------- #
+def _parse_sweep(spec: str) -> tuple[str, list[int]]:
+    """Разобрать ``p=A:B:S`` / ``Q=A:B:S`` в (ключ, список значений)."""
+    key, _, rng = spec.partition("=")
+    key = key.strip()
+    if key not in ("p", "Q"):
+        raise CaseError(f"--sweep: получено {key!r}, ожидалось p | Q, "
+                        "см. docs/CASE_SCHEMA.md#discretization")
+    parts = rng.split(":")
+    try:
+        a, b, s = (int(v) for v in parts)
+    except (ValueError, TypeError):
+        raise CaseError(f"--sweep {spec!r}: ожидался формат КЛЮЧ=нач:кон:шаг "
+                        "(целые числа)") from None
+    if len(parts) != 3 or s <= 0 or b < a:
+        raise CaseError(f"--sweep {spec!r}: ожидался формат КЛЮЧ=нач:кон:шаг, "
+                        "шаг > 0, кон ≥ нач")
+    return key, list(range(a, b + 1, s))
 
-    if args.new_kind is not None:
-        try:
-            path = write_template(args.new_kind, args.out)
-        except CaseError as e:
-            print(f"ошибка: {e}", file=sys.stderr)
-            return 1
-        print(f"шаблон записан: {path} (схема — docs/CASE_SCHEMA.md)")
+
+def _sweep_rows(problem: Problem, sweeps: list[tuple[str, list[int]]],
+                do_verify: bool) -> list[dict]:
+    """Прогнать декартово произведение точек свипа; собрать строки таблицы."""
+    import dataclasses
+    import itertools
+
+    from .dispatch import solve as _solve
+
+    keys = [k for k, _ in sweeps]
+    rows: list[dict] = []
+    for combo in itertools.product(*[vals for _, vals in sweeps]):
+        disc = dataclasses.replace(problem.discretization, **dict(zip(keys, combo)))
+        prob = dataclasses.replace(problem, discretization=disc)
+        res = _solve(prob)
+        row: dict = dict(zip(keys, combo))
+        row["w_max"] = res.w_max
+        row["cond_A"] = res.cond
+        if do_verify:
+            from .references import verify_result
+
+            rep = verify_result(res)
+            gated = [r for r in rep.rows if r.gated]
+            row["rel"] = max((r.rel for r in gated), default=float("nan"))
+            row["ok"] = rep.ok
+        rows.append(row)
+    return rows
+
+
+def _write_sweep_outputs(rows: list[dict], keys: list[str], out_dir: Path,
+                         do_verify: bool) -> None:
+    """md + csv + png (semilogy rel против параметра) — формат под статью."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cols = list(rows[0].keys())
+    md = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    csv = [",".join(cols)]
+    for r in rows:
+        md.append("| " + " | ".join(_fmt(r[c]) for c in cols) + " |")
+        csv.append(",".join(str(r[c]) for c in cols))
+    (out_dir / "sweep.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    (out_dir / "sweep.csv").write_text("\n".join(csv) + "\n", encoding="utf-8")
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:                            # png — опциональный артефакт
+        return
+    xs = [r[keys[0]] for r in rows]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    if do_verify:
+        ax.semilogy(xs, [r["rel"] for r in rows], "o-")
+        ax.set_ylabel("относительная ошибка (max по эталонам)")
+    else:
+        ax.plot(xs, [r["w_max"] for r in rows], "o-")
+        ax.set_ylabel("w_max")
+    ax.set_xlabel(keys[0])
+    ax.grid(True, which="both", alpha=0.3)
+    fig.savefig(out_dir / "sweep.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _fmt(v) -> str:
+    if isinstance(v, bool):
+        return "PASS" if v else "FAIL"
+    if isinstance(v, float):
+        return f"{v:.6e}"
+    return str(v)
+
+
+def _run_case(args, do_verify: bool) -> int:
+    """Общий путь plate-solve/plate-verify: решить case (или свип) и отчитаться."""
+    from .dispatch import solve as _solve
+
+    problem = Problem.from_toml(args.case)
+    out_dir = Path(args.out) if args.out else Path(problem.output.dir)
+
+    if args.sweep:
+        sweeps = [_parse_sweep(s) for s in args.sweep]
+        keys = [k for k, _ in sweeps]
+        if len(set(keys)) != len(keys):
+            raise CaseError("--sweep: ключи повторяются; допустимо по одному p и Q")
+        if len(sweeps) > 1:
+            print("предупреждение: два свипа — декартово произведение "
+                  f"{'×'.join(str(len(v)) for _, v in sweeps)} прогонов", file=sys.stderr)
+        rows = _sweep_rows(problem, sweeps, do_verify)
+        _write_sweep_outputs(rows, keys, out_dir, do_verify)
+        for line in (out_dir / "sweep.md").read_text(encoding="utf-8").splitlines():
+            print(line)
+        print(f"артефакты свипа: {out_dir}/sweep.{{md,csv,png}}")
+        if do_verify:
+            return 0 if rows[-1]["ok"] else 1      # вердикт — по самой точной точке
         return 0
 
-    if args.case is not None:
-        print("решение case-файлов появится на шаге P4 фазы 2; "
-              "пока доступно только plate-solve --new <KIND>", file=sys.stderr)
-        return 2
+    res = _solve(problem)
+    if do_verify:
+        from .references import verify_result
 
-    parser.print_help()
+        rep = verify_result(res)
+        print(rep.table())
+        print(f"допуск tol = {rep.tol:g}; вердикт: {'PASS' if rep.ok else 'FAIL'}")
+        return 0 if rep.ok else 1
+    path = res.save(out_dir)
+    s = res.scalars()
+    print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
+    if res.contact is not None:
+        print(f"контакт: итераций {s['iters']}, узлов {s['n_contact']}/{s['n_quad']}, "
+              f"r_max = {s['r_max']:.4e}, комплементарность {s['comp_residual']:.2e}")
+    for w in res.warnings:
+        print(f"предупреждение: {w}")
+    print(f"результат: {path}")
     return 0
+
+
+# --------------------------------------------------------------------------- #
+#  Точки входа
+# --------------------------------------------------------------------------- #
+def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description=descr)
+    parser.add_argument("case", nargs="?", help="case-файл TOML (docs/CASE_SCHEMA.md)")
+    parser.add_argument("--sweep", action="append", metavar="p=2:12:2",
+                        help="свип по p или Q (можно оба — декартово произведение)")
+    parser.add_argument("--out", metavar="DIR", default=None,
+                        help="каталог результатов (по умолчанию output.dir case-файла)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``plate-solve``: решить case-файл (``--new`` — сгенерировать шаблон)."""
+    parser = _base_parser("plate-solve", "Решение постановки из case-файла "
+                                         "(геометрия+КУ+нагрузка -> Result).")
+    parser.add_argument("--new", dest="new_kind", metavar="KIND",
+                        help=f"создать шаблон case-файла: {' | '.join(_TEMPLATE_KINDS)}")
+    args = parser.parse_args(argv)
+    try:
+        if args.new_kind is not None:
+            path = write_template(args.new_kind, args.out)
+            print(f"шаблон записан: {path} (схема — docs/CASE_SCHEMA.md)")
+            return 0
+        if args.case is None:
+            parser.print_help()
+            return 0
+        return _run_case(args, do_verify=False)
+    except CaseError as e:
+        print(f"ошибка: {e}", file=sys.stderr)
+        return 1
+
+
+def main_verify(argv: list[str] | None = None) -> int:
+    """``plate-verify``: таблица «эталон | значение | rel | статус», exit 0/1."""
+    parser = _base_parser("plate-verify", "Верификация постановки по эталонам "
+                                          "case-файла (секция [verify]).")
+    args = parser.parse_args(argv)
+    if args.case is None:
+        parser.print_help()
+        return 0
+    try:
+        return _run_case(args, do_verify=True)
+    except CaseError as e:
+        print(f"ошибка: {e}", file=sys.stderr)
+        return 1
+
+
+def main_ladder(argv: list[str] | None = None) -> int:
+    """``plate-ladder``: каталог case-файлов → сводный md с провенансом."""
+    parser = argparse.ArgumentParser(
+        prog="plate-ladder",
+        description="Прогнать каталог case-файлов (лестница верификации) и "
+                    "собрать сводный markdown-отчёт.")
+    parser.add_argument("directory", help="каталог с *.toml")
+    parser.add_argument("--out", metavar="FILE", default=None,
+                        help="файл отчёта (по умолчанию <каталог>/ladder_summary.md)")
+    args = parser.parse_args(argv)
+    folder = Path(args.directory)
+    cases = sorted(folder.glob("*.toml"))
+    if not cases:
+        print(f"ошибка: в {folder} нет case-файлов *.toml", file=sys.stderr)
+        return 1
+    from .dispatch import _provenance
+    from .dispatch import solve as _solve
+    from .references import verify_result
+
+    lines = ["# Лестница верификации — сводка", "",
+             "| case | w_max | эталоны (rel) | статус |", "|---|---|---|---|"]
+    all_ok = True
+    for case in cases:
+        try:
+            problem = Problem.from_toml(case)
+            res = _solve(problem)
+            rep = verify_result(res)
+            rels = "; ".join(f"{r.name}: {r.rel:.2e}" for r in rep.rows) or "—"
+            ok = rep.ok
+            lines.append(f"| {case.name} | {res.w_max:.6e} | {rels} | "
+                         f"{'PASS' if ok else 'FAIL'} |")
+        except CaseError as e:
+            ok = False
+            lines.append(f"| {case.name} | — | ошибка: {e} | FAIL |")
+        all_ok &= ok
+        print(f"{case.name}: {'PASS' if ok else 'FAIL'}")
+    prov = _provenance()
+    lines += ["", "## Провенанс",
+              "", f"- plate-solver {prov['plate_solver']}, git {prov['git']}",
+              f"- numpy {prov['numpy']}, scipy {prov['scipy']}, sympy {prov['sympy']}"]
+    out = Path(args.out) if args.out else folder / "ladder_summary.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"сводка: {out}")
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":

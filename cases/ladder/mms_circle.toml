@@ -1,0 +1,27 @@
+# Ступень MMS: круг (остаток задаёт ступенчатая маска ~1/Q).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 8
+Q = 256
+
+[verify]
+reference = "mms"
+tol = 5.0e-2   # кривая граница: пол маски ~1/Q
+
+[output]
+dir = "results/ladder/mms_circle"
+

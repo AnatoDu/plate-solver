@@ -1,0 +1,42 @@
+# Ступень: плоский штамп-квадрат у входящего угла L-формы (P4.3).
+
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.5
+beta = 1.2
+max_iter = 8000
+tol = 1.0e-8
+
+[contact.zone]
+kind = "rectangle"
+x1 = 0.15
+x2 = 0.45
+y1 = 0.15
+y2 = 0.45
+
+[discretization]
+p = 10
+Q = 120
+grid_n = 80
+
+[verify]
+reference = "none"   # ворота: тождества и инварианты (tests/test_lshape_stamp.py)
+
+[output]
+dir = "results/ladder/lshape_stamp"
+

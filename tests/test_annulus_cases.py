@@ -13,7 +13,7 @@ import pytest
 
 from plate_solver.problem import Problem
 
-_CASES = Path(__file__).resolve().parents[1] / "cases"
+_CASES = Path(__file__).resolve().parents[1] / "cases" / "ladder"
 
 
 @pytest.mark.parametrize("case", ["annulus_soft", "annulus_clamped"])

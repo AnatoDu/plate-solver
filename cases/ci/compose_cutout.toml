@@ -1,0 +1,42 @@
+# CI: смок compose (квадрат с круглым вырезом).
+
+[geometry]
+kind = "compose"
+
+[geometry.tree]
+op = "difference"
+
+[[geometry.tree.children]]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[[geometry.tree.children]]
+kind = "circle"
+a = 0.2
+cx = 0.5
+cy = 0.5
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 8
+Q = 96
+grid_n = 16
+
+[verify]
+reference = "none"   # у compose аналитики нет; smoke-ступень реестра
+
+[output]
+dir = "results/ci/compose_cutout"
+

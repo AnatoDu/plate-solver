@@ -1,0 +1,28 @@
+# Ступень: круг, жёсткое защемление (ω²Φ; парадокса нет).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 1.0
+
+[discretization]
+p = 10
+Q = 1024
+
+[verify]
+reference = "analytic"
+cross_1d = true
+tol = 3.0e-3   # факт ~9e-4 (NOTES §12)
+
+[output]
+dir = "results/ladder/circle_clamped"
+

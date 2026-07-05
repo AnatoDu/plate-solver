@@ -1,0 +1,30 @@
+# Ступень: прямоугольник, защемление; сертификат метода — MMS.
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 8
+Q = 64
+
+[verify]
+reference = "mms"
+tol = 1.0e-8   # полиномиальная ω: машинная точность (NOTES §14)
+
+[output]
+dir = "results/ladder/rect_clamped"
+
