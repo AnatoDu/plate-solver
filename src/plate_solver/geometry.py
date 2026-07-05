@@ -52,12 +52,32 @@ def r_or(f1: sp.Expr, f2: sp.Expr) -> sp.Expr:
     return f1 + f2 + sp.sqrt(f1**2 + f2**2)
 
 
+def r_not(f: sp.Expr) -> sp.Expr:
+    """R-отрицание (дополнение области): ¬f = −f.
+
+    В системе R₀ отрицание — простая смена знака: ω > 0 внутри становится
+    ω < 0, граница ω = 0 сохраняется.
+    """
+    return -f
+
+
+def r_diff(f1: sp.Expr, f2: sp.Expr) -> sp.Expr:
+    """R-разность областей: f₁ \\ f₂ = f₁ ∧ (¬f₂) = f₁ + (−f₂) − √(f₁² + f₂²).
+
+    Область f₁ с вырезанной областью f₂ (граница выреза — часть ∂Ω).
+    """
+    return r_and(f1, r_not(f2))
+
+
 # --------------------------------------------------------------------------- #
 #  Символьные примитивы (возвращают sympy-выражения от x, y)
 # --------------------------------------------------------------------------- #
-def circle_expr(a: float) -> sp.Expr:
-    """ω круга радиуса a с центром (0,0), нормированная до 1-го порядка."""
-    return (a**2 - x**2 - y**2) / (2 * a)
+def circle_expr(a: float, cx: float = 0.0, cy: float = 0.0) -> sp.Expr:
+    """ω круга радиуса a с центром (cx, cy), нормированная до 1-го порядка.
+
+    .. math:: \\omega = \\frac{a^2 - (x-c_x)^2 - (y-c_y)^2}{2a}
+    """
+    return (a**2 - (x - cx) ** 2 - (y - cy) ** 2) / (2 * a)
 
 
 def rectangle_expr(x1: float, x2: float, y1: float, y2: float) -> sp.Expr:
@@ -127,6 +147,21 @@ def make_rectangle(x1: float, x2: float, y1: float, y2: float) -> Domain:
     return Domain(rectangle_expr(x1, x2, y1, y2), (x1, x2, y1, y2))
 
 
+def make_annulus(a: float = 1.0, b: float = 0.4) -> Domain:
+    """Кольцо b < r < a с центром (0,0); bbox = (−a, a, −a, a).
+
+    R-разность двух кругов (P1.1):
+
+    .. math:: \\omega = \\omega_a \\wedge (-\\omega_b),
+
+    где ω_a, ω_b — нормированные ω кругов радиусов a и b. Внутри кольца
+    ω > 0, в дырке (r < b) и снаружи (r > a) ω < 0, обе окружности — ω = 0.
+    """
+    if not (0.0 < b < a):
+        raise ValueError("Требуется 0 < b < a (внутренний радиус меньше внешнего).")
+    return Domain(r_diff(circle_expr(a), circle_expr(b)), (-a, a, -a, a))
+
+
 def make_L(side: float = 1.0, cut: float = 0.5) -> Domain:
     """L-образная область: квадрат [0,side]² без вырезанного угла [cut,side]².
 
@@ -143,6 +178,64 @@ def make_L(side: float = 1.0, cut: float = 0.5) -> Domain:
     return Domain(r_or(r1, r2), (0.0, side, 0.0, side))
 
 
+# --------------------------------------------------------------------------- #
+#  Мини-язык compose (P1.2): дерево операций → Domain
+# --------------------------------------------------------------------------- #
+def make_compose(tree: dict) -> Domain:
+    """Составная область из дерева операций (мини-язык case-файла, P1.2).
+
+    Узел-операция: ``{"op": union|intersect|difference, "children": [...]}``
+    (difference строго бинарна: первый операнд минус второй); примитивы:
+    ``{"kind": "circle", "a", "cx", "cy"}`` и
+    ``{"kind": "rectangle", "x1", "x2", "y1", "y2"}``. Ограда v0.2 (глубина
+    ≤ 3, ≤ 7 узлов) проверяется валидатором схемы — единый источник правды
+    в problem.py; нарушение — CaseError.
+
+    bbox: union — объединение bbox детей; intersect — их пересечение;
+    difference — bbox первого операнда (вырез не расширяет область).
+    """
+    from .problem import validate_compose_tree
+
+    validate_compose_tree(tree)
+    expr, bbox = _compose_node(tree)
+    return Domain(expr, bbox)
+
+
+def _compose_node(node: dict) -> tuple[sp.Expr, BBox]:
+    """Рекурсивно построить (ω-выражение, bbox) узла compose-дерева."""
+    if "op" in node:
+        parts = [_compose_node(ch) for ch in node["children"]]
+        exprs = [p[0] for p in parts]
+        boxes = [p[1] for p in parts]
+        op = node["op"]
+        if op == "union":
+            expr = exprs[0]
+            for e in exprs[1:]:
+                expr = r_or(expr, e)
+            bbox = (min(b[0] for b in boxes), max(b[1] for b in boxes),
+                    min(b[2] for b in boxes), max(b[3] for b in boxes))
+        elif op == "intersect":
+            expr = exprs[0]
+            for e in exprs[1:]:
+                expr = r_and(expr, e)
+            bbox = (max(b[0] for b in boxes), min(b[1] for b in boxes),
+                    max(b[2] for b in boxes), min(b[3] for b in boxes))
+            if not (bbox[0] < bbox[1] and bbox[2] < bbox[3]):
+                raise ValueError(f"intersect: пересечение bbox пусто: {boxes}")
+        else:                                   # difference (бинарна)
+            expr = r_diff(exprs[0], exprs[1])
+            bbox = boxes[0]
+        return expr, bbox
+    if node["kind"] == "circle":
+        a = float(node["a"])
+        cx = float(node.get("cx", 0.0))
+        cy = float(node.get("cy", 0.0))
+        return circle_expr(a, cx, cy), (cx - a, cx + a, cy - a, cy + a)
+    x1, x2 = float(node["x1"]), float(node["x2"])
+    y1, y2 = float(node["y1"]), float(node["y2"])
+    return rectangle_expr(x1, x2, y1, y2), (x1, x2, y1, y2)
+
+
 __all__ = [
     "x",
     "y",
@@ -150,9 +243,13 @@ __all__ = [
     "Domain",
     "r_and",
     "r_or",
+    "r_not",
+    "r_diff",
     "circle_expr",
     "rectangle_expr",
     "make_circle",
     "make_rectangle",
     "make_L",
+    "make_annulus",
+    "make_compose",
 ]
