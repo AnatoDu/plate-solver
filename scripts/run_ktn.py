@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import numpy as np
-from run_lshape_contact import lshape_lab_config
 
 from plate_solver import geometry
 from plate_solver.contact import ContactMOR
@@ -32,7 +31,7 @@ def run_ktn_golden(cfg, Delta, classic_res):
     import matplotlib.pyplot as plt
 
     dom = geometry.make_L(cfg.L_side, cfg.L_cut)
-    lab = lshape_lab_config(cfg)
+    lab = cfg.to_config()
     pb = PlateBending.from_config(dom, lab)
     ktn_res = ContactMOR(pb, lab, gap=Delta, ktn=KTNParams.from_config(lab)).solve()
     kp = KTNParams.from_config(lab)

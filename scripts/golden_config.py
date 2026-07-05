@@ -4,11 +4,17 @@
 Круг (табл. 4.1) считается при h=1.0 (см. свойство D); вся L-серия (w_free,
 верификация, контакт, КТН — табл. 4.2/4.3) — при единой толщине h_ktn, чтобы
 зазор Δ = gap_factor·w_free был ОДИН И ТОТ ЖЕ в контакте и в КТН.
+
+Мост к лабораторному :class:`plate_solver.config.Config` — метод
+:meth:`GoldenConfig.to_config`; соответствие имён (mor_iter ↔ max_iter,
+mor_tol ↔ tol) сведено ТОЛЬКО там.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from plate_solver.config import Config
 
 
 @dataclass
@@ -53,3 +59,21 @@ class GoldenConfig:
     def D_lshape(self) -> float:
         """Цилиндрическая жёсткость L-серии (h=h_ktn)."""
         return self.E * self.h_ktn**3 / (12 * (1 - self.nu**2))
+
+    def to_config(self, h: float | None = None, Q: int | None = None, **overrides) -> Config:
+        """Мост к лабораторному Config; по умолчанию — L-серия (h=h_ktn, Q=Q_lshape).
+
+        Единственное место соответствия имён: ``mor_iter → max_iter``,
+        ``mor_tol → tol``. Круг таблицы 4.1: ``to_config(h=cfg.h_circle,
+        Q=cfg.Q_circle, p=...)``. Дополнительные поля Config (p, beta, ...)
+        можно переопределить через ``overrides``.
+        """
+        params = dict(
+            nu=self.nu, q0=self.q0, a=self.a, E=self.E,
+            h=self.h_ktn if h is None else h,
+            Q=self.Q_lshape if Q is None else Q,
+            p=self.p, grid_n=self.grid_n,
+            beta=self.beta, max_iter=self.mor_iter, tol=self.mor_tol,
+        )
+        params.update(overrides)
+        return Config(**params)

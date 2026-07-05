@@ -12,21 +12,14 @@ from __future__ import annotations
 import numpy as np
 
 from plate_solver import geometry, viz
-from plate_solver.config import Config
 from plate_solver.contact import ContactMOR
 from plate_solver.plate import PlateBending
-
-
-def lshape_lab_config(cfg) -> Config:
-    """Лабораторный Config для L-серии из золотого конфига (единая толщина h_ktn)."""
-    return Config(nu=cfg.nu, q0=cfg.q0, h=cfg.h_ktn, E=cfg.E, p=cfg.p, Q=cfg.Q_lshape,
-                  grid_n=cfg.grid_n, beta=cfg.beta, max_iter=cfg.mor_iter, tol=cfg.mor_tol)
 
 
 def compute_w_free_lshape(cfg) -> float:
     """Свободный прогиб L-формы без контакта: max|w| при q0, p, Q, h_ktn (опора для Δ)."""
     dom = geometry.make_L(cfg.L_side, cfg.L_cut)
-    pb = PlateBending.from_config(dom, lshape_lab_config(cfg))
+    pb = PlateBending.from_config(dom, cfg.to_config())
     q = pb.quad
     _, cw = pb.solve_uniform(cfg.q0)
     return float(np.max(np.abs(pb.deflection(cw, q.x, q.y))))
@@ -35,7 +28,7 @@ def compute_w_free_lshape(cfg) -> float:
 def run_lshape_contact_golden(cfg, Delta):
     """-> (dict, fig, ContactResult). Контакт при едином Δ, основание под всей Ω."""
     dom = geometry.make_L(cfg.L_side, cfg.L_cut)
-    lab = lshape_lab_config(cfg)
+    lab = cfg.to_config()
     pb = PlateBending.from_config(dom, lab)
     res = ContactMOR(pb, lab, gap=Delta).solve()
 

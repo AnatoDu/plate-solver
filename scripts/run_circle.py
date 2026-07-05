@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 from plate_solver import analytic, geometry, viz
-from plate_solver.config import Config
 from plate_solver.plate import PlateBending
 
 
@@ -22,7 +21,7 @@ def run_circle_golden(cfg):
     w_ss = float(analytic.circular_plate_simply_supported(0.0, q, a, nu, D))
 
     def _solve(p):
-        lab = Config(a=a, q0=q, nu=nu, h=cfg.h_circle, E=cfg.E, p=p, Q=cfg.Q_circle, grid_n=cfg.grid_n)
+        lab = cfg.to_config(h=cfg.h_circle, Q=cfg.Q_circle, p=p)
         pb = PlateBending.from_config(dom, lab)
         _, cw = pb.solve_uniform(q)
         return lab, pb, cw
