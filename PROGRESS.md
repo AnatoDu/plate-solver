@@ -157,6 +157,33 @@
   1.64e-2 (tests/test_fem_reference.py, маркер fem). Сэмплинг w_max МКЭ —
   отступ 2 % от границы (полигональная сетка вписана в ω-границу).
   Константы сеток — в references.py, в схему не выносятся (ограда).
+## P5. Примеры, документация, артефакты
+
+- P5.1: notebooks/ 01_circle_api, 02_annulus_case, 03_compose_cutout,
+  04_point_load (без новых dev-зависимостей; CI-смок — JSON и валидность
+  упомянутых case-файлов, tests/test_notebooks.py; ruff проверяет ячейки).
+- P5.2: README — «Быстрый старт через case-файлы», таблица CLI, раздел
+  про нагрузки, ссылки на CASE_SCHEMA/реестры/блок-схему.
+- P5.3: docs/dispatch_flow.md (mermaid, ГОСТ 19.701-90) + dispatch_flow.png
+  (генератор docs/make_dispatch_flow.py, только matplotlib) + листинги
+  annulus_clamped.toml и circle_point_soft.toml — в главу 3 и статью ЮСНВ.
+- P5.4: docs/NOTES.md §18 «Точечная сила и уточнённая теория».
+- P5.5: CLAUDE.md — правила фазы (ограда compose, ключи схемы, cases/ci,
+  golden-хеш-ворота, журнал PROGRESS).
+- P5.6: тег v0.2.0 (сводка откалиброванных чисел — в описании тега).
+
+## Сводка откалиброванных чисел фазы (для описания релиза)
+
+| Ворота | Факт | Заморожено (×3) |
+|---|---|---|
+| кольцо, изгиб 2D↔analytic / 2D↔1D (soft, Q=1024) | 1.140e-3 | 3.5e-3 |
+| кольцо, изгиб (clamped, Q=1024) | 1.610e-3 | 4.9e-3 |
+| точечная сила, потолок 2 % на eps=0.025 (clamped/soft, p=16) | 1.444e-2 / 1.036e-2 | 4.4e-2 / 3.2e-2 |
+| fem-кольцо (Аргирис clamped / Marcus soft) | 5.373e-3 / 5.443e-3 | 1.62e-2 / 1.64e-2 |
+| контакт на кольце: comp_residual (8000 итер.) | 1.190e-2 | 3.6e-2 |
+| контакт на кольце: gap_overshoot | 9.62e-4 | 2.9e-3 |
+| штамп у угла: r_max / n_contact / comp (регресс) | 200.51 / 51 / 0.27 | снимок |
+
 ## P4. CLI и реестр случаев
 
 - P4.1: plate-solve (решение case, сводка, Result.save), plate-verify
