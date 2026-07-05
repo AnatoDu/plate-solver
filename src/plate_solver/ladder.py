@@ -291,6 +291,52 @@ def bending_moments(domain, basis, c, p_struct: int, D: float, nu: float, X, Y):
     return Mx, My
 
 
+def _basis_xy(basis, X, Y):
+    """Смешанная производная φ_{k,xy} тензорного базиса: массив (N, *shape)."""
+    from .clamped import _cheb_value_tables
+
+    xi, eta = basis.to_reference(X, Y)
+    xmin, xmax, ymin, ymax = basis.bbox
+    dxi_dx = 2.0 / (xmax - xmin)
+    deta_dy = 2.0 / (ymax - ymin)
+    _, Vx1, _ = _cheb_value_tables(basis, xi)
+    _, Vy1, _ = _cheb_value_tables(basis, eta)
+    return ((Vx1[:, None, ...] * Vy1[None, :, ...])
+            * (dxi_dx * deta_dy)).reshape(basis.N, *xi.shape)
+
+
+def bending_moments_full(domain, basis, c, p_struct: int, D: float, nu: float, X, Y):
+    r"""Полный набор моментов ``(M_x, M_y, M_xy)`` RFM-решения (трек B, B1).
+
+    ``M_xy = −D(1−ν)·w_xy``; смешанная производная структуры ``w = ω^p·v``:
+
+    .. math:: w_{xy} = [\omega^p]_{xy} v + [\omega^p]_x v_y
+              + [\omega^p]_y v_x + \omega^p v_{xy},
+
+    где ``[ω^p]_xy = p(p−1)ω^{p−2}ω_xω_y + pω^{p−1}ω_xy`` (при p=1 первый
+    член гасится множителем p(p−1)=0 — ω^{−1} не вычисляется, ср. §14).
+    """
+    from .clamped import _OmegaHessian
+
+    Mx, My = bending_moments(domain, basis, c, p_struct, D, nu, X, Y)
+    c = np.asarray(c, float)
+    om, omx, omy, _, _, omxy = _OmegaHessian(domain).fields_full(X, Y)
+    T = basis.values(X, Y)
+    Tx, Ty = basis.grads(X, Y)
+    Txy = _basis_xy(basis, X, Y)
+    v = np.tensordot(c, T, axes=(0, 0))
+    vx = np.tensordot(c, Tx, axes=(0, 0))
+    vy = np.tensordot(c, Ty, axes=(0, 0))
+    vxy = np.tensordot(c, Txy, axes=(0, 0))
+    p = p_struct
+    om_pm1 = om ** (p - 1)
+    quad = (p * (p - 1)) * (om ** (p - 2) if p >= 2 else 0.0)
+    wxy = ((quad * omx * omy + p * om_pm1 * omxy) * v
+           + p * om_pm1 * (omx * vy + omy * vx) + om**p * vxy)
+    Mxy = -D * (1.0 - nu) * wxy
+    return Mx, My, Mxy
+
+
 __all__ = [
     "strip_hinge_exact", "strip_hinge_wmax",
     "strip_clamped_exact", "strip_clamped_wmax",
@@ -298,5 +344,5 @@ __all__ = [
     "rect_sin_load", "rect_sin_exact", "rect_sin_wmax",
     "navier_uniform", "navier_uniform_center",
     "mms_load_and_exact", "mms_clamped_rect_w", "mms_clamped_disk_w",
-    "bending_moments",
+    "bending_moments", "bending_moments_full",
 ]

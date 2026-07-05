@@ -66,6 +66,7 @@ class _OmegaHessian:
         self._wy = sp.lambdify((_sx, _sy), sp.diff(w, _sy), "numpy")
         self._wxx = sp.lambdify((_sx, _sy), sp.diff(w, _sx, 2), "numpy")
         self._wyy = sp.lambdify((_sx, _sy), sp.diff(w, _sy, 2), "numpy")
+        self._wxy = sp.lambdify((_sx, _sy), sp.diff(w, _sx, _sy), "numpy")
 
     @staticmethod
     def _ev(fn, X, Y):
@@ -78,6 +79,10 @@ class _OmegaHessian:
         """-> (ω, ω_x, ω_y, ω_xx, ω_yy) в точках (X, Y)."""
         return (self._ev(self._w, X, Y), self._ev(self._wx, X, Y), self._ev(self._wy, X, Y),
                 self._ev(self._wxx, X, Y), self._ev(self._wyy, X, Y))
+
+    def fields_full(self, X, Y):
+        """-> (ω, ω_x, ω_y, ω_xx, ω_yy, ω_xy) — с СМЕШАННОЙ производной (трек B)."""
+        return (*self.fields(X, Y), self._ev(self._wxy, X, Y))
 
 
 def _cheb_value_tables(basis: ChebyshevBasis, t: np.ndarray):

@@ -135,9 +135,80 @@ class Result:
         }
         (out / "result.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.save_fields(out / "fields.npz")
         if self.problem.output.figures:
             self._save_figures(out)
         return out / "result.json"
+
+    def moments_on_grid(self):
+        """Моменты (Mx, My, Mxy) на фоновой сетке (NaN вне Ω) — трек B."""
+        from .ladder import bending_moments_full
+
+        solver = self._plate
+        p_struct = 2 if hasattr(solver, "S") else 1        # ω²Φ у защемления
+        inside = np.isfinite(self.w_grid)
+        Mx = np.full(self.Xg.shape, np.nan)
+        My = np.full(self.Xg.shape, np.nan)
+        Mxy = np.full(self.Xg.shape, np.nan)
+        # У составных R-областей (r_and/r_or) ВТОРЫЕ производные ω имеют
+        # линии излома (f₁ = f₂): гессиан структуры там не определён — точки
+        # остаются NaN и маскируются в картах (NOTES §19).
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mx, my, mxy = bending_moments_full(
+                solver.domain, solver.basis, self._c, p_struct,
+                self.config.D, self.config.nu, self.Xg[inside], self.Yg[inside])
+        Mx[inside], My[inside], Mxy[inside] = mx, my, mxy
+        return Mx, My, Mxy
+
+    def _q_faces_on_grid(self):
+        """(q_top, q_bottom) на сетке: нагрузка сверху, реакция снизу (§19)."""
+        load = self.problem.load
+        inside = np.isfinite(self.w_grid)
+        q_top = np.zeros(self.Xg.shape)
+        if load.type == "uniform":
+            q_top[inside] = self.config.q0
+        elif load.type == "patch":
+            zone = build_domain(load.zone)
+            m = inside & (zone.omega(self.Xg, self.Yg) > 0.0)
+            q_top[m] = self.config.q0
+        else:                                            # point: пятно eps_eff
+            eps = self.eps_eff if self.eps_eff is not None else 0.0
+            m = inside & (((self.Xg - load.x0) ** 2 + (self.Yg - load.y0) ** 2)
+                          <= eps**2)
+            q_top[m] = self.config.q0
+        q_bot = np.zeros(self.Xg.shape)
+        if self.contact is not None:
+            q_bot = np.nan_to_num(self.contact.r_grid, nan=0.0)
+        return q_top, q_bot
+
+    def save_fields(self, path) -> None:
+        """fields.npz (версия схемы полей = 1): w, моменты, σ-шестёрка, контакт.
+
+        Всё необходимое для перерисовки фигур БЕЗ пересчёта —
+        :func:`plate_solver.viz.replot`.
+        """
+        from .ktn import stresses_faces
+
+        Mx, My, Mxy = self.moments_on_grid()
+        q_top, q_bot = self._q_faces_on_grid()
+        s = stresses_faces(Mx, My, Mxy, h=self.config.h, nu=self.config.nu,
+                           q_top=q_top, q_bottom=q_bot)
+        payload = {
+            "fields_schema": np.int64(1),
+            "x": self.Xg[0, :], "y": self.Yg[:, 0],
+            "w": self.w_grid, "Mx": Mx, "My": My, "Mxy": Mxy,
+            "problem_json": np.str_(json.dumps(asdict(self.problem),
+                                               ensure_ascii=False)),
+            "h": np.float64(self.config.h), "nu": np.float64(self.config.nu),
+        }
+        payload.update(s)
+        if self.contact is not None:
+            payload["r"] = np.nan_to_num(self.contact.r_grid, nan=0.0)
+            payload["zone"] = self.contact.contact_zone
+            w2 = getattr(self.contact, "w2_grid", None)
+            if w2 is not None:
+                payload["w2"] = w2
+        np.savez_compressed(path, **payload)
 
     def _save_figures(self, out: Path) -> None:
         from . import viz
