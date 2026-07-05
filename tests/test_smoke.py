@@ -20,4 +20,4 @@ def test_material_validates_input():
     import pytest
 
     with pytest.raises(ValueError):
-        PlateMaterial(E=2.0e11, nu=0.3, h=0.0).D  # нулевая толщина
+        _ = PlateMaterial(E=2.0e11, nu=0.3, h=0.0).D  # нулевая толщина

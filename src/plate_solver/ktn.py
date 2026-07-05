@@ -86,7 +86,9 @@ class KTNParams:
     @property
     def cr_contact(self) -> float:
         h, hl2, hz2, D = self.h, self.h_star2, self.h_z2, self.D
-        return -((3.0 * h) / (8.0 * (self.lamb + 2.0 * self.mu)) + hl2 / (self.mu * h) - hl2 * hz2 / D)
+        return -(
+            (3.0 * h) / (8.0 * (self.lamb + 2.0 * self.mu)) + hl2 / (self.mu * h) - hl2 * hz2 / D
+        )
 
     # -- коэффициенты КТН-прогиба (срединная поверхность) --------------- #
     @property
