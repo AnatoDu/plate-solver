@@ -30,7 +30,6 @@ def _problem(**over) -> Problem:
 def test_circle_soft_full_report():
     """Мягкий шарнир на круге: analytic+1D в допуске, model_gap — инфо-строка."""
     report = verify_result(solve(_problem()))
-    kinds = [r.name.split(" ")[0] for r in report.rows]
     assert len(report.rows) == 3 and report.ok
     gated = [r for r in report.rows if r.gated]
     assert all(r.rel < 1.0e-2 for r in gated), [(r.name, r.rel) for r in gated]

@@ -167,10 +167,10 @@ def _sweep_rows(problem: Problem, sweeps: list[tuple[str, list[int]]],
     keys = [k for k, _ in sweeps]
     rows: list[dict] = []
     for combo in itertools.product(*[vals for _, vals in sweeps]):
-        disc = dataclasses.replace(problem.discretization, **dict(zip(keys, combo)))
+        disc = dataclasses.replace(problem.discretization, **dict(zip(keys, combo, strict=True)))
         prob = dataclasses.replace(problem, discretization=disc)
         res = _solve(prob)
-        row: dict = dict(zip(keys, combo))
+        row: dict = dict(zip(keys, combo, strict=True))
         row["w_max"] = res.w_max
         row["cond_A"] = res.cond
         if do_verify:
