@@ -237,6 +237,18 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
       (:func:`~plate_solver.verify_fem.annulus_mesh`); clamped — Аргирис,
       soft — Marcus-P2 (шарнир w=0 на обеих окружностях).
     """
+    g, bc = problem.geometry, problem.bc.type
+    # Сначала — сочетаемость постановки (объясняется без зависимостей),
+    # и только потом требование scikit-fem: несовместимому случаю установка
+    # не поможет, а CI без extra fem должен видеть содержательную ошибку.
+    if problem.load.type != "uniform":
+        _fail("verify.reference", "fem", "равномерной нагрузки (v0.2)")
+    if bc == "soft_hinge" and g.kind not in ("L", "annulus"):
+        _fail("verify.reference", "fem",
+              "для soft_hinge — L | annulus (иначе analytic | mms | none)")
+    if bc == "clamped" and g.kind not in ("circle", "rectangle", "L", "annulus"):
+        _fail("verify.reference", "fem",
+              "circle | rectangle | L | annulus (для compose — mms | none)")
     try:
         import skfem  # noqa: F401
     except ImportError:
@@ -244,11 +256,8 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
               "установленный scikit-fem: pip install -e \".[fem]\"")
     from .dispatch import build_domain
 
-    g, bc = problem.geometry, problem.bc.type
     dom = build_domain(g)
     D, q0, nu = cfg.D, cfg.q0, cfg.nu
-    if problem.load.type != "uniform":
-        _fail("verify.reference", "fem", "равномерной нагрузки (v0.2)")
 
     if bc == "soft_hinge":
         from . import verify_fem as vf
@@ -256,11 +265,8 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
         if g.kind == "L":
             mesh = vf.lshape_mesh(g.side, g.cut, m=_FEM_LSHAPE_M,
                                   refine=_FEM_LSHAPE_REFINE)
-        elif g.kind == "annulus":
+        else:                                   # annulus (сочетаемость проверена выше)
             mesh = vf.annulus_mesh(g.a, g.b, _FEM_ANNULUS_NR, _FEM_ANNULUS_NT)
-        else:
-            _fail("verify.reference", "fem",
-                  "для soft_hinge — L | annulus (иначе analytic | mms | none)")
         marcus = vf.solve_plate_fem(mesh, D, q0, "marcus", nu)
         refs = [Reference(name=f"FEM-Marcus, P2 ({g.kind}; та же модель)",
                           kind="fem", w_max=_fem_wmax(marcus, dom), gated=True)]
@@ -285,11 +291,8 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
     elif g.kind == "L":
         fem = clamped_fem_lshape(D, q0, nu, mesh_m=_FEM_LSHAPE_M,
                                  refine=_FEM_LSHAPE_REFINE)
-    elif g.kind == "annulus":
+    else:                                       # annulus (сочетаемость проверена выше)
         fem = solve_clamped_fem(vf_annulus_mesh(g.a, g.b), D, q0, nu)
-    else:
-        _fail("verify.reference", "fem",
-              "circle | rectangle | L | annulus (для compose — mms | none)")
     return [Reference(name=f"FEM-Аргирис ({g.kind}, clamped)", kind="fem",
                       w_max=_fem_wmax(fem, dom), gated=True)]
 
