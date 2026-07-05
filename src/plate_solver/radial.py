@@ -133,4 +133,137 @@ def solve_radial_soft_hinge(a: float, D: float, q: float, p: int = 6, nq: int = 
     return rp, cw
 
 
-__all__ = ["RadialClamped", "RadialPoisson", "solve_radial_soft_hinge"]
+# --------------------------------------------------------------------------- #
+#  Обобщение на интервал [b, a], b > 0 — кольцо (P3.3 фазы 2)
+# --------------------------------------------------------------------------- #
+# На кольце центр не принадлежит области ⇒ чётность по r не нужна: базис —
+# обычные Чебышёвы от t = (2r − (a+b))/(a−b) ∈ [−1, 1]. Члены 1/r, 1/r²
+# энергии регулярны при r ≥ b > 0. Случай b = 0 — прежний путь
+# (RadialClamped / RadialPoisson с чётной структурой и регулярностью в центре).
+
+
+def _cheb_interval_tables(p: int, r: np.ndarray, a: float, b: float):
+    """φ_k = T_k(t), t = (2r − (a+b))/(a−b); производные по r: (φ, φ', φ'')."""
+    t = (2.0 * r - (a + b)) / (a - b)
+    tp = 2.0 / (a - b)                            # t'(r) — константа
+    eye = np.eye(p + 1)
+    T = np.moveaxis(_cheb.chebvander(t, p), -1, 0)
+    T1 = np.array([_cheb.chebval(t, _cheb.chebder(eye[k], 1)) if p >= 1 else 0.0 * r
+                   for k in range(p + 1)])
+    T2 = np.array([_cheb.chebval(t, _cheb.chebder(eye[k], 2)) if p >= 2 else 0.0 * r
+                   for k in range(p + 1)])
+    return T, T1 * tp, T2 * tp**2
+
+
+def _gauss_interval(a: float, b: float, nq: int):
+    t, wt = np.polynomial.legendre.leggauss(nq)
+    return 0.5 * (a - b) * (t + 1.0) + b, 0.5 * (a - b) * wt      # r, W на [b, a]
+
+
+class RadialClampedAnnulus:
+    r"""Защемлённое кольцо b < r < a как 1D-задача (прямая радиальная энергия).
+
+    Структура ``w = ω²·Φ(r)``, ω = (a − r)(r − b): тождественно зануляет
+    ``w`` и ``w'`` на ОБОИХ краях. Энергия та же, что у :class:`RadialClamped`:
+
+    .. math:: U = \pi D \int_b^a \big[w''^2 + w'^2/r^2 + 2\nu\,w'' w'/r\big]\, r\, dr.
+
+    Решение кольца содержит ln r — на [b, a] (b > 0) он аналитичен, поэтому
+    полиномиальный Ритц сходится спектрально (ворота: rel < 1e-8 при p=16).
+    """
+
+    def __init__(self, a: float, b: float, D: float, p: int = 16, nq: int = 400):
+        if not 0.0 < b < a:
+            raise ValueError("Кольцо требует 0 < b < a.")
+        self.a, self.b, self.D, self.p = a, b, D, p
+        r, W = _gauss_interval(a, b, nq)
+        phi, phip, phipp = _cheb_interval_tables(p, r, a, b)
+        g = ((a - r) * (r - b)) ** 2                 # ω², ω = (a−r)(r−b)
+        om = (a - r) * (r - b)
+        omp = a + b - 2.0 * r                        # ω'
+        gp = 2.0 * om * omp                          # (ω²)'
+        gpp = 2.0 * (omp**2 - 2.0 * om)              # (ω²)'' (ω'' = −2)
+        psi = g * phi
+        psip = gp * phi + g * phip
+        psipp = gpp * phi + 2.0 * gp * phip + g * phipp
+        self._psi, self._r, self._W = psi, r, W
+        self._psip, self._psipp = psip, psipp
+
+    def solve(self, q: float, nu: float):
+        """Коэффициенты под равномерной нагрузкой ``q``; ν входит в энергию."""
+        r, W = self._r, self._W
+        psip, psipp = self._psip, self._psipp
+        integ = (psipp[:, None, :] * psipp[None, :, :] * r
+                 + psip[:, None, :] * psip[None, :, :] / r
+                 + nu * (psipp[:, None, :] * psip[None, :, :]
+                         + psip[:, None, :] * psipp[None, :, :]))
+        K = self.D * np.einsum("jkq,q->jk", integ, W)
+        f = np.einsum("jq,q->j", self._psi, np.full_like(r, q) * r * W)
+        self.cond = float(np.linalg.cond(K))
+        self.coef = np.linalg.solve(K, f)
+        return self.coef
+
+    def deflection(self, r) -> np.ndarray:
+        r = np.asarray(r, float)
+        phi, _, _ = _cheb_interval_tables(self.p, r, self.a, self.b)
+        return ((self.a - r) * (r - self.b)) ** 2 * np.tensordot(self.coef, phi, axes=(0, 0))
+
+
+class RadialPoissonAnnulus:
+    r"""Радиальная Пуассона на кольце: ``−Δu = f``, ``u(a) = u(b) = 0``.
+
+    Структура ``u = ω·Φ(r)``, ω = (a − r)(r − b); осесимметричная форма
+    Дирихле ``A_jk = ∫_b^a ψ_j' ψ_k' r dr`` (кирпич «мягкого шарнира»).
+    """
+
+    def __init__(self, a: float, b: float, p: int = 16, nq: int = 400):
+        if not 0.0 < b < a:
+            raise ValueError("Кольцо требует 0 < b < a.")
+        self.a, self.b, self.p = a, b, p
+        r, W = _gauss_interval(a, b, nq)
+        phi, phip, _ = _cheb_interval_tables(p, r, a, b)
+        g = (a - r) * (r - b)
+        gp = a + b - 2.0 * r
+        psi = g * phi
+        psip = gp * phi + g * phip
+        self.A = np.einsum("jq,kq,q->jk", psip, psip, r * W)
+        self._psi, self._r, self._W = psi, r, W
+
+    def solve(self, f_values) -> np.ndarray:
+        b_vec = np.einsum("jq,q->j", self._psi,
+                          np.asarray(f_values, float) * self._r * self._W)
+        return np.linalg.solve(self.A, b_vec)
+
+    def eval_nodes(self, coef) -> np.ndarray:
+        """Значения u в узлах квадратуры (правая часть второй Пуассоны)."""
+        return np.tensordot(np.asarray(coef, float), self._psi, axes=(0, 0))
+
+    def deflection(self, coef, r) -> np.ndarray:
+        r = np.asarray(r, float)
+        phi, _, _ = _cheb_interval_tables(self.p, r, self.a, self.b)
+        return ((self.a - r) * (r - self.b)) * np.tensordot(np.asarray(coef, float),
+                                                            phi, axes=(0, 0))
+
+
+def solve_radial_soft_hinge_annulus(a: float, b: float, D: float, q: float,
+                                    p: int = 16, nq: int = 400):
+    r"""Мягкий шарнир на кольце радиально: две Пуассоны, как в 2D-расщеплении.
+
+    ``−ΔM = q, M(a)=M(b)=0``; затем ``−Δw = M/D, w(a)=w(b)=0``.
+    Returns ``(rp, cw)``; поле — ``rp.deflection(cw, r)``.
+    """
+    rp = RadialPoissonAnnulus(a, b, p, nq)
+    cM = rp.solve(np.full(rp._r.size, q))
+    M_nodes = rp.eval_nodes(cM)
+    cw = rp.solve(M_nodes / D)
+    return rp, cw
+
+
+__all__ = [
+    "RadialClamped",
+    "RadialPoisson",
+    "solve_radial_soft_hinge",
+    "RadialClampedAnnulus",
+    "RadialPoissonAnnulus",
+    "solve_radial_soft_hinge_annulus",
+]

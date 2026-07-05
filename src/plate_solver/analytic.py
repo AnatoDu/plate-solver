@@ -116,6 +116,72 @@ def circular_plate_soft_hinge_wmax(q: float, a: float, D: float) -> float:
     return 3.0 * q * a**4 / (64.0 * D)
 
 
+# --------------------------------------------------------------------------- #
+#  Кольцо b < r < a, равномерная нагрузка (P3.2 фазы 2)
+# --------------------------------------------------------------------------- #
+ANNULUS_BCS = ("clamped", "soft", "true_ss")
+
+
+def _annulus_coeffs(a: float, b: float, q: float, D: float, bc: str, nu: float) -> np.ndarray:
+    r"""Константы C1..C4 общего осесимметричного решения бигармоники на кольце.
+
+    .. math:: w(r) = \frac{q r^4}{64 D} + C_1 + C_2 r^2
+              + C_3 \ln\frac{r}{a} + C_4 r^2 \ln\frac{r}{a}
+
+    (каждое слагаемое однородной части бигармонично). Краевые условия на
+    r = a и r = b (по два на край) дают систему 4×4 (numpy.linalg.solve):
+
+    * ``clamped``: w = 0, w' = 0;
+    * ``soft`` (модель расщепления, «мягкий шарнир»): w = 0, Δw = 0;
+    * ``true_ss`` (истинное опирание Кирхгофа, только для model_gap):
+      w = 0, M_r = −D (w'' + ν w'/r) = 0.
+    """
+    if not 0.0 < b < a:
+        raise ValueError("Кольцо требует 0 < b < a.")
+    if bc not in ANNULUS_BCS:
+        raise ValueError(f"Неизвестное закрепление {bc!r}; ожидается {ANNULUS_BCS}.")
+    rows: list[list[float]] = []
+    rhs: list[float] = []
+    for r0 in (a, b):
+        L = np.log(r0 / a)
+        # строка w: [1, r², ln(r/a), r² ln(r/a)] и частное решение q r⁴/(64D)
+        rows.append([1.0, r0**2, L, r0**2 * L])
+        rhs.append(-q * r0**4 / (64.0 * D))
+        if bc == "clamped":                      # w' = 0
+            rows.append([0.0, 2.0 * r0, 1.0 / r0, 2.0 * r0 * L + r0])
+            rhs.append(-q * r0**3 / (16.0 * D))
+        elif bc == "soft":                       # Δw = w'' + w'/r = 0
+            rows.append([0.0, 4.0, 0.0, 4.0 * L + 4.0])
+            rhs.append(-q * r0**2 / (4.0 * D))
+        else:                                    # true_ss: w'' + ν w'/r = 0
+            rows.append([0.0, 2.0 * (1.0 + nu), (nu - 1.0) / r0**2,
+                         (2.0 * L + 3.0) + nu * (2.0 * L + 1.0)])
+            rhs.append(-(12.0 + 4.0 * nu) * q * r0**2 / (64.0 * D))
+    return np.linalg.solve(np.array(rows), np.array(rhs))
+
+
+def annulus_uniform(r, a: float, b: float, q: float, D: float,
+                    bc: str = "clamped", nu: float = 0.3):
+    r"""Прогиб кольца b < r < a под равномерной нагрузкой q (Кирхгоф, осесимметрия).
+
+    Эталон P3.2: общее решение с константами из :func:`_annulus_coeffs`;
+    ``bc = clamped | soft | true_ss`` (см. там же). Для ``soft`` эталон
+    модельно-согласован с расщеплением (NOTES §8): на кольце обе границы
+    криволинейны, поэтому soft ≠ true_ss при ν ≠ 1.
+    """
+    C = _annulus_coeffs(a, b, q, D, bc, nu)
+    r = np.asarray(r, float)
+    L = np.log(r / a)
+    return q * r**4 / (64.0 * D) + C[0] + C[1] * r**2 + C[2] * L + C[3] * r**2 * L
+
+
+def annulus_uniform_wmax(a: float, b: float, q: float, D: float,
+                         bc: str = "clamped", nu: float = 0.3) -> float:
+    """Максимальный |w| кольца (плотная выборка по радиусу; максимум не в центре)."""
+    r = np.linspace(b, a, 4001)
+    return float(np.max(np.abs(annulus_uniform(r, a, b, q, D, bc, nu))))
+
+
 __all__ = [
     "clamped_uniform",
     "clamped_uniform_wmax",
@@ -128,4 +194,7 @@ __all__ = [
     "circular_plate_simply_supported",
     "circular_plate_soft_hinge",
     "circular_plate_soft_hinge_wmax",
+    "ANNULUS_BCS",
+    "annulus_uniform",
+    "annulus_uniform_wmax",
 ]
