@@ -203,6 +203,7 @@ class ContactSpec:
     """
 
     enabled: bool = False
+    target: str = "foundation"          # foundation | plate2 (A4: две пластины)
     gap: float | None = None
     gap_factor: float | None = None
     gap_field: GapSpec | None = None
@@ -212,6 +213,22 @@ class ContactSpec:
     tol: float | None = None
     stop: str | None = None
     zone: GeometrySpec | None = None
+
+
+@dataclass(frozen=True)
+class Plate2Spec:
+    """Вторая пластина (A4, ``[plate2]``; обязательна при contact.target=plate2).
+
+    ``bc`` и ``load`` обязательны; ``geometry``/``model``/``discretization``
+    со значением None наследуются от первой пластины (дефолт — та же
+    планформа и та же дискретизация).
+    """
+
+    bc: BCSpec
+    load: LoadSpec
+    geometry: GeometrySpec | None = None
+    model: ModelSpec | None = None
+    discretization: DiscretizationSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -250,6 +267,7 @@ class Problem:
     load: LoadSpec
     model: ModelSpec = field(default_factory=ModelSpec)
     contact: ContactSpec = field(default_factory=ContactSpec)
+    plate2: Plate2Spec | None = None
     discretization: DiscretizationSpec = field(default_factory=DiscretizationSpec)
     verify: VerifySpec = field(default_factory=VerifySpec)
     output: OutputSpec = field(default_factory=OutputSpec)
@@ -275,7 +293,8 @@ class Problem:
         if not isinstance(data, dict):
             _fail("case", type(data).__name__, "таблица секций TOML", "схема")
         _require_keys("case", data, {"geometry", "bc", "load", "model", "contact",
-                                     "discretization", "verify", "output"}, "схема")
+                                     "plate2", "discretization", "verify", "output"},
+                      "схема")
         for sec in ("geometry", "bc", "load"):
             if sec not in data:
                 _fail(sec, None, f"обязательная секция [{sec}]", sec)
@@ -285,12 +304,14 @@ class Problem:
         load = _parse_load(data["load"])
         model = _parse_model(data.get("model", {}))
         contact = _parse_contact(data.get("contact", {}))
+        plate2 = _parse_plate2(data["plate2"]) if "plate2" in data else None
         disc = _parse_discretization(data.get("discretization", {}))
         verify = _parse_verify(data.get("verify", {}))
         output = _parse_output(data.get("output", {}))
 
         problem = cls(geometry=geometry, bc=bc, load=load, model=model, contact=contact,
-                      discretization=disc, verify=verify, output=output, source=source)
+                      plate2=plate2, discretization=disc, verify=verify, output=output,
+                      source=source)
         _validate_cross(problem)
         return problem
 
@@ -541,17 +562,20 @@ def _parse_contact(data) -> ContactSpec:
     if not isinstance(data, dict):
         _fail("contact", data, "таблица (секция TOML)", "contact")
     _require_keys("contact", data,
-                  {"enabled", "gap", "gap_factor", "force", "beta", "max_iter",
-                   "tol", "stop", "zone"},
+                  {"enabled", "target", "gap", "gap_factor", "force", "beta",
+                   "max_iter", "tol", "stop", "zone"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
+    target = data.get("target", "foundation")
+    if target not in ("foundation", "plate2"):
+        _fail("contact.target", target, "foundation | plate2", "contact")
     gap_raw = data.get("gap")
     gap = None
     gap_field = None
     if isinstance(gap_raw, dict):                     # [contact.gap] — поле Δ(x, y)
         gap_field = _parse_gap_field(gap_raw)
     else:
-        gap = _number("contact", data, "gap", "contact", positive=True)
+        gap = _number("contact", data, "gap", "contact")
     gap_factor = _number("contact", data, "gap_factor", "contact", positive=True)
     beta = _number("contact", data, "beta", "contact", positive=True)
     max_iter = _integer("contact", data, "max_iter", "contact", minimum=1)
@@ -569,9 +593,31 @@ def _parse_contact(data) -> ContactSpec:
                    "[contact.gap]": None if gap_field is None else gap_field.kind},
                   "ровно одно из gap | gap_factor | таблица [contact.gap] "
                   "при enabled = true (либо силовой режим force)", "contact")
-    return ContactSpec(enabled=enabled, gap=gap, gap_factor=gap_factor,
+    return ContactSpec(enabled=enabled, target=target, gap=gap,
+                       gap_factor=gap_factor,
                        gap_field=gap_field, force=force, beta=beta,
                        max_iter=max_iter, tol=tol, stop=stop, zone=zone)
+
+
+def _parse_plate2(data) -> Plate2Spec:
+    """Секция ``[plate2]`` (A4): bc и load обязательны, прочее — от первой."""
+    if not isinstance(data, dict):
+        _fail("plate2", data, "таблица (секция TOML)", "plate2")
+    _require_keys("plate2", data, {"bc", "load", "geometry", "model",
+                                   "discretization"}, "plate2")
+    for key in ("bc", "load"):
+        if key not in data:
+            _fail(f"plate2.{key}", None, f"обязательная подсекция [plate2.{key}]",
+                  "plate2")
+    return Plate2Spec(
+        bc=_parse_bc(data["bc"]),
+        load=_parse_load(data["load"]),
+        geometry=(_parse_geometry("plate2.geometry", data["geometry"])
+                  if "geometry" in data else None),
+        model=_parse_model(data["model"]) if "model" in data else None,
+        discretization=(_parse_discretization(data["discretization"])
+                        if "discretization" in data else None),
+    )
 
 
 def _parse_discretization(data) -> DiscretizationSpec:
@@ -615,6 +661,26 @@ def _parse_output(data) -> OutputSpec:
 #  Перекрёстная валидация (несовместимости v0.2)
 # --------------------------------------------------------------------------- #
 def _validate_cross(p: Problem) -> None:
+    c = p.contact
+    if c.target == "plate2" or p.plate2 is not None:
+        if not (c.enabled and c.target == "plate2" and p.plate2 is not None):
+            _fail("contact.target", c.target,
+                  "plate2 вместе с секцией [plate2] (и contact.enabled=true)",
+                  "plate2")
+        if c.force is not None:
+            _fail("contact.force", c.force,
+                  "отсутствие force — силовое управление парой пластин "
+                  "отложено (фаза 5)", "plate2")
+        theories = {p.model.theory,
+                    p.plate2.model.theory if p.plate2.model is not None else "classic"}
+        if theories != {"classic"}:
+            _fail("model.theory", sorted(theories),
+                  "classic — КТН для пары пластин отложен (фаза 5)", "plate2")
+        if c.gap is not None and c.gap < 0:
+            _fail("contact.gap", c.gap, "число ≥ 0 (Δ=0 — касание пластин)",
+                  "plate2")
+    elif c.enabled and c.gap is not None and c.gap <= 0:
+        _fail("contact.gap", c.gap, "число > 0 (жёсткое основание)", "contact")
     if p.verify.reference == "analytic" and p.geometry.kind == "compose":
         _fail("verify.reference", "analytic",
               "mms | fem | none — для compose-геометрии аналитического эталона нет", "verify")
@@ -636,6 +702,7 @@ __all__ = [
     "DiscretizationSpec",
     "VerifySpec",
     "OutputSpec",
+    "Plate2Spec",
     "GEOMETRY_KINDS",
     "GAP_KINDS",
     "GapSpec",

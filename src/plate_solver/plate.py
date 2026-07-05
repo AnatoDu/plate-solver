@@ -71,6 +71,26 @@ class PlateBending:
         """Поле «суммарного момента» ``M = ω·Σ cM_k T_k`` в точках (X, Y)."""
         return self.poisson.evaluate(cM, X, Y)
 
+    def load_vector(self, f_values) -> np.ndarray:
+        """Вектор нагрузки (P1) ``b[k] = ∫ f ψ_k`` (внешние правые части, A4)."""
+        return self.poisson.load_vector(f_values)
+
+    def solve_from_b(self, b1):
+        r"""Решить изгиб по ГОТОВОМУ вектору нагрузки (P1) (A4: пара пластин).
+
+        Нужен, когда нагрузка содержит вклад реакции, интегрируемый по ЧУЖОЙ
+        квадратуре (∫ r ψ_k по узлам первой пластины) — интерполяции r нет.
+        """
+        cM = self.poisson.solve_b(b1)
+        M_nodes = self.poisson.evaluate_at_quad(cM)
+        cw = self.poisson.solve(M_nodes / self.D)
+        return cM, cw
+
+    def structure_at(self, X, Y) -> np.ndarray:
+        """Матрица структуры ψ_k = ω·T_k в произвольных точках: (N, len(X)) (A4)."""
+        Phi = self.basis.values(X, Y)
+        return self.domain.omega(X, Y) * Phi
+
     # -- протокол контакта (общий с ClampedPlate; фаза 3, A3.3) ------------ #
     def w_at_quad(self, state) -> np.ndarray:
         """Прогиб в узлах квадратуры; state = (cM, cw) из :meth:`solve`."""

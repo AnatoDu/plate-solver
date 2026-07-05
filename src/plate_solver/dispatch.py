@@ -206,7 +206,11 @@ def _load_values(problem: Problem, dom, quad, warnings: list[str]):
 
     None означает «равномерная cfg.q0» (путь решателей без изменений).
     """
-    load = problem.load
+    return _load_values_spec(problem.load, dom, quad, warnings)
+
+
+def _load_values_spec(load, dom, quad, warnings: list[str]):
+    """То же по произвольной LoadSpec (вторая пластина, A4)."""
     if load.type == "uniform":
         return None, float(load.q0), None
 
@@ -367,6 +371,10 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
                                advice="увеличьте Q или зону")
         fmask = lambda X, Y: zone_mask                          # noqa: E731
 
+    if c.target == "plate2":                                    # пара пластин (A4)
+        return _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
+                                 w_free, zone_mask)
+
     if c.force is not None:                                     # силовой штамп (A2)
         return _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
                                     state_free, w_free, zone_mask, fmask)
@@ -405,6 +413,87 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
+    return res
+
+
+def _plate2_solver(problem: Problem, cfg: Config, dom):
+    """Построить решатель второй пластины по [plate2] (дефолты — от первой)."""
+    import dataclasses
+
+    p2 = problem.plate2
+    dom2 = build_domain(p2.geometry) if p2.geometry is not None else dom
+    kw = {}
+    model2 = p2.model
+    if model2 is not None:
+        for attr in ("E", "nu", "h"):
+            v = getattr(model2, attr)
+            if v is not None:
+                kw[attr] = v
+    disc2 = p2.discretization
+    if disc2 is not None:
+        for attr in ("p", "Q", "grid_n"):
+            v = getattr(disc2, attr)
+            if v is not None:
+                kw[attr] = v
+    if p2.load.q0 is not None:
+        kw["q0"] = p2.load.q0
+    cfg2 = dataclasses.replace(cfg, **kw)
+    if p2.bc.type == "clamped":
+        return ClampedPlate.from_config(dom2, cfg2), cfg2, dom2
+    return PlateBending.from_config(dom2, cfg2), cfg2, dom2
+
+
+def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
+                      w_free, zone_mask) -> Result:
+    r"""Контакт двух пластин (A4): r ← [r + β((w₁ − w₂) − Δ)]₊, нагрузки q₁−r и q₂+r.
+
+    Узлы контакта — квадратура первой пластины, маскированная ω₂ > 0 и зоной;
+    межсеточного переноса нет (см. докстринг :class:`TwoPlateMOR`).
+    """
+    from .contact import TwoPlateMOR
+
+    c = problem.contact
+    q1 = solver.quad
+    solver2, cfg2, dom2 = _plate2_solver(problem, cfg, dom)
+    f2_values, q02_eff, _ = _load_values_spec(problem.plate2.load, dom2,
+                                              solver2.quad, warnings)
+    if q02_eff != cfg2.q0:
+        cfg2.q0 = q02_eff
+
+    # зазор: скаляр (≥ 0, Δ=0 — касание) | gap_factor·w_free₁ | поле на узлах первой
+    if c.gap is not None:
+        gap_val = float(c.gap)
+    elif c.gap_factor is not None:
+        gap_val = c.gap_factor * w_free
+    elif c.gap_field is not None:
+        gap_val = _gap_field_values(c.gap_field, q1)
+    else:
+        gap_val = 0.0
+
+    try:
+        mor = TwoPlateMOR(solver, solver2, cfg, f1_values=f_values,
+                          f2_values=f2_values, q2=cfg2.q0,
+                          gap=gap_val, zone_mask=zone_mask)
+    except ValueError as e:
+        raise CaseError(f"contact.target: {e} см. {_SCHEMA_DOC}#plate2") from None
+    n_nodes = int(mor.mask.sum())
+    if n_nodes < MIN_ZONE_NODES:
+        raise CaseError(
+            f"contact.target: получено {n_nodes} узлов в пересечении планформ, "
+            f"ожидалось ≥ {MIN_ZONE_NODES} — увеличьте Q или пересечение, "
+            f"см. {_SCHEMA_DOC}#plate2")
+    cres = mor.solve()
+    delta_repr = (float(np.min(gap_val[mor.mask])) if np.ndim(gap_val)
+                  else float(gap_val))
+    res = Result(problem=problem, config=cfg,
+                 w_max=float(np.max(np.abs(cres.w_nodes))),
+                 cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
+                 w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
+                 delta=delta_repr, w_free_max=w_free,
+                 w_max_classic=float(np.max(np.abs(cres.w_nodes))))
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", cres.cw)
+    object.__setattr__(res, "_plate2_ref", solver2)
     return res
 
 

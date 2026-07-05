@@ -1,0 +1,41 @@
+# CI-копия two_plates_equal (лёгкая).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+target = "plate2"
+gap = 0.0
+beta = 1.0
+max_iter = 800
+tol = 1.0e-12
+
+[plate2]
+[plate2.bc]
+type = "soft_hinge"
+[plate2.load]
+type = "uniform"
+q0 = 2.0
+
+[discretization]
+p = 6
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "none"
+
+[output]
+dir = "results/ci/two_plates_equal"

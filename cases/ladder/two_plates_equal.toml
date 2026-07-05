@@ -1,0 +1,43 @@
+# Пара пластин, ворота (a): равные планформы, обе soft, Δ=0, q1 > q2 (A4.4).
+# Континуальное решение r ≡ (q1−q2)/2 — неподвижная точка схемы; узловое r
+# при полном контакте неединственно (PROGRESS) — гейты в test_two_plates.
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+target = "plate2"
+gap = 0.0
+beta = 1.0
+max_iter = 3000
+tol = 1.0e-12
+
+[plate2]
+[plate2.bc]
+type = "soft_hinge"
+[plate2.load]
+type = "uniform"
+q0 = 2.0
+
+[discretization]
+p = 6
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "none"
+
+[output]
+dir = "results/ladder/two_plates_equal"
