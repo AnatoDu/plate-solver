@@ -34,12 +34,19 @@ _CROSS_1D_NQ = 400
 
 @dataclass(frozen=True)
 class Reference:
-    """Именованный эталон: имя, значение w_max, участвует ли в допуске tol."""
+    """Именованный эталон: имя, значение w_max, участвует ли в допуске tol.
+
+    ``value`` — сравниваемое значение: None ⇒ ``result.w_max`` (analytic,
+    cross_1d, model_gap); для ``mms`` эталон гоняет СВОЙ прогон с
+    изготовленной нагрузкой и кладёт сюда его w_max — это сертификат
+    метода на данной постановке (та же геометрия и дискретизация).
+    """
 
     name: str
-    kind: str            # analytic | cross_1d | model_gap
+    kind: str            # analytic | cross_1d | model_gap | mms
     w_max: float
     gated: bool
+    value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +158,53 @@ def _cross_1d_wmax(problem: Problem, cfg) -> float:
     return float(np.max(np.abs(rp.deflection(cw, r))))
 
 
+def _mms_reference(problem: Problem, cfg) -> Reference:
+    r"""MMS-эталон (P3.8): обёртка MMS-шагов ladder.py для rectangle/circle.
+
+    Изготовленное решение ``w_MMS`` и нагрузка ``q = D·Δ²w_MMS`` (sympy);
+    защемлённый решатель на ТОЙ ЖЕ дискретизации (p, Q) обязан воспроизвести
+    ``w_MMS``. Для прямоугольника ω берётся ПОЛИНОМИАЛЬНОЙ
+    (``(a²−ξ²)(b²−η²)``, НЕ R-функция) — тогда и решение в структуре, и
+    квадратура точна ⇒ машинная точность (NOTES §14). Для круга граница
+    кривая ⇒ остаток задаёт ступенчатая маска ~1/Q.
+    """
+    import sympy as sp  # noqa: F401 — символика внутри ladder
+
+    from .clamped import ClampedPlate
+    from .geometry import Domain
+    from .geometry import x as sx
+    from .geometry import y as sy
+    from .ladder import mms_clamped_disk_w, mms_load_and_exact
+
+    if problem.bc.type != "clamped":
+        _fail("verify.reference", "mms",
+              "clamped-постановки (MMS-шаги лестницы — защемление; для "
+              "soft_hinge — analytic | fem | none)")
+    g = problem.geometry
+    if g.kind == "rectangle":
+        cx, cy = 0.5 * (g.x1 + g.x2), 0.5 * (g.y1 + g.y2)
+        ax, ay = 0.5 * (g.x2 - g.x1), 0.5 * (g.y2 - g.y1)
+        w_expr = ((sx - cx) ** 2 - ax**2) ** 2 * ((sy - cy) ** 2 - ay**2) ** 2
+        omega = (ax**2 - (sx - cx) ** 2) * (ay**2 - (sy - cy) ** 2)
+        dom = Domain(omega, (g.x1, g.x2, g.y1, g.y2))     # полиномиальная ω
+    elif g.kind == "circle":
+        w_expr = mms_clamped_disk_w(g.a, cfg.D)
+        from .dispatch import build_domain
+
+        dom = build_domain(g)
+    else:
+        _fail("verify.reference", "mms",
+              "rectangle | circle (MMS-поля лестницы, NOTES §14)")
+    q_func, w_func = mms_load_and_exact(w_expr, cfg.D)
+    cp = ClampedPlate.from_config(dom, cfg)
+    qn = cp.quad
+    c = cp.solve(q_func(qn.x, qn.y))
+    w_num = float(np.max(np.abs(cp.deflection(c, qn.x, qn.y))))
+    w_ex = float(np.max(np.abs(w_func(qn.x, qn.y))))
+    return Reference(name=f"mms (изготовленное решение, {g.kind}, clamped)",
+                     kind="mms", w_max=w_ex, gated=True, value=w_num)
+
+
 # --------------------------------------------------------------------------- #
 #  Резолвер и отчёт
 # --------------------------------------------------------------------------- #
@@ -171,9 +225,11 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
         refs.append(Reference(
             name=f"analytic ({problem.geometry.kind}, {problem.bc.type})",
             kind="analytic", w_max=_analytic_wmax(problem, cfg), gated=True))
-    elif v.reference in ("fem", "mms"):
-        _fail("verify.reference", v.reference,
-              "analytic | none — fem подключается в P3.6, mms — в P3.8")
+    elif v.reference == "mms":
+        refs.append(_mms_reference(problem, cfg))
+    elif v.reference == "fem":
+        _fail("verify.reference", "fem",
+              "analytic | mms | none — fem подключается в P3.6")
     if v.cross_1d:
         refs.append(Reference(
             name=f"1D-Ритц по радиусу ({problem.geometry.kind}, {problem.bc.type})",
@@ -193,8 +249,9 @@ def verify_result(result: Result) -> VerifyReport:
     tol = problem.verify.tol
     rows = []
     for ref in refs:
-        rel = abs(result.w_max - ref.w_max) / abs(ref.w_max)
-        rows.append(RefRow(name=ref.name, reference=ref.w_max, value=result.w_max,
+        value = result.w_max if ref.value is None else ref.value
+        rel = abs(value - ref.w_max) / abs(ref.w_max)
+        rows.append(RefRow(name=ref.name, reference=ref.w_max, value=value,
                            rel=rel, gated=ref.gated,
                            passed=(rel <= tol) if ref.gated else None))
     return VerifyReport(rows=tuple(rows), tol=tol)
