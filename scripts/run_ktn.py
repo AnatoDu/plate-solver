@@ -46,7 +46,9 @@ def run_ktn_golden(cfg, Delta, classic_res):
     }
     data["peak_ratio"] = data["ktn"]["peak"] / data["classic"]["peak"]
     data["rough_ratio"] = data["ktn"]["rough"] / data["classic"]["rough"]
-    data["wmax_corr_pct"] = 100.0 * (data["ktn"]["w_max"] - data["classic"]["w_max"]) / data["classic"]["w_max"]
+    data["wmax_corr_pct"] = (
+        100.0 * (data["ktn"]["w_max"] - data["classic"]["w_max"]) / data["classic"]["w_max"]
+    )
 
     # Фигура: классика vs КТН, общая цветовая шкала (vmax по классике).
     vmax = float(np.nanmax(rc.r_grid))
@@ -59,7 +61,8 @@ def run_ktn_golden(cfg, Delta, classic_res):
                        levels=[0.5], colors="cyan", linewidths=1.2)
         ax.contour(res.Xg, res.Yg, dom.omega(res.Xg, res.Yg), levels=[0], colors="k", linewidths=1)
         ax.set_aspect("equal")
-        ax.set_title(f"{title}\nпик r = {res.r_nodes.max():.1f}, узлов {int((res.r_nodes > 0).sum())}")
+        ax.set_title(f"{title}\nпик r = {res.r_nodes.max():.1f}, "
+                     f"узлов {int((res.r_nodes > 0).sum())}")
     fig.colorbar(pcm, ax=axes, label="реакция r", shrink=0.8)
     fig.suptitle(f"Контактная реакция: классика vs КТН (h={cfg.h_ktn}, Δ={Delta:.2e}) — "
                  "КТН снимает сингулярность штампа", fontsize=12)

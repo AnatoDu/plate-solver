@@ -88,7 +88,8 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
     A("| Модель | w_max | отн. L² к RFM |")
     A("|---|---|---|")
     A(f"| RFM (расщепление) | {verify['rfm_w_max']:.6e} | — |")
-    A(f"| FEM-Marcus (P2) | {verify['marcus_w_max']:.6e} | **{verify['rfm_vs_marcus_pct']:.2f} %** |")
+    A(f"| FEM-Marcus (P2) | {verify['marcus_w_max']:.6e} | "
+      f"**{verify['rfm_vs_marcus_pct']:.2f} %** |")
     A(f"| FEM-Kirchhoff (Морли) | {verify['kirch_w_max']:.6e} | "
       f"**{verify['rfm_vs_kirchhoff_pct']:.2f} %** (парадокс Сапонджяна) |")
     A(f"\nДвойная проверка: `w_free = {w_free:.6e}` ≈ `RFM w_max = {verify['rfm_w_max']:.6e}` "
@@ -102,7 +103,8 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
     A(f"| итераций МОР | {contact['iters']} |")
     A(f"| невязка ‖Δr‖ | {contact['residual_first']:.2e} → {contact['residual_last']:.2e} "
       f"(падение ×{contact['residual_drop']:.0f}, монотонно) |")
-    A(f"| узлов в контакте | {contact['n_contact']} из {contact['n_total']} (узлы квадратуры Q={cfg.Q_lshape}) |")
+    A(f"| узлов в контакте | {contact['n_contact']} из {contact['n_total']} "
+      f"(узлы квадратуры Q={cfg.Q_lshape}) |")
     A(f"| реакция | r ≥ 0 (min={contact['r_min']:.2e}), пик = {contact['r_max']:.3e} |")
     A(f"| пик реакции | точка ({contact['peak_xy'][0]:.3f}, {contact['peak_xy'][1]:.3f}), "
       f"`d` до угла (0.5,0.5) = {contact['d_corner']:.3f} |")
@@ -112,7 +114,8 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
 
     # --- 4.3 КТН ---
     A("\n## Таблица 4.3 — поправки КТН (классика ↔ КТН)\n")
-    A(f"`h={ktn['h']}` (h/L≈{ktn['h']/cfg.L_cut:.2f}), тот же `Δ = {Delta:.6e}`, основание под всей Ω. "
+    A(f"`h={ktn['h']}` (h/L≈{ktn['h']/cfg.L_cut:.2f}), тот же `Δ = {Delta:.6e}`, "
+      "основание под всей Ω. "
       f"Длины поправок: `h_Ψ²={ktn['h_psi2']:.3e}`, `h_*²={ktn['h_star2']:.3e}`, "
       f"коэф. кривизны `2h_*²−h_Ψ²={ktn['c_curv']:.3e}`.\n")
     A("| Величина | классика | КТН | отношение |")
@@ -127,7 +130,8 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
     # --- фигуры + воспроизведение ---
     A("\n## Фигуры (из этой же серии)\n")
     A(f"- `figures/circle_w_surface.png` — поверхность прогиба круга (p={cfg.p}).")
-    A("- `figures/lshape_contact_summary.png` — планшет контакта (прогиб, реакция, зона, сходимость).")
+    A("- `figures/lshape_contact_summary.png` — планшет контакта "
+      "(прогиб, реакция, зона, сходимость).")
     A("- `figures/ktn_reaction_compare.png` — классика vs КТН при едином Δ.\n")
     n_gates = _count_gates()
     gates_txt = f"{n_gates} ворот-тестов" if n_gates is not None else "ворота-тесты"
@@ -167,7 +171,8 @@ def main():
     ktn, fig_t = run_ktn_golden(cfg, Delta, classic_res)
     _save(fig_t, cfg, "ktn_reaction_compare.png")
     print(f"[4] КТН: пик ×{ktn['peak_ratio']:.3f}, узлы ×"
-          f"{ktn['ktn']['nodes'] / ktn['classic']['nodes']:.2f}, w_max {ktn['wmax_corr_pct']:+.1f} %")
+          f"{ktn['ktn']['nodes'] / ktn['classic']['nodes']:.2f}, "
+          f"w_max {ktn['wmax_corr_pct']:+.1f} %")
 
     # --- инварианты ---
     assert contact["r_min"] >= 0, "реакция должна быть >= 0"

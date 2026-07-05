@@ -34,8 +34,10 @@ def main() -> None:
     d = run_lshape_verify_golden(cfg)
     print(f"L-форма (h={cfg.h_ktn}), точек сверки {d['n_points']}")
     print(f"  RFM           w_max = {d['rfm_w_max']:.4e}")
-    print(f"  FEM-Marcus    w_max = {d['marcus_w_max']:.4e}   RFM↔Marcus = {d['rfm_vs_marcus_pct']:.3f} %")
-    print(f"  FEM-Kirchhoff w_max = {d['kirch_w_max']:.4e}   RFM↔Kirchhoff = {d['rfm_vs_kirchhoff_pct']:.3f} %")
+    print(f"  FEM-Marcus    w_max = {d['marcus_w_max']:.4e}   "
+          f"RFM↔Marcus = {d['rfm_vs_marcus_pct']:.3f} %")
+    print(f"  FEM-Kirchhoff w_max = {d['kirch_w_max']:.4e}   "
+          f"RFM↔Kirchhoff = {d['rfm_vs_kirchhoff_pct']:.3f} %")
 
 
 if __name__ == "__main__":

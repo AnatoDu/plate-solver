@@ -24,7 +24,7 @@ def main() -> None:
     print(f"Жёсткость D = {mat.D:.3e} Н·м")
     print(f"Макс. прогиб (центр): {analytic.clamped_uniform_wmax(a, q, mat.D):.3e} м")
     print("Профиль w(r):")
-    for ri, wi in zip(r, w):
+    for ri, wi in zip(r, w, strict=True):
         print(f"  r={ri:.3f} м   w={wi:.3e} м")
 
 

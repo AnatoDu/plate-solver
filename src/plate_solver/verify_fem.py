@@ -81,7 +81,9 @@ class FemSolution:
         return np.asarray(self.basis.interpolator(self.w)(P), dtype=float)
 
 
-def solve_plate_fem(mesh, D: float, q: float, model: str = "kirchhoff", nu: float = 0.3) -> FemSolution:
+def solve_plate_fem(
+    mesh, D: float, q: float, model: str = "kirchhoff", nu: float = 0.3
+) -> FemSolution:
     """Решить изгиб пластины на сетке ``mesh`` независимым МКЭ.
 
     Parameters
@@ -169,7 +171,8 @@ class FemComparison:
 
 
 def compare_rfm_vs_fem(
-    cfg, *, side: float = 1.0, cut: float = 0.5, mesh_m: int = 16, refine: int = 3, eps: float = 0.02
+    cfg, *, side: float = 1.0, cut: float = 0.5, mesh_m: int = 16, refine: int = 3,
+    eps: float = 0.02,
 ) -> FemComparison:
     """Полная сверка: RFM (расщепление) против FEM-Marcus и FEM-Kirchhoff на L-форме.
 
