@@ -24,6 +24,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "numpy>=1.24",
     "scipy>=1.10",
+    "sympy>=1.12",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +38,14 @@ Repository = "https://github.com/<your-username>/plate-solver"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Эталон Maple (аналитическое решение задачи со штампом) едет вместе с пакетом.
+plate_solver = ["data/*.txt"]
+
 [tool.pytest.ini_options]
-# pythonpath = ["src"] позволяет запускать `pytest` без установки пакета.
-pythonpath = ["src"]
+# pythonpath = ["src"] позволяет запускать `pytest` без установки пакета;
+# "scripts" нужен тестам-воротам, импортирующим run_*-скрипты (test_ladder и др.).
+pythonpath = ["src", "scripts"]
 testpaths = ["tests"]
 addopts = "-q"
 

@@ -9,7 +9,6 @@ import numpy as np
 
 from plate_solver import analytic
 
-
 A = 1.0       # радиус
 Q = 1.0e4     # нагрузка
 NU = 0.3

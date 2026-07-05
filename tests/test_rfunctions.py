@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from plate_solver import geometry as g
+from plate_solver import rfunctions as g
 
 
 def test_circle_signs():
