@@ -33,6 +33,11 @@ dependencies = [
 dev = ["pytest>=7.0", "ruff>=0.4"]
 fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
 
+[project.scripts]
+# v0.2 (P0.4): plate-solve --new <kind>; решение case-файлов и plate-verify /
+# plate-ladder добавляются в P4.
+plate-solve = "plate_solver.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/AnatoDu/plate-solver"
 Repository = "https://github.com/AnatoDu/plate-solver"
