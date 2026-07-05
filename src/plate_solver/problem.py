@@ -156,19 +156,51 @@ class ModelSpec:
     h: float | None = None
 
 
+GAP_KINDS = ("const", "plane", "paraboloid", "steps")
+
+
+@dataclass(frozen=True)
+class GapSpec:
+    r"""Поле зазора Δ(x, y) (фаза 3, A1): секция ``[contact.gap]``.
+
+    * ``const``: Δ = value (алиас прежнего скалярного ``gap``);
+    * ``plane``: Δ = a·x + b·y + c (наклонное основание);
+    * ``paraboloid``: Δ = apex + ((x−cx)² + (y−cy)²) / (2·r_curv)
+      (неплоский штамп; r_curv — радиус кривизны в вершине);
+    * ``steps``: Δ = base, в зонах ``[[contact.gap.zones]]`` — своё value
+      (несколько штампов разной высоты; зоны применяются по порядку).
+
+    Положительность Δ на основании проверяется диспетчером (зависит от Ω).
+    Произвольное поле — только через API (``ContactMOR(gap=массив)``).
+    """
+
+    kind: str
+    value: float | None = None          # const
+    a: float | None = None              # plane
+    b: float | None = None
+    c: float | None = None
+    r_curv: float | None = None         # paraboloid
+    cx: float | None = None
+    cy: float | None = None
+    apex: float | None = None
+    base: float | None = None           # steps
+    zones: tuple = ()                   # steps: пары (GeometrySpec, value)
+
+
 @dataclass(frozen=True)
 class ContactSpec:
-    """Односторонний контакт (МОР): жёсткое плоское препятствие, зазор const.
+    """Односторонний контакт (МОР): жёсткое препятствие с зазором.
 
-    Ровно одно из ``gap`` (абсолютный зазор Δ) / ``gap_factor``
-    (Δ = gap_factor·w_free — вычисляется диспетчером). ``zone`` — геометрия
-    зоны препятствия (дефолт: вся Ω — основание; подобласть — плоский штамп).
+    Ровно одно из: ``gap`` (скаляр Δ), ``gap_factor`` (Δ = gap_factor·w_free,
+    вычисляет диспетчер), таблица ``[contact.gap]`` (поле Δ(x, y),
+    :class:`GapSpec`). ``zone`` — геометрия зоны препятствия (дефолт: вся Ω).
     Параметры итерации со значением None берутся из дефолтов Config.
     """
 
     enabled: bool = False
     gap: float | None = None
     gap_factor: float | None = None
+    gap_field: GapSpec | None = None
     beta: float | None = None
     max_iter: int | None = None
     tol: float | None = None
@@ -448,6 +480,57 @@ def _parse_model(data) -> ModelSpec:
     return ModelSpec(theory=theory, E=E, nu=nu, h=h)
 
 
+def _parse_gap_field(data: dict) -> GapSpec:
+    """Секция ``[contact.gap]`` — поле зазора Δ(x, y) (фаза 3, A1.2)."""
+    sec = "contact.gap"
+    kind = data.get("kind")
+    if kind not in GAP_KINDS:
+        _fail(f"{sec}.kind", kind, " | ".join(GAP_KINDS), "contact")
+    if kind == "const":
+        _require_keys(sec, data, {"kind", "value"}, "contact")
+        return GapSpec(kind=kind,
+                       value=_number(sec, data, "value", "contact",
+                                     required=True, positive=True))
+    if kind == "plane":
+        _require_keys(sec, data, {"kind", "a", "b", "c"}, "contact")
+        return GapSpec(kind=kind,
+                       a=_number(sec, data, "a", "contact", required=True),
+                       b=_number(sec, data, "b", "contact", required=True),
+                       c=_number(sec, data, "c", "contact", required=True))
+    if kind == "paraboloid":
+        _require_keys(sec, data, {"kind", "r_curv", "cx", "cy", "apex"}, "contact")
+        apex = _number(sec, data, "apex", "contact", required=True)
+        if apex < 0:
+            _fail(f"{sec}.apex", apex, "число ≥ 0 (зазор в вершине штампа)", "contact")
+        cx = _number(sec, data, "cx", "contact")
+        cy = _number(sec, data, "cy", "contact")
+        return GapSpec(kind=kind,
+                       r_curv=_number(sec, data, "r_curv", "contact",
+                                      required=True, positive=True),
+                       cx=0.0 if cx is None else cx, cy=0.0 if cy is None else cy,
+                       apex=apex)
+    # steps
+    _require_keys(sec, data, {"kind", "base", "zones"}, "contact")
+    base = _number(sec, data, "base", "contact", required=True, positive=True)
+    zones_raw = data.get("zones")
+    if not isinstance(zones_raw, list) or not zones_raw:
+        _fail(f"{sec}.zones", zones_raw,
+              "непустой массив таблиц [[contact.gap.zones]] (геометрия + value)",
+              "contact")
+    zones = []
+    for i, z in enumerate(zones_raw):
+        path = f"{sec}.zones[{i}]"
+        if not isinstance(z, dict) or "value" not in z:
+            _fail(f"{path}.value", None, "число > 0 (зазор в зоне; ключ обязателен)",
+                  "contact")
+        z = dict(z)
+        value = z.pop("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            _fail(f"{path}.value", value, "число > 0", "contact")
+        zones.append((_parse_geometry(path, z), float(value)))
+    return GapSpec(kind=kind, base=base, zones=tuple(zones))
+
+
 def _parse_contact(data) -> ContactSpec:
     if not isinstance(data, dict):
         _fail("contact", data, "таблица (секция TOML)", "contact")
@@ -455,7 +538,13 @@ def _parse_contact(data) -> ContactSpec:
                   {"enabled", "gap", "gap_factor", "beta", "max_iter", "tol", "stop", "zone"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
-    gap = _number("contact", data, "gap", "contact", positive=True)
+    gap_raw = data.get("gap")
+    gap = None
+    gap_field = None
+    if isinstance(gap_raw, dict):                     # [contact.gap] — поле Δ(x, y)
+        gap_field = _parse_gap_field(gap_raw)
+    else:
+        gap = _number("contact", data, "gap", "contact", positive=True)
     gap_factor = _number("contact", data, "gap_factor", "contact", positive=True)
     beta = _number("contact", data, "beta", "contact", positive=True)
     max_iter = _integer("contact", data, "max_iter", "contact", minimum=1)
@@ -465,10 +554,15 @@ def _parse_contact(data) -> ContactSpec:
         _fail("contact.stop", stop, " | ".join(STOP_CRITERIA), "contact")
     zone = _parse_geometry("contact.zone", data["zone"]) if "zone" in data else None
     if enabled:
-        if (gap is None) == (gap_factor is None):
-            _fail("contact.gap", {"gap": gap, "gap_factor": gap_factor},
-                  "ровно одно из gap | gap_factor при enabled = true", "contact")
-    return ContactSpec(enabled=enabled, gap=gap, gap_factor=gap_factor, beta=beta,
+        provided = sum(v is not None for v in (gap, gap_factor, gap_field))
+        if provided != 1:
+            _fail("contact.gap",
+                  {"gap": gap, "gap_factor": gap_factor,
+                   "[contact.gap]": None if gap_field is None else gap_field.kind},
+                  "ровно одно из gap | gap_factor | таблица [contact.gap] "
+                  "при enabled = true", "contact")
+    return ContactSpec(enabled=enabled, gap=gap, gap_factor=gap_factor,
+                       gap_field=gap_field, beta=beta,
                        max_iter=max_iter, tol=tol, stop=stop, zone=zone)
 
 
@@ -538,6 +632,8 @@ __all__ = [
     "VerifySpec",
     "OutputSpec",
     "GEOMETRY_KINDS",
+    "GAP_KINDS",
+    "GapSpec",
     "MIN_ZONE_NODES",
     "validate_compose_tree",
 ]

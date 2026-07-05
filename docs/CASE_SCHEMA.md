@@ -85,6 +85,11 @@ figures = true
 | contact.tol | float | дефолт Config | > 0 | contact.py |
 | contact.stop | str | дефолт Config ("dr") | dr, comp | contact.py |
 | contact.zone | таблица | вся Ω | геометрия зоны препятствия | dispatch.py |
+| [contact.gap] kind | str | — | const, plane, paraboloid, steps (поле Δ(x,y), v0.3) | dispatch.py |
+| contact.gap.value | float | — | > 0 (const: алиас скалярного gap) | dispatch.py |
+| contact.gap.a, b, c | float | — | plane: Δ = a·x + b·y + c (>0 на основании) | dispatch.py |
+| contact.gap.r_curv, cx, cy, apex | float | cx=cy=0 | paraboloid: Δ = apex + ((x−cx)²+(y−cy)²)/(2·r_curv) | dispatch.py |
+| contact.gap.base, [[zones]] | float, массив | — | steps: base + зоны (геометрия + value > 0) | dispatch.py |
 | discretization.p | int | дефолт Config (12) | ≥ 1 | basis.py |
 | discretization.Q | int | дефолт Config (64) | ≥ 2 | quadrature.py |
 | discretization.grid_n | int | дефолт Config (80) | ≥ 2 | contact.py/viz.py |
@@ -199,6 +204,32 @@ print(float(pb.deflection(cw, 0.0, 0.0)))
 (Δ = gap_factor·w_free; w_free считает диспетчер). Критерий останова
 `stop`: `dr` — ‖r_k − r_{k−1}‖ < tol; `comp` — безразмерная KKT-невязка
 Синьорини < tol (см. докстринг `ContactMOR.solve`).
+
+### Поле зазора Δ(x, y) (v0.3)
+
+Вместо скаляра зазор задаётся таблицей `[contact.gap]` (ровно одно из:
+`gap`, `gap_factor`, `[contact.gap]`): `const` (алиас скаляра), `plane`
+(наклонное основание), `paraboloid` (неплоский штамп: apex — зазор в
+вершине, r_curv — радиус кривизны), `steps` (base + `[[contact.gap.zones]]`
+— несколько штампов разной высоты; зоны применяются по порядку, зазор в
+зоне = value). Положительность Δ на основании проверяет диспетчер.
+Для отчёта (`Result.delta`) у поля берётся min Δ на основании; той же
+величиной нормируются метрики комплементарности. Произвольное гладкое
+поле — только через API, по образцу нагрузки:
+
+```toml
+[contact]
+enabled = true
+
+[contact.gap]
+kind = "paraboloid"      # штамп-параболоид
+r_curv = 1.0e4
+apex = 1.0e-4            # зазор в вершине (cx = cy = 0 по умолчанию)
+```
+
+```python
+mor = ContactMOR(pb, cfg, gap=gap_values)   # gap_values — массив в узлах квадратуры
+```
 
 ## discretization
 
