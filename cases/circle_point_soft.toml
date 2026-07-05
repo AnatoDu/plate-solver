@@ -1,0 +1,34 @@
+# Точечная сила в центре круга, «мягкий шарнир» (фаза 2, P3.5).
+# Эталон модельно-согласован: w(0) = P a²/(8πD) — предел ν→1 формулы
+# Тимошенко (NOTES §8). verify.tol заморожен «потолок 2 % → факт × 3»:
+# факт p=16, Q=1024, eps=0.025: rel = 1.036e-2 ⇒ tol = 3.2e-2.
+# ε-свип — информационно в cases/baselines.json; p > 16 у расщепления
+# ломает Холецкий (cond, NOTES §2) — рабочая точка p=16.
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "point"
+P = 1.0
+x0 = 0.0
+y0 = 0.0
+eps = 0.025
+
+[model]
+h = 0.06
+
+[discretization]
+p = 16
+Q = 1024
+
+[verify]
+reference = "analytic"
+tol = 3.2e-2
+
+[output]
+dir = "results/circle_point_soft"

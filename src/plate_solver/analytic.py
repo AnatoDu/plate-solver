@@ -182,6 +182,62 @@ def annulus_uniform_wmax(a: float, b: float, q: float, D: float,
     return float(np.max(np.abs(annulus_uniform(r, a, b, q, D, bc, nu))))
 
 
+# --------------------------------------------------------------------------- #
+#  Точечная сила P в центре круга (P3.5 фазы 2; формулы НЕ выводятся заново)
+# --------------------------------------------------------------------------- #
+def circle_point_clamped(r, a: float, P: float, D: float):
+    r"""Прогиб защемлённого круга под центральной силой P (Кирхгоф, Тимошенко).
+
+    .. math:: w(r) = \frac{P}{16\pi D}\big[a^2 - r^2 + 2 r^2 \ln(r/a)\big],
+              \qquad w(0) = \frac{P a^2}{16\pi D}.
+
+    Вне точки r = 0 бигармоника однородна (сила — δ в центре);
+    ``r² ln r → 0`` при r → 0, поэтому в центре значение конечно.
+    """
+    r = np.asarray(r, float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        term = np.where(r > 0.0, 2.0 * r**2 * np.log(r / a), 0.0)
+    return P / (16.0 * np.pi * D) * (a**2 - r**2 + term)
+
+
+def circle_point_clamped_wmax(a: float, P: float, D: float) -> float:
+    """Максимальный прогиб (центр): ``w(0) = P a² / (16 π D)``."""
+    return P * a**2 / (16.0 * np.pi * D)
+
+
+def circle_point_soft_moment(r, a: float, P: float):
+    r"""Поле M расщепления под центральной силой: ``M(r) = (P/2π)·ln(a/r)``.
+
+    Решение (P1): ``−ΔM = P·δ`` с ``M(a) = 0`` — логарифм точечного источника.
+    """
+    r = np.asarray(r, float)
+    with np.errstate(divide="ignore"):
+        return P / (2.0 * np.pi) * np.log(a / r)
+
+
+def circle_point_soft(r, a: float, P: float, D: float):
+    r"""Прогиб «мягкого шарнира» (модель расщепления) под центральной силой P.
+
+    Из (P2) ``−Δw = M/D`` с ``M = (P/2π)ln(a/r)`` и ``w(a) = 0``:
+
+    .. math:: w(r) = \frac{P}{8\pi D}\big[a^2 - r^2(1 + \ln(a/r))\big],
+              \qquad w(0) = \frac{P a^2}{8\pi D}.
+
+    Контроль (тот же паттерн, что NOTES §8 для равномерной нагрузки):
+    совпадает с пределом ν → 1 формулы Тимошенко для опёртой пластины
+    ``w = P/(16πD)[(3+ν)/(1+ν)(a²−r²) + 2r²ln(r/a)]``.
+    """
+    r = np.asarray(r, float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        term = np.where(r > 0.0, r**2 * (1.0 + np.log(a / r)), 0.0)
+    return P / (8.0 * np.pi * D) * (a**2 - term)
+
+
+def circle_point_soft_wmax(a: float, P: float, D: float) -> float:
+    """Максимальный прогиб (центр) мягкого шарнира: ``w(0) = P a² / (8 π D)``."""
+    return P * a**2 / (8.0 * np.pi * D)
+
+
 __all__ = [
     "clamped_uniform",
     "clamped_uniform_wmax",
@@ -197,4 +253,9 @@ __all__ = [
     "ANNULUS_BCS",
     "annulus_uniform",
     "annulus_uniform_wmax",
+    "circle_point_clamped",
+    "circle_point_clamped_wmax",
+    "circle_point_soft",
+    "circle_point_soft_moment",
+    "circle_point_soft_wmax",
 ]
