@@ -71,5 +71,20 @@ class PlateBending:
         """Поле «суммарного момента» ``M = ω·Σ cM_k T_k`` в точках (X, Y)."""
         return self.poisson.evaluate(cM, X, Y)
 
+    # -- протокол контакта (общий с ClampedPlate; фаза 3, A3.3) ------------ #
+    def w_at_quad(self, state) -> np.ndarray:
+        """Прогиб в узлах квадратуры; state = (cM, cw) из :meth:`solve`."""
+        return self.poisson.evaluate_at_quad(state[1])
+
+    def lap_w_at_quad(self, state) -> np.ndarray:
+        r"""Кривизна ``Δw = −M/D`` в узлах квадратуры (из (P1), без
+        численного дифференцирования); state = (cM, cw)."""
+        return -self.poisson.evaluate_at_quad(state[0]) / self.D
+
+    @staticmethod
+    def coeffs_w(state) -> np.ndarray:
+        """Коэффициенты прогиба из состояния решения (state = (cM, cw))."""
+        return state[1]
+
 
 __all__ = ["PlateBending"]

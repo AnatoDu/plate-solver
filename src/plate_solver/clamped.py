@@ -139,9 +139,21 @@ class ClampedPlate:
         self.D = float(cfg.D)
         psi, lap_psi, W = _structure_laplacian(domain, basis, quad)
         self._psi = psi
+        self._lap_psi = lap_psi                   # Δψ — кэш для Δw (A3: КТН, напряжения)
         self._W = W
         S = (lap_psi * W) @ lap_psi.T             # S[k,l] = ∫ Δψ_k Δψ_l
         self.S = 0.5 * (S + S.T)                  # подавить несимметрию округления
+        # Факторизация ОДИН раз (A3.1): диагональное предобуславливание
+        # (нормировка на √S_kk, NOTES §2) + Холецкий; решение произвольной
+        # правой части далее — две треугольные подстановки (solve_rhs).
+        self._d = 1.0 / np.sqrt(np.diag(self.S))
+        Sn = (self.S * self._d).T * self._d       # diag(d) S diag(d)
+        try:
+            self._chol = sla.cho_factor(Sn * self.D)
+            self._Sn_D = None
+        except (sla.LinAlgError, np.linalg.LinAlgError):
+            self._chol = None                     # потеря ПД — путь МНК
+            self._Sn_D = Sn * self.D
 
     @classmethod
     def from_config(cls, domain, cfg) -> ClampedPlate:
@@ -155,20 +167,25 @@ class ClampedPlate:
         """Число обусловленности cond(S) — диагностика устойчивости (NOTES.md §2)."""
         return float(np.linalg.cond(self.S))
 
-    def solve(self, q_values) -> np.ndarray:
-        r"""Коэффициенты ``c`` прогиба для ПРОИЗВОЛЬНОЙ нагрузки ``q`` в узлах квадратуры.
+    def solve_rhs(self, f_values) -> np.ndarray:
+        r"""Коэффициенты ``c`` прогиба для ПРОИЗВОЛЬНОЙ нагрузки в узлах квадратуры.
 
-        Решается ``(D·S) c = b``, ``b[k] = ∫ q ψ_k``, с ДИАГОНАЛЬНЫМ предобуславливанием
-        (нормировка строк/столбцов на ``√S_kk``): бигармоническая ``S`` при больших ``p``
-        плохо обусловлена (NOTES.md §2), масштабирование к единичной диагонали снижает
-        ``cond`` и потерю точности, не меняя самого решения. Нужна для метода
-        изготовленных решений (MMS), где ``q = D·Δ²w`` неоднородна.
+        Решается ``(D·S) c = b``, ``b[k] = ∫ f ψ_k``, с диагональным
+        предобуславливанием (нормировка на ``√S_kk``, NOTES §2); факторизация
+        выполнена один раз в конструкторе — вызов дешёв (две подстановки),
+        что делает защемлённый решатель пригодным для итераций МОР (A3).
         """
-        b = (self._psi * self._W) @ np.asarray(q_values, float)   # b[k] = ∫ q ψ_k
-        d = 1.0 / np.sqrt(np.diag(self.S))        # масштаб: ŝ_kk = 1
-        Sn = (self.S * d).T * d                   # diag(d) S diag(d) (симметрично)
-        cn = self._solve_spd(Sn * self.D, b * d)  # (D·Ŝ) ĉ = b̂
-        return cn * d                             # c = diag(d) ĉ
+        b = (self._psi * self._W) @ np.asarray(f_values, float)   # b[k] = ∫ f ψ_k
+        bn = b * self._d
+        if self._chol is not None:
+            cn = sla.cho_solve(self._chol, bn)
+        else:
+            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        return cn * self._d                       # c = diag(d) ĉ
+
+    def solve(self, q_values) -> np.ndarray:
+        """Прежнее имя: тождественно :meth:`solve_rhs` (A3.2-т1)."""
+        return self.solve_rhs(q_values)
 
     def solve_uniform(self, q: float | None = None) -> np.ndarray:
         """Коэффициенты ``c`` прогиба под равномерной нагрузкой ``q`` (по умолч. cfg.q0)."""
@@ -189,6 +206,32 @@ class ClampedPlate:
         v = np.tensordot(np.asarray(c, float), Phi, axes=(0, 0))
         om = self.domain.omega(X, Y)
         return om**2 * v
+
+    def deflection_at_quad(self, c) -> np.ndarray:
+        """Прогиб в узлах квадратуры через кэш ψ (один GEMV; A3.1)."""
+        return np.tensordot(np.asarray(c, float), self._psi, axes=(0, 0))
+
+    def laplacian_at_quad(self, c) -> np.ndarray:
+        r"""Кривизна ``Δw = Σ c_k Δψ_k`` в узлах квадратуры (кэш Δψ; A3.1).
+
+        Δψ = Δ(ω²T) собран символикой ω и chebder при построении матрицы S
+        (машинерия bending_moments) — численного дифференцирования нет.
+        """
+        return np.tensordot(np.asarray(c, float), self._lap_psi, axes=(0, 0))
+
+    # -- протокол контакта (общий с PlateBending; A3.3) -------------------- #
+    def w_at_quad(self, state) -> np.ndarray:
+        """Прогиб в узлах квадратуры по состоянию решения (state = c)."""
+        return self.deflection_at_quad(state)
+
+    def lap_w_at_quad(self, state) -> np.ndarray:
+        """Кривизна Δw в узлах квадратуры по состоянию решения (state = c)."""
+        return self.laplacian_at_quad(state)
+
+    @staticmethod
+    def coeffs_w(state) -> np.ndarray:
+        """Коэффициенты прогиба из состояния решения (state = c)."""
+        return state
 
     def w_max_on_grid(self, c, grid_n: int = 160) -> float:
         """Максимум прогиба по регулярной сетке bbox (маска ω>0)."""
