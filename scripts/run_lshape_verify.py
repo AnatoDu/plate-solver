@@ -10,13 +10,11 @@
 from __future__ import annotations
 
 from plate_solver import verify_fem as vf
-from plate_solver.config import Config
 
 
 def run_lshape_verify_golden(cfg):
     """-> dict. RFM против FEM-Marcus и FEM-Kirchhoff на L-форме (h=cfg.h_ktn)."""
-    lab = Config(nu=cfg.nu, q0=cfg.q0, h=cfg.h_ktn, E=cfg.E, p=cfg.p,
-                 Q=cfg.Q_lshape, grid_n=cfg.grid_n)
+    lab = cfg.to_config()
     c = vf.compare_rfm_vs_fem(lab, side=cfg.L_side, cut=cfg.L_cut,
                               mesh_m=cfg.fem_mesh_m, refine=cfg.fem_refine)
     return {

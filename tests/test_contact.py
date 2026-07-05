@@ -126,12 +126,12 @@ def test_gate_golden_complementarity():
     метода/параметров и требует пересмотра golden (числа golden неприкосновенны).
     """
     from golden_config import GoldenConfig
-    from run_lshape_contact import compute_w_free_lshape, lshape_lab_config
+    from run_lshape_contact import compute_w_free_lshape
 
     g = GoldenConfig()
     delta = g.gap_factor * compute_w_free_lshape(g)
     dom = geometry.make_L(g.L_side, g.L_cut)
-    lab = lshape_lab_config(g)
+    lab = g.to_config()
     pb = PlateBending.from_config(dom, lab)
     res = ContactMOR(pb, lab, gap=delta).solve()
     assert 0.07 <= res.comp_residual <= 0.10        # факт 8.585e-2
