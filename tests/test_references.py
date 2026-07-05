@@ -59,10 +59,16 @@ def test_annulus_soft_references_small():
 
 
 def test_resolver_errors():
+    # с трека C прямоугольник/soft_hinge гейтится Навье — эталон существует
+    refs = resolve_reference(_problem(geometry={"kind": "rectangle", "x1": 0.0,
+                                                "x2": 1.0, "y1": 0.0, "y2": 1.0},
+                                      verify={"reference": "analytic",
+                                              "cross_1d": False}))
+    assert refs[0].point is not None                  # сравнение в центре
     with pytest.raises(CaseError, match="mms | fem | none"):
-        resolve_reference(_problem(geometry={"kind": "rectangle", "x1": 0.0, "x2": 1.0,
-                                             "y1": 0.0, "y2": 1.0},
-                                   verify={"reference": "analytic"}))
+        resolve_reference(_problem(geometry={"kind": "L", "side": 1.0, "cut": 0.5},
+                                   verify={"reference": "analytic",
+                                           "cross_1d": False}))
     tree = {"op": "union", "children": [{"kind": "circle", "a": 1.0},
                                         {"kind": "circle", "a": 0.5, "cx": 1.0,
                                          "cy": 0.0}]}
