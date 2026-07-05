@@ -133,6 +133,61 @@ def _structure_laplacian(domain, basis, quad):
     return psi, lap_psi, W
 
 
+
+
+def _structure_second_derivs(domain, basis, quad):
+    r"""Все вторые производные структуры ψ = ω²T: (ψ, ψ_xx, ψ_yy, ψ_xy, W).
+
+    Нужны полной билинейной форме (трек C): ψ_ab = [ω²]_ab T + [ω²]_a T_b
+    + [ω²]_b T_a + ω² T_ab, где [ω²]_a = 2ωω_a, [ω²]_ab = 2(ω_aω_b + ωω_ab).
+    """
+    from .ladder import _basis_xy
+
+    X, Y, W = quad.x, quad.y, quad.w
+    om, omx, omy, omxx, omyy, omxy = _OmegaHessian(domain).fields_full(X, Y)
+    T = basis.values(X, Y)
+    Tx, Ty = basis.grads(X, Y)
+    lapT = _basis_second_derivs(basis, X, Y)          # T_xx + T_yy
+    Txy = _basis_xy(basis, X, Y)
+    # T_xx и T_yy по отдельности
+    xi, eta = basis.to_reference(X, Y)
+    xmin, xmax, _ymin, _ymax = basis.bbox
+    dxi_dx = 2.0 / (xmax - xmin)
+    _, _, Vx2 = _cheb_value_tables(basis, xi)
+    Vy0, _, _ = _cheb_value_tables(basis, eta)
+    Txx = ((Vx2[:, None, ...] * Vy0[None, :, ...]) * dxi_dx**2).reshape(basis.N, *xi.shape)
+    Tyy = lapT - Txx
+    g2 = om**2
+    gx, gy = 2.0 * om * omx, 2.0 * om * omy
+    gxx = 2.0 * (omx**2 + om * omxx)
+    gyy = 2.0 * (omy**2 + om * omyy)
+    gxy = 2.0 * (omx * omy + om * omxy)
+    psi = g2 * T
+    psi_xx = gxx * T + 2.0 * gx * Tx + g2 * Txx
+    psi_yy = gyy * T + 2.0 * gy * Ty + g2 * Tyy
+    psi_xy = gxy * T + gx * Ty + gy * Tx + g2 * Txy
+    return psi, psi_xx, psi_yy, psi_xy, W
+
+
+def assemble_biharmonic_full(domain, basis, quad, nu: float):
+    r"""Полная билинейная форма изгиба (трек C, NOTES §20):
+
+    .. math:: a(w, v) = D\iint \big[\Delta w\,\Delta v - (1-\nu)
+              (w_{xx} v_{yy} + w_{yy} v_{xx} - 2 w_{xy} v_{xy})\big]\, d\Omega
+
+    (без множителя D — он в решателе). На защемлённой части границы гауссов
+    член — нуль-лагранжиан (потому clamped-путь с ∫ΔψΔψ корректен);
+    на опёртой он даёт естественное условие ИСТИННОГО шарнира M_n = 0.
+    Возвращает (ψ, S_full, W).
+    """
+    psi, pxx, pyy, pxy, W = _structure_second_derivs(domain, basis, quad)
+    lap = pxx + pyy
+    S = (lap * W) @ lap.T \
+        - (1.0 - nu) * ((pxx * W) @ pyy.T + (pyy * W) @ pxx.T
+                        - 2.0 * (pxy * W) @ pxy.T)
+    return psi, 0.5 * (S + S.T), W
+
+
 class ClampedPlate:
     """Изгиб защемлённой пластины: прямой Ритц по ``(D/2)∫(Δw)²`` на ``w = ω²Φ``."""
 
@@ -359,3 +414,185 @@ __all__ = [
     "clamped_fem_circle",
     "clamped_fem_lshape",
 ]
+
+class MixedRectPlate:
+    r"""Смешанные КУ на прямоугольнике (трек C, v0.3): w = (∏ω_c²)(∏ω_h)·Φ.
+
+    Стороны ``sides = {"x1": ..., "x2": ..., "y1": ..., "y2": ...}`` со
+    значениями ``clamped`` (множитель ω² — зануляет w и ∂w/∂n) или ``hinge``
+    (множитель ω — зануляет только w; статика ИСТИННОГО шарнира M_n = 0
+    выходит ЕСТЕСТВЕННО из ПОЛНОЙ билинейной формы, NOTES §20). Все
+    множители — полиномы (x − x₁), (x₂ − x), … ⇒ домен = bbox, квадратура
+    Гаусса точна, изломов ω нет: полная форма работает без квадратурного
+    пола маски (контраст с кривыми границами, см. PROGRESS C1).
+    """
+
+    def __init__(self, x1: float, x2: float, y1: float, y2: float,
+                 sides: dict, cfg):
+        import sympy as sp
+
+        from .geometry import x as _gx
+        from .geometry import y as _gy
+        from .quadrature import interior_nodes
+
+        wanted = {"x1", "x2", "y1", "y2"}
+        if set(sides) != wanted or not all(v in ("clamped", "hinge")
+                                           for v in sides.values()):
+            raise ValueError("sides: нужны все четыре стороны x1|x2|y1|y2 "
+                             "со значениями clamped|hinge.")
+        self.cfg = cfg
+        self.D = float(cfg.D)
+        self.sides = dict(sides)
+        factors = {"x1": _gx - x1, "x2": x2 - _gx, "y1": _gy - y1, "y2": y2 - _gy}
+        g_expr = sp.Integer(1)
+        for side, f in factors.items():
+            g_expr *= f**2 if sides[side] == "clamped" else f
+        self._g_expr = g_expr
+        # маска/сетка: полиномиальная ω прямоугольника (>0 внутри)
+        from .geometry import Domain
+
+        self.domain = Domain(factors["x1"] * factors["x2"]
+                             * factors["y1"] * factors["y2"], (x1, x2, y1, y2))
+        self.basis = ChebyshevBasis(cfg.p, (x1, x2, y1, y2))
+        self.quad = interior_nodes(self.domain, cfg.Q)
+        # структура и её вторые производные (sympy → numpy)
+        fns = {}
+        for name, expr in (("g", g_expr),
+                           ("gx", sp.diff(g_expr, _gx)),
+                           ("gy", sp.diff(g_expr, _gy)),
+                           ("gxx", sp.diff(g_expr, _gx, 2)),
+                           ("gyy", sp.diff(g_expr, _gy, 2)),
+                           ("gxy", sp.diff(g_expr, _gx, _gy))):
+            fns[name] = sp.lambdify((_gx, _gy), expr, "numpy")
+        self._fns = fns
+        X, Y, W = self.quad.x, self.quad.y, self.quad.w
+        g = self._ev("g", X, Y)
+        gx = self._ev("gx", X, Y)
+        gy = self._ev("gy", X, Y)
+        gxx = self._ev("gxx", X, Y)
+        gyy = self._ev("gyy", X, Y)
+        gxy = self._ev("gxy", X, Y)
+        T = self.basis.values(X, Y)
+        Tx, Ty = self.basis.grads(X, Y)
+        lapT = _basis_second_derivs(self.basis, X, Y)
+        from .ladder import _basis_xy
+
+        Txy = _basis_xy(self.basis, X, Y)
+        xi, _ = self.basis.to_reference(X, Y)
+        bx0, bx1, _, _ = self.basis.bbox
+        _, _, Vx2 = _cheb_value_tables(self.basis, xi)
+        _, eta = self.basis.to_reference(X, Y)
+        Vy0, _, _ = _cheb_value_tables(self.basis, eta)
+        Txx = ((Vx2[:, None, ...] * Vy0[None, :, ...])
+               * (2.0 / (bx1 - bx0)) ** 2).reshape(self.basis.N, *xi.shape)
+        Tyy = lapT - Txx
+        psi = g * T
+        pxx = gxx * T + 2.0 * gx * Tx + g * Txx
+        pyy = gyy * T + 2.0 * gy * Ty + g * Tyy
+        pxy = gxy * T + gx * Ty + gy * Tx + g * Txy
+        lap = pxx + pyy
+        nu = cfg.nu
+        S = (lap * W) @ lap.T - (1.0 - nu) * ((pxx * W) @ pyy.T
+                                              + (pyy * W) @ pxx.T
+                                              - 2.0 * (pxy * W) @ pxy.T)
+        self.S = 0.5 * (S + S.T)
+        self._psi, self._W = psi, W
+        self._lap_psi = lap
+        self._d = 1.0 / np.sqrt(np.diag(self.S))
+        Sn = (self.S * self._d).T * self._d
+        try:
+            self._chol = sla.cho_factor(Sn * self.D)
+            self._Sn_D = None
+        except (sla.LinAlgError, np.linalg.LinAlgError):
+            self._chol = None
+            self._Sn_D = Sn * self.D
+
+    def _ev(self, name, X, Y):
+        X = np.asarray(X, float)
+        Y = np.asarray(Y, float)
+        out = np.asarray(self._fns[name](X, Y), float)
+        return out if out.shape == X.shape else np.broadcast_to(out, X.shape).astype(float)
+
+    @classmethod
+    def from_config(cls, x1, x2, y1, y2, sides, cfg) -> MixedRectPlate:
+        return cls(x1, x2, y1, y2, sides, cfg)
+
+    @property
+    def cond(self) -> float:
+        return float(np.linalg.cond(self.S))
+
+    def solve_rhs(self, f_values) -> np.ndarray:
+        b = (self._psi * self._W) @ np.asarray(f_values, float)
+        bn = b * self._d
+        if self._chol is not None:
+            cn = sla.cho_solve(self._chol, bn)
+        else:
+            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        return cn * self._d
+
+    solve = solve_rhs
+
+    def solve_uniform(self, q: float | None = None) -> np.ndarray:
+        q = self.cfg.q0 if q is None else float(q)
+        return self.solve_rhs(np.full(self.quad.x.size, q))
+
+    def deflection(self, c, X, Y) -> np.ndarray:
+        Phi = self.basis.values(X, Y)
+        v = np.tensordot(np.asarray(c, float), Phi, axes=(0, 0))
+        return self._ev("g", np.asarray(X, float), np.asarray(Y, float)) * v
+
+    def deflection_at_quad(self, c) -> np.ndarray:
+        return np.tensordot(np.asarray(c, float), self._psi, axes=(0, 0))
+
+    def w_max_on_grid(self, c, grid_n: int = 160) -> float:
+        x0, x1, y0, y1 = self.domain.bbox
+        Xg, Yg = np.meshgrid(np.linspace(x0, x1, grid_n),
+                             np.linspace(y0, y1, grid_n))
+        inside = self.domain.omega(Xg, Yg) > 0.0
+        return float(np.max(np.abs(self.deflection(c, Xg[inside], Yg[inside]))))
+
+    def moments_at(self, c, X, Y):
+        """(Mx, My, Mxy) mixed-структуры g·Φ в точках (Лейбниц по g; трек B/C)."""
+        from .ladder import _basis_xy
+
+        c = np.asarray(c, float)
+        X = np.asarray(X, float)
+        Y = np.asarray(Y, float)
+        T = self.basis.values(X, Y)
+        Tx, Ty = self.basis.grads(X, Y)
+        lapT = _basis_second_derivs(self.basis, X, Y)
+        Txy = _basis_xy(self.basis, X, Y)
+        xi, eta = self.basis.to_reference(X, Y)
+        bx0, bx1, _, _ = self.basis.bbox
+        _, _, Vx2 = _cheb_value_tables(self.basis, xi)
+        Vy0, _, _ = _cheb_value_tables(self.basis, eta)
+        Txx = ((Vx2[:, None, ...] * Vy0[None, :, ...])
+               * (2.0 / (bx1 - bx0)) ** 2).reshape(self.basis.N, *xi.shape)
+        Tyy = lapT - Txx
+        v = np.tensordot(c, T, axes=(0, 0))
+        vx = np.tensordot(c, Tx, axes=(0, 0))
+        vy = np.tensordot(c, Ty, axes=(0, 0))
+        vxx = np.tensordot(c, Txx, axes=(0, 0))
+        vyy = np.tensordot(c, Tyy, axes=(0, 0))
+        vxy = np.tensordot(c, Txy, axes=(0, 0))
+        g = self._ev("g", X, Y)
+        gx = self._ev("gx", X, Y)
+        gy = self._ev("gy", X, Y)
+        gxx = self._ev("gxx", X, Y)
+        gyy = self._ev("gyy", X, Y)
+        gxy = self._ev("gxy", X, Y)
+        wxx = gxx * v + 2.0 * gx * vx + g * vxx
+        wyy = gyy * v + 2.0 * gy * vy + g * vyy
+        wxy = gxy * v + gx * vy + gy * vx + g * vxy
+        nu = self.cfg.nu
+        return (-self.D * (wxx + nu * wyy), -self.D * (wyy + nu * wxx),
+                -self.D * (1.0 - nu) * wxy)
+
+    # протокол контакта — на будущее (v0.3 контакт при mixed не включён)
+    def w_at_quad(self, state):
+        return self.deflection_at_quad(state)
+
+    @staticmethod
+    def coeffs_w(state):
+        return state
+

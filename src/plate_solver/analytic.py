@@ -238,6 +238,73 @@ def circle_point_soft_wmax(a: float, P: float, D: float) -> float:
     return P * a**2 / (8.0 * np.pi * D)
 
 
+
+
+# --------------------------------------------------------------------------- #
+#  Прямоугольник: Навье (SSSS) и Леви (SCSC) — трек C фазы 3
+# --------------------------------------------------------------------------- #
+def navier_rect_uniform(x, y, x1: float, x2: float, y1: float, y2: float,
+                        q: float, D: float, tol: float = 1e-12):
+    r"""Ряд Навье для SSSS-прямоугольника [x1,x2]×[y1,y2] с КОНТРОЛЕМ остатка.
+
+    .. math:: w = \\frac{16 q}{\\pi^6 D} \\sum_{m,n\\ нечёт.}
+              \\frac{\\sin(m\\pi\\xi/L_x)\\,\\sin(n\\pi\\eta/L_y)}
+                   {mn\\,[(m/L_x)^2 + (n/L_y)^2]^2}
+
+    Число членов удваивается, пока изменение поля не станет < tol·|w|
+    (мажоранта хвоста ~1/M⁴ гарантирует сходимость контроля).
+    """
+    from .ladder import navier_uniform
+
+    Lx, Ly = x2 - x1, y2 - y1
+    X = np.asarray(x, float) - x1
+    Y = np.asarray(y, float) - y1
+    n_terms = 25
+    w_prev = navier_uniform(X, Y, Lx, Ly, D, q, n_terms=n_terms)
+    w = w_prev
+    while n_terms <= 1600:
+        n_terms *= 2
+        w = navier_uniform(X, Y, Lx, Ly, D, q, n_terms=n_terms)
+        scale = float(np.max(np.abs(w))) or 1.0
+        if float(np.max(np.abs(w - w_prev))) < tol * scale:
+            return w
+        w_prev = w
+    return w
+
+
+def levy_rect_uniform(x, y, x1: float, x2: float, y1: float, y2: float,
+                      q: float, D: float, n_terms: int = 60):
+    r"""Ряд Леви: x-края шарнир (hinge), y-края защемление (clamped).
+
+    .. math:: w = \\sum_{m\\ нечёт.} Y_m(\\eta)\\,
+              \\sin(\\alpha_m (x - x_1)), \\qquad \\alpha_m = m\\pi/L_x,
+
+    где η = y − (y₁+y₂)/2; Y_m — решение ОДУ четвёртого порядка
+    Y⁗ − 2α²Y″ + α⁴Y = q_m/D (q_m = 4q/(πm)) с Y(±L_y/2) = Y′(±L_y/2) = 0:
+    частное q_m/(Dα⁴) плюс ЧЁТНАЯ однородная часть A·ch(αη) + B·η·sh(αη);
+    A, B — из 2×2 (симметрия по η). Sympy-проверка ОДУ и КУ —
+    tests/test_mixed_bc.py.
+    """
+    Lx, Ly = x2 - x1, y2 - y1
+    X = np.asarray(x, float) - x1
+    eta = np.asarray(y, float) - 0.5 * (y1 + y2)
+    c = Ly / 2.0
+    out = np.zeros(np.broadcast(X, eta).shape)
+    for m in range(1, 2 * n_terms, 2):
+        al = m * np.pi / Lx
+        qm = 4.0 * q / (np.pi * m)
+        yp = qm / (D * al**4)
+        ch, sh = np.cosh(al * c), np.sinh(al * c)
+        a11, a12, b1 = ch, c * sh, -yp
+        a21, a22, b2 = al * sh, sh + al * c * ch, 0.0
+        det = a11 * a22 - a12 * a21
+        aa = (b1 * a22 - a12 * b2) / det
+        bb = (a11 * b2 - b1 * a21) / det
+        ym = yp + aa * np.cosh(al * eta) + bb * eta * np.sinh(al * eta)
+        out = out + ym * np.sin(al * X)
+    return out
+
+
 __all__ = [
     "clamped_uniform",
     "clamped_uniform_wmax",
@@ -258,4 +325,6 @@ __all__ = [
     "circle_point_soft",
     "circle_point_soft_moment",
     "circle_point_soft_wmax",
+    "navier_rect_uniform",
+    "levy_rect_uniform",
 ]
