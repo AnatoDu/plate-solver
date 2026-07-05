@@ -205,6 +205,101 @@ def _mms_reference(problem: Problem, cfg) -> Reference:
                      kind="mms", w_max=w_ex, gated=True, value=w_num)
 
 
+# Сетки fem-эталона (константы v0.2; в схему не выносятся — ограда ключей).
+_FEM_LSHAPE_M, _FEM_LSHAPE_REFINE = 16, 2
+_FEM_CIRCLE_NREF = 4
+_FEM_RECT_N = 32
+_FEM_ANNULUS_NR, _FEM_ANNULUS_NT = 24, 96
+
+
+def _fem_wmax(fem, dom, grid_n: int = 160) -> float:
+    """max|w| МКЭ-решения по фоновой сетке строго внутри Ω.
+
+    Отступ от границы — 2 % меньшего размера bbox: полигональная сетка
+    ВПИСАНА в гладкую ω-границу, и точки между хордой и дугой лежат вне
+    сетки; максимум прогиба — внутренний, отступ на него не влияет.
+    """
+    x0, x1, y0, y1 = dom.bbox
+    eps = 0.02 * min(x1 - x0, y1 - y0)
+    X, Y = np.meshgrid(np.linspace(x0, x1, grid_n), np.linspace(y0, y1, grid_n))
+    inside = dom.omega(X, Y) > eps
+    return float(np.max(np.abs(fem.at(X[inside], Y[inside]))))
+
+
+def _fem_references(problem: Problem, cfg) -> list[Reference]:
+    r"""fem-эталоны (P3.6): существующие пути + структурированное кольцо.
+
+    * L / soft_hinge — две колонки: FEM-Marcus (та же модель — гейт) и
+      FEM-Kirchhoff (Морли; парадокс Сапонджяна — вне допуска, NOTES §9);
+    * clamped — Аргирис: круг (clamped_fem_circle), прямоугольник
+      (solve_clamped_fem на тензорной сетке), L (clamped_fem_lshape);
+    * annulus — НОВОЕ: структурированная сетка n_r × n_θ
+      (:func:`~plate_solver.verify_fem.annulus_mesh`); clamped — Аргирис,
+      soft — Marcus-P2 (шарнир w=0 на обеих окружностях).
+    """
+    try:
+        import skfem  # noqa: F401
+    except ImportError:
+        _fail("verify.reference", "fem",
+              "установленный scikit-fem: pip install -e \".[fem]\"")
+    from .dispatch import build_domain
+
+    g, bc = problem.geometry, problem.bc.type
+    dom = build_domain(g)
+    D, q0, nu = cfg.D, cfg.q0, cfg.nu
+    if problem.load.type != "uniform":
+        _fail("verify.reference", "fem", "равномерной нагрузки (v0.2)")
+
+    if bc == "soft_hinge":
+        from . import verify_fem as vf
+
+        if g.kind == "L":
+            mesh = vf.lshape_mesh(g.side, g.cut, m=_FEM_LSHAPE_M,
+                                  refine=_FEM_LSHAPE_REFINE)
+        elif g.kind == "annulus":
+            mesh = vf.annulus_mesh(g.a, g.b, _FEM_ANNULUS_NR, _FEM_ANNULUS_NT)
+        else:
+            _fail("verify.reference", "fem",
+                  "для soft_hinge — L | annulus (иначе analytic | mms | none)")
+        marcus = vf.solve_plate_fem(mesh, D, q0, "marcus", nu)
+        refs = [Reference(name=f"FEM-Marcus, P2 ({g.kind}; та же модель)",
+                          kind="fem", w_max=_fem_wmax(marcus, dom), gated=True)]
+        if g.kind == "L":
+            kirch = vf.solve_plate_fem(mesh, D, q0, "kirchhoff", nu)
+            refs.append(Reference(
+                name="FEM-Kirchhoff, Морли (парадокс Сапонджяна — вне допуска)",
+                kind="fem", w_max=_fem_wmax(kirch, dom), gated=False))
+        return refs
+
+    # clamped — Аргирис (существующие пути + кольцо)
+    from .clamped import clamped_fem_circle, clamped_fem_lshape, solve_clamped_fem
+
+    if g.kind == "circle":
+        fem = clamped_fem_circle(g.a, D, q0, nu, nref=_FEM_CIRCLE_NREF)
+    elif g.kind == "rectangle":
+        from skfem import MeshTri
+
+        mesh = MeshTri.init_tensor(np.linspace(g.x1, g.x2, _FEM_RECT_N + 1),
+                                   np.linspace(g.y1, g.y2, _FEM_RECT_N + 1))
+        fem = solve_clamped_fem(mesh, D, q0, nu)
+    elif g.kind == "L":
+        fem = clamped_fem_lshape(D, q0, nu, mesh_m=_FEM_LSHAPE_M,
+                                 refine=_FEM_LSHAPE_REFINE)
+    elif g.kind == "annulus":
+        fem = solve_clamped_fem(vf_annulus_mesh(g.a, g.b), D, q0, nu)
+    else:
+        _fail("verify.reference", "fem",
+              "circle | rectangle | L | annulus (для compose — mms | none)")
+    return [Reference(name=f"FEM-Аргирис ({g.kind}, clamped)", kind="fem",
+                      w_max=_fem_wmax(fem, dom), gated=True)]
+
+
+def vf_annulus_mesh(a: float, b: float):
+    from .verify_fem import annulus_mesh
+
+    return annulus_mesh(a, b, _FEM_ANNULUS_NR, _FEM_ANNULUS_NT)
+
+
 # --------------------------------------------------------------------------- #
 #  Резолвер и отчёт
 # --------------------------------------------------------------------------- #
@@ -228,8 +323,7 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
     elif v.reference == "mms":
         refs.append(_mms_reference(problem, cfg))
     elif v.reference == "fem":
-        _fail("verify.reference", "fem",
-              "analytic | mms | none — fem подключается в P3.6")
+        refs.extend(_fem_references(problem, cfg))
     if v.cross_1d:
         refs.append(Reference(
             name=f"1D-Ритц по радиусу ({problem.geometry.kind}, {problem.bc.type})",

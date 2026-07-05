@@ -81,6 +81,37 @@ class FemSolution:
         return np.asarray(self.basis.interpolator(self.w)(P), dtype=float)
 
 
+def annulus_mesh(a: float, b: float, n_r: int = 24, n_t: int = 96):
+    """Структурированная триангуляция кольца b < r < a (P3.6 фазы 2).
+
+    Узлы — тензорная сетка ``(n_r+1) × n_t`` по радиусу и углу с замыканием
+    по θ; каждая четырёхугольная ячейка делится на два треугольника.
+    Граница (обе окружности) — многоугольники: геометрическая ошибка
+    ~O(1/n_t²) — учитывать при сверке с гладкой ω-границей RFM.
+    """
+    from skfem import MeshTri
+
+    if not 0.0 < b < a:
+        raise ValueError("Кольцо требует 0 < b < a.")
+    r = np.linspace(b, a, n_r + 1)
+    t = np.linspace(0.0, 2.0 * np.pi, n_t, endpoint=False)
+    R, T = np.meshgrid(r, t, indexing="ij")               # (n_r+1, n_t)
+    verts = np.stack([(R * np.cos(T)).ravel(), (R * np.sin(T)).ravel()])
+
+    def vid(i: int, j: int) -> int:
+        return i * n_t + (j % n_t)
+
+    tris = []
+    for i in range(n_r):
+        for j in range(n_t):
+            v00, v10 = vid(i, j), vid(i + 1, j)
+            v11, v01 = vid(i + 1, j + 1), vid(i, j + 1)
+            tris.append((v00, v10, v11))
+            tris.append((v00, v11, v01))
+    return MeshTri(np.ascontiguousarray(verts, dtype=np.float64),
+                   np.ascontiguousarray(np.array(tris).T, dtype=np.int64))
+
+
 def solve_plate_fem(
     mesh, D: float, q: float, model: str = "kirchhoff", nu: float = 0.3
 ) -> FemSolution:
@@ -209,6 +240,7 @@ def compare_rfm_vs_fem(
 
 __all__ = [
     "lshape_mesh",
+    "annulus_mesh",
     "FemSolution",
     "solve_plate_fem",
     "compare_l2",
