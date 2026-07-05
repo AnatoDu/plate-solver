@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from plates import analytic, geometry
-from plates import quadrature as quad
-from plates.config import Config
-from plates.plate import PlateBending
+
+from plate_solver import analytic, geometry
+from plate_solver import quadrature as quad
+from plate_solver.config import Config
+from plate_solver.plate import PlateBending
 
 A, NU, QLOAD = 1.0, 0.3, 4.0
 DOM = geometry.make_circle(A)
@@ -69,6 +70,7 @@ def test_sign_and_max_at_center():
         assert w0 >= float(pb.deflection(cw, x, y))
 
 
+@pytest.mark.big
 def test_gate_plate_circle_wmax_against_soft_hinge():
     """ГЛАВНЫЕ ВОРОТА: численный w_max ↔ аналитика мягкого шарнира < 0.1 %."""
     assert _wmax_err(6, 1280) < 1.0e-3
@@ -86,6 +88,7 @@ def test_error_decreases_with_Q():
     assert errs[0] > errs[1] > errs[2], errs
 
 
+@pytest.mark.big
 def test_model_gap_vs_kirchhoff_documented():
     # Вторая строка Таблицы 4.1: численный ≈ мягкий, и ~26.4 % ниже (4.2).
     pb, cw, D = _solve(6, 1024)

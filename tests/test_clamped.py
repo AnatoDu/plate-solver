@@ -21,10 +21,14 @@ import os
 
 import numpy as np
 import pytest
-from plates import analytic, geometry
-from plates import quadrature as quad
-from plates.clamped import ClampedPlate
-from plates.config import Config
+
+from plate_solver import analytic, geometry
+from plate_solver import quadrature as quad
+from plate_solver.clamped import ClampedPlate
+from plate_solver.config import Config
+
+# Модуль опирается на независимую МКЭ-верификацию (scikit-fem) и квадратуры до Q=1024.
+pytestmark = pytest.mark.fem
 
 NU, Q0, E = 0.3, 4.0, 2.1e6
 SOFT_HINGE_GAP = 0.2642   # модельный разрыв мягкого шарнира к (4.2) при ν=0.3 (контраст)
@@ -88,8 +92,9 @@ def test_clamped_structure_satisfies_bc():
 def test_clamped_square_convex_matches_fem():
     """На выпуклом квадрате RFM↔МКЭ ничтожно (контрольная проверка корректности метода)."""
     pytest.importorskip("skfem")
-    from plates.clamped import solve_clamped_fem
     from skfem import MeshTri
+
+    from plate_solver.clamped import solve_clamped_fem
 
     h = 0.06
     D = E * h**3 / (12 * (1 - NU**2))
@@ -112,7 +117,7 @@ def test_clamped_square_convex_matches_fem():
 def lshape_clamped_cmp():
     """RFM(защемл.) ↔ МКЭ(Аргирис) на L-форме при p=4 и p=10 (один расчёт на модуль)."""
     pytest.importorskip("skfem")
-    from plates.clamped import clamped_fem_lshape
+    from plate_solver.clamped import clamped_fem_lshape
 
     h = 0.06
     D = E * h**3 / (12 * (1 - NU**2))

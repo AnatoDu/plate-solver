@@ -14,10 +14,11 @@
 from __future__ import annotations
 
 import numpy as np
-from plates import analytic, geometry
-from plates import basis as B
-from plates import quadrature as quad
-from plates.poisson import PoissonSolver
+
+from plate_solver import analytic, geometry
+from plate_solver import basis as B
+from plate_solver import quadrature as quad
+from plate_solver.poisson import PoissonSolver
 
 DOM = geometry.make_circle(1.0)
 # Независимая (плотная) эталонная квадратура для оценки L²-нормы погрешности.

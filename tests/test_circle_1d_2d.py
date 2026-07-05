@@ -10,6 +10,9 @@ import numpy as np
 import pytest
 from run_circle_1d_2d import run_circle_1d_2d
 
+# 2D-часть сверки считается на квадратуре Q=1024 — тяжёлая (память/время).
+pytestmark = pytest.mark.big
+
 
 @pytest.fixture(scope="module")
 def circ():

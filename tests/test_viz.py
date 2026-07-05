@@ -14,10 +14,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pytest  # noqa: E402
 
-from plates import geometry, viz  # noqa: E402
-from plates.config import Config  # noqa: E402
-from plates.contact import ContactMOR  # noqa: E402
-from plates.plate import PlateBending  # noqa: E402
+from plate_solver import geometry, viz  # noqa: E402
+from plate_solver.config import Config  # noqa: E402
+from plate_solver.contact import ContactMOR  # noqa: E402
+from plate_solver.plate import PlateBending  # noqa: E402
 
 
 @pytest.fixture(scope="module")

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from plate_solver.contact.mor1d import ContactStrip1D
-from plates.stamp import load_maple_reference, maple_agreement, solve_stamp
-from plates.stamp_ritz import solve_stamp_ritz
+
+from plate_solver.mor1d import ContactStrip1D
+from plate_solver.stamp import load_maple_reference, maple_agreement, solve_stamp
+from plate_solver.stamp_ritz import solve_stamp_ritz
 
 MAXIT = 100_000
 
@@ -55,7 +56,7 @@ def test_stamp_ritz_contact_matches_green(triple):
 
 def test_stamp_ritz_bc_structure():
     """Структурный базис удовлетворяет ГУ: w(0)=0 и w'(L)=0 тождественно."""
-    from plates.stamp_ritz import build_ritz_beam_operator
+    from plate_solver.stamp_ritz import build_ritz_beam_operator
 
     L, D, n = 100.0, 192307.69, 100
     M, _ = build_ritz_beam_operator(L, D, n, p=16)

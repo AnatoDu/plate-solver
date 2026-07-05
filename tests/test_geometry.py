@@ -9,7 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import sympy as sp
-from plates import geometry as geo
+
+from plate_solver import geometry as geo
 
 
 def test_circle_sign_inside_boundary_outside():

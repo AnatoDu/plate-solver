@@ -14,6 +14,9 @@ from run_ladder_mms import run_ladder_mms
 from run_ladder_rect_clamped import run_ladder_rect_clamped
 from run_ladder_rect_hinge import run_ladder_rect_hinge
 
+# Лестница гоняет серии решений с квадратурами до Q=1024 — тяжёлая (память/время).
+pytestmark = pytest.mark.big
+
 
 # --------------------------------------------------------------------------- #
 #  Ступень 1 — 1D полоса (полиномиальное решение ⇒ машинная точность)

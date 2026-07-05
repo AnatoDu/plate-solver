@@ -12,8 +12,12 @@ FEM-тесты пропускаются, если scikit-fem не установ
 from __future__ import annotations
 
 import pytest
-from plates import geometry as geo
-from plates.config import Config
+
+from plate_solver import geometry as geo
+from plate_solver.config import Config
+
+# Сверка RFM ↔ МКЭ требует scikit-fem (без него модуль пропускается).
+pytestmark = pytest.mark.fem
 
 
 def test_lshape_bbox_and_reentrant_corner():
@@ -33,7 +37,7 @@ def test_lshape_invalid_cut_rejected():
 def fem_cmp():
     """Сверка RFM ↔ (FEM-Marcus, FEM-Kirchhoff) на L-форме (один расчёт на модуль)."""
     pytest.importorskip("skfem")
-    from plates import verify_fem as vf
+    from plate_solver import verify_fem as vf
 
     cfg = Config(nu=0.3, q0=4.0, p=10, Q=80)
     return vf.compare_rfm_vs_fem(cfg, mesh_m=16, refine=2)

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from plates.basis import ChebyshevBasis
+
+from plate_solver.basis import ChebyshevBasis
 
 
 def test_size_and_indexing():

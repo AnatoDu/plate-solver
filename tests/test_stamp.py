@@ -3,7 +3,7 @@ r"""Тест-ворота Части 1 — 1D задача о ШТАМПЕ (ме
 Проверяем:
   • точное ВОСПРОИЗВЕДЕНИЕ ``fix_base2.py`` при тех же настройках (50000 итераций,
     β=0.01): w_max, зона контакта и сам решатель совпадают с каноническим
-    ``plate_solver.contact.mor1d.solve_mor_1d`` — физика и числа сохранены;
+    ``plate_solver.mor1d.solve_mor_1d`` — физика и числа сохранены;
   • СОГЛАСИЕ с аналитикой Maple: отн. L²-отклонение мало (единицы %), и УБЫВАЕТ с
     числом итераций (МОР сходится именно к аналитическому решению);
   • рисунок ``stamp_1d.png`` создаётся и читаем.
@@ -20,8 +20,9 @@ import os
 
 import numpy as np
 import pytest
-from plate_solver.contact.mor1d import ContactStrip1D, solve_mor_1d
-from plates.stamp import load_maple_reference, maple_agreement, solve_stamp
+
+from plate_solver.mor1d import ContactStrip1D, solve_mor_1d
+from plate_solver.stamp import load_maple_reference, maple_agreement, solve_stamp
 
 
 # --------------------------------------------------------------------------- #

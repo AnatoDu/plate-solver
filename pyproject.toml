@@ -48,6 +48,10 @@ plate_solver = ["data/*.txt"]
 pythonpath = ["src", "scripts"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "big: тяжёлые тесты (квадратуры Q≥1024: много памяти и времени); исключать: -m 'not big'",
+    "fem: требуют scikit-fem (независимая МКЭ-верификация); исключать: -m 'not fem'",
+]
 
 [tool.ruff]
 line-length = 100

@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import numpy as np
-from plates import geometry as geo
-from plates import quadrature as quad
+
+from plate_solver import geometry as geo
+from plate_solver import quadrature as quad
 
 
 def test_weight_sum_equals_bbox_area():

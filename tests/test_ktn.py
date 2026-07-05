@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from plates import geometry
-from plates.config import Config
-from plates.contact import ContactMOR
-from plates.ktn import KTNParams
-from plates.plate import PlateBending
+
+from plate_solver import geometry
+from plate_solver.config import Config
+from plate_solver.contact import ContactMOR
+from plate_solver.ktn import KTNParams
+from plate_solver.plate import PlateBending
 
 
 def _roughness(r: np.ndarray) -> float:

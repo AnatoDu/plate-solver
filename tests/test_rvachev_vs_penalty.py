@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from plates.penalty import penalty_vs_structure_circle
+from plate_solver.penalty import penalty_vs_structure_circle
 
 NU, E, H = 0.3, 2.1e6, 1.0
 D = E / (12 * (1 - NU**2))
