@@ -1,0 +1,192 @@
+r"""contact.py — метод обобщённой реакции (МОР) для одностороннего контакта (2D).
+
+Внешний цикл, повторяющий логику ``fix_base2.py`` (1D, классика), но в 2D и с
+ПРЕДВЫЧИСЛЕННЫМ оператором: матрица ``A`` в :class:`~plates.plate.PlateBending`
+факторизована один раз, поэтому каждая итерация дёшева (тысячи итераций допустимы).
+
+Реакция ``r`` хранится В УЗЛАХ КВАДРАТУРЫ (источник истины, NOTES.md §3); на
+фоновую сетку ``grid_n × grid_n`` сэмплируется только для вывода/графиков.
+
+Схема (прямой аналог 1D, условия Синьорини с зазором Δ до жёсткого основания):
+
+    r⁰ = 0
+    повторять:
+        f = q0 − r                         # нагрузка в узлах квадратуры (q̃)
+        _, cw = plate.solve(f)             # расщепление (P1)+(P2), A факторизована
+        w = plate.deflection(cw, узлы)     # прогиб в тех же узлах
+        r ← r + β_eff·(w − Δ)   в зоне основания;   r ← max(r, 0)
+        невязка = ‖r − r_prev‖;  стоп при < tol
+    зона контакта = { r > 0 }
+
+Масштаб шага β. В 1D (``fix_base2``) задача безразмерна (множитель ``l⁴/D``
+приводит прогиб к O(1)), и ``β`` мало (0.01). В 2D при физических ``D`` прогиб
+мал (``w ~ q a⁴/D``), поэтому ``β`` НОРМИРУЕТСЯ на «усиление» оператора
+``gain`` = макс. прогиб от единичной равномерной нагрузки (оценка ‖G‖):
+``β_eff = cfg.beta / gain``. Тогда ``cfg.beta`` — БЕЗРАЗМЕРНЫЙ коэффициент
+релаксации, условие сходимости (теорема 4) принимает вид ``0 < cfg.beta < 2``.
+Это сохраняет логику МОР и делает её независимой от единиц.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+import numpy as np
+
+from .config import Config
+from .ktn import KTNParams
+from .plate import PlateBending
+
+
+@dataclass
+class ContactResult:
+    """Результат контактной задачи (поля на сетке + источники истины в узлах).
+
+    Attributes
+    ----------
+    Xg, Yg : координаты фоновой сетки grid_n × grid_n (meshgrid).
+    w_grid, r_grid : прогиб и реакция на сетке (NaN вне Ω) — для вывода.
+    contact_zone : булева маска сетки, где реакция активна (r > 0 внутри Ω).
+    r_nodes, w_nodes : реакция и прогиб в узлах квадратуры (источник истины).
+    iters : число выполненных итераций МОР.
+    converged : достигнут ли критерий ‖Δr‖ < tol до max_iter.
+    residual_history : ‖r_k − r_{k-1}‖ по итерациям.
+    peak_xy : координаты узла с максимальной реакцией.
+    plate, cw : решатель и коэффициенты прогиба при сошедшейся реакции.
+    w_ktn_nodes : КТН-поправленный прогиб в узлах (None для классики).
+    """
+
+    Xg: np.ndarray
+    Yg: np.ndarray
+    w_grid: np.ndarray
+    r_grid: np.ndarray
+    contact_zone: np.ndarray
+    r_nodes: np.ndarray
+    w_nodes: np.ndarray
+    iters: int
+    converged: bool
+    residual_history: np.ndarray
+    peak_xy: tuple
+    plate: PlateBending
+    cw: np.ndarray
+    w_ktn_nodes: np.ndarray | None = None
+
+
+class ContactMOR:
+    """Метод обобщённой реакции для контакта пластины с жёстким основанием.
+
+    Parameters
+    ----------
+    plate : решатель изгиба (с факторизованной A).
+    cfg : параметры (q0, beta, Delta, max_iter, tol, grid_n).
+    foundation_mask : предикат ``(X, Y) -> bool`` зоны возможного контакта в узлах
+        квадратуры; ``None`` ⇒ всё Ω (плоское основание под всей пластиной).
+    gap : зазор Δ до основания; ``None`` ⇒ ``cfg.Delta``.
+    ktn : параметры поправок КТН (:class:`~plates.ktn.KTNParams`); ``None`` ⇒
+        классика (Кирхгоф). При заданных ``ktn`` условие контакта использует
+        КТН-смещение контактной поверхности (с кривизной Δw = −M/D).
+    """
+
+    def __init__(
+        self,
+        plate: PlateBending,
+        cfg: Config,
+        foundation_mask: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
+        gap: float | None = None,
+        ktn: KTNParams | None = None,
+    ):
+        self.plate = plate
+        self.cfg = cfg
+        self.ktn = ktn
+        self.gap = float(cfg.Delta if gap is None else gap)
+        q = plate.quad
+        if foundation_mask is None:
+            self.fmask = np.ones(q.x.size, dtype=bool)
+        else:
+            self.fmask = np.asarray(foundation_mask(q.x, q.y), dtype=bool)
+        # Усиление оператора: макс. прогиб от единичной равномерной нагрузки (~‖G‖).
+        _, cw_unit = plate.solve(np.ones(q.x.size))
+        w_unit = plate.deflection(cw_unit, q.x, q.y)
+        self.gain = float(np.max(np.abs(w_unit)))
+        self.beta_eff = cfg.beta / self.gain
+
+    def solve(self) -> ContactResult:
+        """Запустить внешний цикл МОР и вернуть :class:`ContactResult`."""
+        cfg, q = self.cfg, self.plate.quad
+        r = np.zeros(q.x.size)
+        hist: list[float] = []
+        converged = False
+        iters = 0
+
+        for iters in range(1, cfg.max_iter + 1):
+            cM, cw = self.plate.solve(cfg.q0 - r)             # f = q0 − r → (M, w)
+            w = self.plate.deflection(cw, q.x, q.y)
+            disp = self._contact_disp(cM, w, r)               # классика: disp = w
+            r_new = r.copy()
+            r_new[self.fmask] = r[self.fmask] + self.beta_eff * (disp[self.fmask] - self.gap)
+            np.maximum(r_new, 0.0, out=r_new)                 # проекция r ≥ 0
+            r_new[~self.fmask] = 0.0                          # реакция только под основанием
+            res = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
+            hist.append(res)
+            r = r_new
+            if res < cfg.tol:
+                converged = True
+                break
+
+        cM, cw = self.plate.solve(cfg.q0 - r)                 # финальный прогиб
+        w = self.plate.deflection(cw, q.x, q.y)
+        w_ktn = None
+        if self.ktn is not None:
+            lap_w = -self.plate.moment(cM, q.x, q.y) / self.plate.D
+            w_ktn = self.ktn.corrected_deflection(w, lap_w, cfg.q0, r)
+        peak = int(np.argmax(r))
+        return self._package(r, w, cw, iters, converged, np.array(hist),
+                             (q.x[peak], q.y[peak]), w_ktn)
+
+    def _contact_disp(self, cM, w, r) -> np.ndarray:
+        """Смещение контактной поверхности: классика (w) или КТН (с Δw = −M/D)."""
+        if self.ktn is None:
+            return w
+        lap_w = -self.plate.moment(cM, self.plate.quad.x, self.plate.quad.y) / self.plate.D
+        return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
+
+    # -- вывод на сетку ------------------------------------------------- #
+    def _package(self, r, w, cw, iters, converged, hist, peak_xy, w_ktn=None) -> ContactResult:
+        from scipy.interpolate import griddata
+
+        cfg, dom, q = self.cfg, self.plate.domain, self.plate.quad
+        x0, x1, y0, y1 = dom.bbox
+        gx = np.linspace(x0, x1, cfg.grid_n)
+        gy = np.linspace(y0, y1, cfg.grid_n)
+        Xg, Yg = np.meshgrid(gx, gy)
+        inside = dom.omega(Xg, Yg) > 0.0
+
+        w_grid = np.full(Xg.shape, np.nan)
+        w_grid[inside] = self.plate.deflection(cw, Xg[inside], Yg[inside])
+        # Реакция известна в узлах квадратуры → интерполируем на сетку (только вывод).
+        r_grid = griddata((q.x, q.y), r, (Xg, Yg), method="linear", fill_value=0.0)
+        r_grid[~inside] = np.nan
+        contact_zone = inside & (np.nan_to_num(r_grid) > 0.0)
+
+        return ContactResult(
+            Xg=Xg, Yg=Yg, w_grid=w_grid, r_grid=r_grid, contact_zone=contact_zone,
+            r_nodes=r, w_nodes=w, iters=iters, converged=converged,
+            residual_history=hist, peak_xy=peak_xy, plate=self.plate, cw=cw,
+            w_ktn_nodes=w_ktn,
+        )
+
+
+def solve_contact(
+    cfg: Config,
+    domain,
+    foundation_mask: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
+    gap: float | None = None,
+    ktn: KTNParams | None = None,
+) -> ContactResult:
+    """Фасад: собрать PlateBending по конфигу и решить контакт методом МОР."""
+    plate = PlateBending.from_config(domain, cfg)
+    return ContactMOR(plate, cfg, foundation_mask=foundation_mask, gap=gap, ktn=ktn).solve()
+
+
+__all__ = ["ContactResult", "ContactMOR", "solve_contact"]
