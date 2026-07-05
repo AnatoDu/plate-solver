@@ -85,6 +85,8 @@ class Result:
     # контакт (None, если contact.enabled = false)
     contact: ContactResult | None = None
     delta: float | None = None         # скалярный Δ; для поля зазора — min Δ на основании
+    level: float | None = None         # силовой штамп (A2): найденный уровень
+    force_total: float | None = None   # ∫r dΩ при решении (силовой режим)
     w_free_max: float | None = None    # max|w| без контакта (опора gap_factor)
     # нагрузка point (после защиты ≥ MIN_ZONE_NODES узлов)
     eps_eff: float | None = None
@@ -101,6 +103,8 @@ class Result:
             "delta": self.delta,
             "w_free_max": self.w_free_max,
             "eps_eff": self.eps_eff,
+            "level": self.level,
+            "force_total": self.force_total,
         }
         if self.contact is not None:
             c = self.contact
@@ -351,19 +355,23 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     _, cw_free = solver.solve(f) if f_values is not None else solver.solve_uniform(cfg.q0)
     w_free = float(np.max(np.abs(solver.poisson.evaluate_at_quad(cw_free))))
     c = problem.contact
-    if c.gap is not None:
-        delta_val = c.gap
-    elif c.gap_factor is not None:
-        delta_val = c.gap_factor * w_free
-    else:
-        delta_val = _gap_field_values(c.gap_field, q)
-
     fmask = None
     zone_mask = None
     if problem.contact.zone is not None:
         zone_mask = _zone_mask(problem.contact.zone, q, key="contact.zone",
                                advice="увеличьте Q или зону")
         fmask = lambda X, Y: zone_mask                          # noqa: E731
+
+    if c.force is not None:                                     # силовой штамп (A2)
+        return _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
+                                    cw_free, w_free, zone_mask, fmask)
+
+    if c.gap is not None:
+        delta_val = c.gap
+    elif c.gap_factor is not None:
+        delta_val = c.gap_factor * w_free
+    else:
+        delta_val = _gap_field_values(c.gap_field, q)
 
     if np.ndim(delta_val) == 0:
         delta = float(delta_val)
@@ -392,6 +400,81 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
+    return res
+
+
+def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
+                         cw_free, w_free, zone_mask, fmask) -> Result:
+    r"""Силовой штамп (A2): задана сила P, ищется уровень штампа.
+
+    Δ(x, y) = level + shape(x, y); ``shape`` — форма из ``[contact.gap]``
+    (нет таблицы ⇒ плоский штамп, shape ≡ 0). Скалярное уравнение
+
+    .. math:: F(\mathrm{level}) = \int_\Omega r\, d\Omega - P = 0
+
+    монотонно убывает по level (больший зазор — меньшее прижатие);
+    решается brentq на [level_lo, level_hi]: lo — почти касание в нижней
+    точке штампа, hi — уровень непроникновения (r ≡ 0 ⇒ F = −P < 0).
+    Каждый вызов F — полный МОР с ТЁПЛЫМ стартом r от предыдущего уровня.
+    """
+    from scipy.optimize import brentq
+
+    c = problem.contact
+    q = solver.quad
+    P = float(c.force)
+    if c.gap is not None or c.gap_factor is not None:
+        warnings.append("contact.gap: скалярный gap/gap_factor игнорируется "
+                        "в силовом режиме (force); форма штампа — [contact.gap]")
+    shape = _gap_field_values(c.gap_field, q) if c.gap_field is not None else 0.0
+    if np.ndim(shape) == 0:
+        shape = float(shape)                       # плоский штамп или const-форма
+
+    fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
+    w_free_nodes = solver.poisson.evaluate_at_quad(cw_free)
+    shape_fm = shape[fm] if np.ndim(shape) else shape
+    # Верхняя граница: level + shape ≥ w_free на основании ⇒ контакта нет.
+    level_hi = float(np.max(w_free_nodes[fm] - shape_fm)) * (1.0 + 1e-9) + 1e-30
+    # Нижняя: почти касание в нижней точке штампа (min Δ = 1e-8 масштаба).
+    scale = float(np.max(np.abs(w_free_nodes)))
+    min_shape = float(np.min(shape_fm)) if np.ndim(shape) else shape
+    level_lo = 1e-8 * scale - min_shape
+
+    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn" else None
+    state = {"r": None, "res": None, "iters": 0, "calls": 0}
+
+    def F(level: float) -> float:
+        gap_val = (level + shape) if np.ndim(shape) else float(level + shape)
+        mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=gap_val,
+                         ktn=ktn, load_values=f_values)
+        res = mor.solve(r0=state["r"])
+        state.update(r=res.r_nodes, res=res)
+        state["iters"] += res.iters
+        state["calls"] += 1
+        return float(np.sum(q.w * res.r_nodes)) - P
+
+    F_lo = F(level_lo)
+    if F_lo <= 0.0:
+        raise CaseError(
+            f"contact.force: получено P = {P:g}, ожидалось 0 < P ≤ "
+            f"{F_lo + P:.6g} (максимум ∫r при касании штампа), "
+            f"см. {_SCHEMA_DOC}#contact")
+    level_star = brentq(F, level_lo, level_hi, xtol=1e-8 * scale)
+    F_star = F(level_star)                          # финальный прогон на level*
+    cres = state["res"]
+    force_total = F_star + P
+
+    delta_min = float(level_star + min_shape)
+    w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes
+    res = Result(problem=problem, config=cfg, w_max=float(np.max(np.abs(w_nodes))),
+                 cond=float(solver.poisson.cond), Xg=cres.Xg, Yg=cres.Yg,
+                 w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
+                 delta=delta_min, w_free_max=w_free,
+                 level=float(level_star), force_total=force_total,
+                 w_max_classic=float(np.max(np.abs(cres.w_nodes))))
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", cres.cw)
+    object.__setattr__(res, "_force_calls", state["calls"])
+    object.__setattr__(res, "_force_iters_total", state["iters"])
     return res
 
 

@@ -194,6 +194,11 @@ class ContactSpec:
     Ровно одно из: ``gap`` (скаляр Δ), ``gap_factor`` (Δ = gap_factor·w_free,
     вычисляет диспетчер), таблица ``[contact.gap]`` (поле Δ(x, y),
     :class:`GapSpec`). ``zone`` — геометрия зоны препятствия (дефолт: вся Ω).
+
+    Силовой штамп (A2): ``force = P > 0`` — уровень штампа ищется из
+    ``∫r dΩ = P``; скалярные ``gap``/``gap_factor`` при этом игнорируются
+    (warning в result.json), а ``[contact.gap]`` осмыслен как ФОРМА штампа
+    (профиль относительно неизвестного уровня): Δ(x, y) = level + shape(x, y).
     Параметры итерации со значением None берутся из дефолтов Config.
     """
 
@@ -201,6 +206,7 @@ class ContactSpec:
     gap: float | None = None
     gap_factor: float | None = None
     gap_field: GapSpec | None = None
+    force: float | None = None          # силовой штамп (A2): ∫r dΩ = force
     beta: float | None = None
     max_iter: int | None = None
     tol: float | None = None
@@ -535,7 +541,8 @@ def _parse_contact(data) -> ContactSpec:
     if not isinstance(data, dict):
         _fail("contact", data, "таблица (секция TOML)", "contact")
     _require_keys("contact", data,
-                  {"enabled", "gap", "gap_factor", "beta", "max_iter", "tol", "stop", "zone"},
+                  {"enabled", "gap", "gap_factor", "force", "beta", "max_iter",
+                   "tol", "stop", "zone"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
     gap_raw = data.get("gap")
@@ -553,16 +560,17 @@ def _parse_contact(data) -> ContactSpec:
     if stop is not None and stop not in STOP_CRITERIA:
         _fail("contact.stop", stop, " | ".join(STOP_CRITERIA), "contact")
     zone = _parse_geometry("contact.zone", data["zone"]) if "zone" in data else None
-    if enabled:
+    force = _number("contact", data, "force", "contact", positive=True)
+    if enabled and force is None:
         provided = sum(v is not None for v in (gap, gap_factor, gap_field))
         if provided != 1:
             _fail("contact.gap",
                   {"gap": gap, "gap_factor": gap_factor,
                    "[contact.gap]": None if gap_field is None else gap_field.kind},
                   "ровно одно из gap | gap_factor | таблица [contact.gap] "
-                  "при enabled = true", "contact")
+                  "при enabled = true (либо силовой режим force)", "contact")
     return ContactSpec(enabled=enabled, gap=gap, gap_factor=gap_factor,
-                       gap_field=gap_field, beta=beta,
+                       gap_field=gap_field, force=force, beta=beta,
                        max_iter=max_iter, tol=tol, stop=stop, zone=zone)
 
 

@@ -1,0 +1,46 @@
+# Силовой штамп-квадрат у входящего угла L-формы (фаза 3, A2):
+# задана сила P = ∫r dΩ, уровень штампа ищется (brentq + тёплый старт МОР).
+# Та же зона, что lshape_stamp. Протокол снимка: β=1.2, mor_iter=8000,
+# tol=1e-8 (как golden) — снимок протокол-специфичен (регресс, не истина);
+# точность замыкания позиционный↔силовой гейтится отдельным big-тестом
+# на глубокой сходимости (tests/test_force_stamp.py, PROGRESS).
+
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+force = 0.5              # искомая равнодействующая реакции штампа
+beta = 1.2
+max_iter = 8000
+tol = 1.0e-8
+
+[contact.zone]
+kind = "rectangle"
+x1 = 0.15
+x2 = 0.45
+y1 = 0.15
+y2 = 0.45
+
+[discretization]
+p = 10
+Q = 120
+grid_n = 80
+
+[verify]
+reference = "none"       # ворота — замыкание и регресс (test_force_stamp)
+
+[output]
+dir = "results/ladder/lshape_stamp_force"

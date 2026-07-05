@@ -90,6 +90,7 @@ figures = true
 | contact.gap.a, b, c | float | — | plane: Δ = a·x + b·y + c (>0 на основании) | dispatch.py |
 | contact.gap.r_curv, cx, cy, apex | float | cx=cy=0 | paraboloid: Δ = apex + ((x−cx)²+(y−cy)²)/(2·r_curv) | dispatch.py |
 | contact.gap.base, [[zones]] | float, массив | — | steps: base + зоны (геометрия + value > 0) | dispatch.py |
+| contact.force | float | — | > 0: силовой штамп, ∫r dΩ = force (v0.3) | dispatch.py |
 | discretization.p | int | дефолт Config (12) | ≥ 1 | basis.py |
 | discretization.Q | int | дефолт Config (64) | ≥ 2 | quadrature.py |
 | discretization.grid_n | int | дефолт Config (80) | ≥ 2 | contact.py/viz.py |
@@ -230,6 +231,19 @@ apex = 1.0e-4            # зазор в вершине (cx = cy = 0 по умо
 ```python
 mor = ContactMOR(pb, cfg, gap=gap_values)   # gap_values — массив в узлах квадратуры
 ```
+
+### Силовой штамп (v0.3)
+
+`force = P` (> 0): задана равнодействующая реакции, уровень штампа ищется
+из скалярного уравнения `∫r dΩ = P` (монотонного по уровню; brentq на
+[касание, отрыв] с тёплым стартом МОР). Скалярные `gap`/`gap_factor` при
+`force` игнорируются (warning в result.json); таблица `[contact.gap]`
+осмыслена как ФОРМА штампа относительно искомого уровня:
+Δ(x, y) = level + shape(x, y). `Result.level` — найденный уровень,
+`Result.force_total` — фактическая ∫r. P выше достижимого максимума
+(касание) — ошибка с указанием диапазона. Точность замыкания
+позиционной и силовой постановок требует сходимости МОР (tol достижим,
+а не «по лимиту итераций») — см. tests/test_force_stamp.py.
 
 ## discretization
 

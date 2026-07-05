@@ -158,8 +158,14 @@ class ContactMOR:
         self.gain = float(np.max(np.abs(w_unit)))
         self.beta_eff = cfg.beta / self.gain
 
-    def solve(self) -> ContactResult:
+    def solve(self, r0: np.ndarray | None = None) -> ContactResult:
         r"""Запустить внешний цикл МОР и вернуть :class:`ContactResult`.
+
+        ``r0`` — тёплый старт реакции (массив в узлах квадратуры; проекция
+        на допустимое множество выполняется автоматически: r ≥ 0, нуль вне
+        основания). ``None`` — прежний холодный старт r ≡ 0. Тёплый старт
+        используется силовым штампом (A2): соседние уровни дают близкие
+        реакции, экономя итерации внешнего скалярного уравнения.
 
         Критерий останова выбирается полем ``cfg.stop`` (порог — ``cfg.tol``):
 
@@ -194,7 +200,11 @@ class ContactMOR:
         """
         cfg, q = self.cfg, self.plate.quad
         f0 = cfg.q0 if self.load is None else self.load       # равномерная или поле
-        r = np.zeros(q.x.size)
+        if r0 is None:
+            r = np.zeros(q.x.size)
+        else:
+            r = np.maximum(np.asarray(r0, dtype=float).copy(), 0.0)
+            r[~self.fmask] = 0.0                              # проекция тёплого старта
         hist: list[float] = []
         converged = False
         iters = 0
