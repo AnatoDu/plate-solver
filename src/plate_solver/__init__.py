@@ -28,7 +28,7 @@ from . import config
 from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = [
     "config",
