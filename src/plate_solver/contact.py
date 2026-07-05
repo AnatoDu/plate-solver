@@ -127,7 +127,7 @@ class ContactMOR:
             self.fmask = np.asarray(foundation_mask(q.x, q.y), dtype=bool)
         # Усиление оператора: макс. прогиб от единичной равномерной нагрузки (~‖G‖).
         _, cw_unit = plate.solve(np.ones(q.x.size))
-        w_unit = plate.deflection(cw_unit, q.x, q.y)
+        w_unit = plate.poisson.evaluate_at_quad(cw_unit)
         self.gain = float(np.max(np.abs(w_unit)))
         self.beta_eff = cfg.beta / self.gain
 
@@ -173,7 +173,7 @@ class ContactMOR:
 
         for iters in range(1, cfg.max_iter + 1):  # noqa: B007 — iters нужен после цикла
             cM, cw = self.plate.solve(cfg.q0 - r)             # f = q0 − r → (M, w)
-            w = self.plate.deflection(cw, q.x, q.y)
+            w = self.plate.poisson.evaluate_at_quad(cw)       # прогиб в узлах (кэш, GEMV)
             disp = self._contact_disp(cM, w, r)               # классика: disp = w
             if self.stop == "comp" and self._kkt_residual(disp, r) < cfg.tol:
                 converged = True                              # (r, u(r)) уже KKT-точно
@@ -190,10 +190,10 @@ class ContactMOR:
                 break
 
         cM, cw = self.plate.solve(cfg.q0 - r)                 # финальный прогиб
-        w = self.plate.deflection(cw, q.x, q.y)
+        w = self.plate.poisson.evaluate_at_quad(cw)
         w_ktn = None
         if self.ktn is not None:
-            lap_w = -self.plate.moment(cM, q.x, q.y) / self.plate.D
+            lap_w = -self.plate.poisson.evaluate_at_quad(cM) / self.plate.D
             w_ktn = self.ktn.corrected_deflection(w, lap_w, cfg.q0, r)
         # Диагностика комплементарности по финальному состоянию (алгоритм не меняется):
         # то же смещение u, что входит в условие контакта (классика: u = w).
@@ -207,7 +207,7 @@ class ContactMOR:
         """Смещение контактной поверхности: классика (w) или КТН (с Δw = −M/D)."""
         if self.ktn is None:
             return w
-        lap_w = -self.plate.moment(cM, self.plate.quad.x, self.plate.quad.y) / self.plate.D
+        lap_w = -self.plate.poisson.evaluate_at_quad(cM) / self.plate.D
         return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
 
     def _kkt_residual(self, disp, r) -> float:

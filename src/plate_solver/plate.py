@@ -53,7 +53,7 @@ class PlateBending:
         для (P2)). Возвращает коэффициенты полей ``M`` и ``w``.
         """
         cM = self.poisson.solve(qtilde_values)                       # (P1): −ΔM = q̃
-        M_nodes = self.poisson.evaluate(cM, self.quad.x, self.quad.y)  # M в узлах
+        M_nodes = self.poisson.evaluate_at_quad(cM)                  # M в узлах (кэш, GEMV)
         cw = self.poisson.solve(M_nodes / self.D)                    # (P2): −Δw = M/D
         return cM, cw
 

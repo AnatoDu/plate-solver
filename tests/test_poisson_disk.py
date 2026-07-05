@@ -72,3 +72,40 @@ def test_error_decreases_with_Q():
     # При фиксированном p погрешность падает с ростом Q (~O(1/Q)).
     errs = [_rel_l2(4, Q) for Q in (64, 128, 256)]
     assert errs[0] > errs[1] > errs[2], errs
+
+
+# --------------------------------------------------------------------------- #
+#  Кэш матриц структуры (P2.1): та же арифметика ⇒ результат равен БИТ-В-БИТ
+# --------------------------------------------------------------------------- #
+def test_cache_fields_bitwise_identity():
+    """Кэш не меняет ни A, ни коэффициентов, ни полей — равенство бит-в-бит.
+
+    Обоснование: psiW = ψ·diag(w) и Φ, ω кэшируются как есть; b = psiW@f и
+    v = ω·(Φᵀc) повторяют порядок округления прежних assemble_load/evaluate.
+    """
+    basis6 = B.ChebyshevBasis(6, DOM.bbox)
+    qn = quad.interior_nodes(DOM, 96)
+    f = 1.0 + 0.3 * qn.x - 0.2 * qn.y**2           # неоднородная правая часть
+    on = PoissonSolver(DOM, basis6, qn, cache_fields=True)
+    off = PoissonSolver(DOM, basis6, qn, cache_fields=False)
+    assert on.cache_fields and not off.cache_fields
+    assert np.array_equal(on.A, off.A)
+    c_on, c_off = on.solve(f), off.solve(f)
+    assert np.array_equal(c_on, c_off)
+    # evaluate_at_quad ≡ evaluate в узлах квадратуры (кэш-ветка и фолбэк)
+    assert np.array_equal(on.evaluate_at_quad(c_on), on.evaluate(c_on, qn.x, qn.y))
+    assert np.array_equal(off.evaluate_at_quad(c_off), off.evaluate(c_off, qn.x, qn.y))
+
+
+def test_cache_fields_auto_threshold(monkeypatch):
+    """Автовыбор: кэш включён при N·M ≤ CACHE_NM_MAX и выключен выше порога."""
+    import plate_solver.poisson as P
+
+    basis4 = B.ChebyshevBasis(4, DOM.bbox)
+    qn = quad.interior_nodes(DOM, 64)
+    assert PoissonSolver(DOM, basis4, qn).cache_fields           # N·M мало ⇒ кэш
+    monkeypatch.setattr(P, "CACHE_NM_MAX", 10)                   # имитация «большой» квадратуры
+    sol = PoissonSolver(DOM, basis4, qn)
+    assert not sol.cache_fields                                  # авто-выключение
+    c = sol.solve(np.ones(qn.x.size))
+    assert np.array_equal(sol.evaluate_at_quad(c), sol.evaluate(c, qn.x, qn.y))
