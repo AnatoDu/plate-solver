@@ -119,9 +119,16 @@ class GeometrySpec:
 
 @dataclass(frozen=True)
 class BCSpec:
-    """Закрепление края (в v0.2 — один тип на всю границу)."""
+    """Закрепление края: один тип на всю границу или mixed (v0.3, трек C).
+
+    ``mixed`` (только kind=rectangle): ``sides`` — кортеж пар
+    (сторона, тип), все четыре стороны x1|x2|y1|y2 со значениями
+    clamped|hinge. Структура (∏ω_c²)(∏ω_h)·Φ; статика шарнира —
+    из полной билинейной формы (NOTES §20).
+    """
 
     type: str
+    sides: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -456,11 +463,34 @@ def _validate_compose_node(path: str, node: dict, depth: int) -> int:
 def _parse_bc(data) -> BCSpec:
     if not isinstance(data, dict):
         _fail("bc", data, "таблица (секция TOML)", "bc")
-    _require_keys("bc", data, {"type"}, "bc")
+    _require_keys("bc", data, {"type", "sides"}, "bc")
     t = data.get("type")
-    if t not in BC_TYPES:
-        _fail("bc.type", t, " | ".join(BC_TYPES), "bc")
-    return BCSpec(type=t)
+    if t not in (*BC_TYPES, "mixed"):
+        _fail("bc.type", t, " | ".join((*BC_TYPES, "mixed")), "bc")
+    if t != "mixed":
+        if "sides" in data:
+            _fail("bc.sides", data["sides"], "только при type = mixed", "bc")
+        return BCSpec(type=t)
+    raw = data.get("sides")
+    if not isinstance(raw, list) or not raw:
+        _fail("bc.sides", raw, "массив [[bc.sides]] из четырёх сторон", "bc")
+    sides = {}
+    for i, s in enumerate(raw):
+        if not isinstance(s, dict):
+            _fail(f"bc.sides[{i}]", s, "таблица side/type", "bc")
+        _require_keys(f"bc.sides[{i}]", s, {"side", "type"}, "bc")
+        side = s.get("side")
+        st = s.get("type")
+        if side not in ("x1", "x2", "y1", "y2"):
+            _fail(f"bc.sides[{i}].side", side, "x1 | x2 | y1 | y2", "bc")
+        if st not in ("clamped", "hinge"):
+            _fail(f"bc.sides[{i}].type", st, "clamped | hinge", "bc")
+        if side in sides:
+            _fail(f"bc.sides[{i}].side", side, "каждая сторона один раз", "bc")
+        sides[side] = st
+    if set(sides) != {"x1", "x2", "y1", "y2"}:
+        _fail("bc.sides", sorted(sides), "все четыре стороны x1, x2, y1, y2", "bc")
+    return BCSpec(type=t, sides=tuple(sorted(sides.items())))
 
 
 def _parse_load(data) -> LoadSpec:
@@ -661,6 +691,17 @@ def _parse_output(data) -> OutputSpec:
 #  Перекрёстная валидация (несовместимости v0.2)
 # --------------------------------------------------------------------------- #
 def _validate_cross(p: Problem) -> None:
+    if p.bc.type == "mixed":
+        if p.geometry.kind != "rectangle":
+            _fail("bc.type", "mixed",
+                  "kind = rectangle (смешанные КУ на произвольных R-областях — "
+                  "фаза 5)", "bc")
+        if p.contact.enabled:
+            _fail("contact.enabled", True,
+                  "false при bc.type = mixed (контакт при смешанных КУ — "
+                  "фаза 5)", "bc")
+        if p.model.theory == "ktn":
+            _fail("model.theory", "ktn", "classic при bc.type = mixed (v0.3)", "bc")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):

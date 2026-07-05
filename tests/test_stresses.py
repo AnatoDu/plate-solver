@@ -147,11 +147,11 @@ def test_b2_fields_npz_and_replot(tmp_path):
     import matplotlib
 
     matplotlib.use("Agg")
+    from pathlib import Path
+
     from plate_solver import viz
     from plate_solver.dispatch import solve
     from plate_solver.problem import Problem
-
-    from pathlib import Path
 
     res = solve(Problem.from_toml(Path(__file__).resolve().parents[1]
                                   / "cases" / "ci" / "lshape_stamp.toml"))

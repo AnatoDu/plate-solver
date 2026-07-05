@@ -43,10 +43,13 @@ class Reference:
     """
 
     name: str
-    kind: str            # analytic | cross_1d | model_gap | mms
+    kind: str            # analytic | cross_1d | model_gap | mms | fem
     w_max: float
     gated: bool
     value: float | None = None
+    point: tuple | None = None   # сравнение в ТОЧКЕ (центр прямоугольника):
+    #                              снимает несоответствие «max по узлам Гаусса
+    #                              против max по плотной сетке эталона»
 
 
 @dataclass(frozen=True)
@@ -112,8 +115,48 @@ def _analytic_wmax(problem: Problem, cfg) -> float:
     if g.kind == "annulus":
         abc = "clamped" if bc == "clamped" else "soft"
         return analytic.annulus_uniform_wmax(g.a, g.b, cfg.q0, cfg.D, abc, cfg.nu)
+    if g.kind == "rectangle":
+        return _rect_analytic_wmax(problem, cfg)      # (значение, точка)
     _fail("verify.reference", "analytic",
-          "circle | annulus (для rectangle/L/compose — mms | fem | none)")
+          "circle | annulus | rectangle (для L/compose — mms | fem | none)")
+
+
+def _rect_analytic_wmax(problem: Problem, cfg) -> float:
+    r"""Эталоны прямоугольника (трек C): Навье (SSSS) и Леви (SCSC).
+
+    На ПРЯМЫХ краях мягкий шарнир совпадает с истинным (NOTES §8, кривизна
+    границы 0) ⇒ bc=soft_hinge гейтится рядом Навье. Для mixed: все hinge —
+    Навье; пара hinge/пара clamped по осям — Леви (при clamped по x —
+    поворот осей); прочие комбинации аналитики не имеют.
+    """
+    g, bc = problem.geometry, problem.bc
+    xc, yc = 0.5 * (g.x1 + g.x2), 0.5 * (g.y1 + g.y2)   # максимум — в центре
+    if bc.type == "soft_hinge":
+        w = analytic.navier_rect_uniform(xc, yc, g.x1, g.x2, g.y1, g.y2,
+                                         cfg.q0, cfg.D)
+        return abs(float(w)), (xc, yc)
+    if bc.type != "mixed":
+        _fail("verify.reference", "analytic",
+              "для rectangle: soft_hinge (Навье) или mixed SSSS/SCSC "
+              "(Навье/Леви); для clamped — mms | fem")
+    sides = dict(bc.sides)
+    kinds = set(sides.values())
+    if kinds == {"hinge"}:
+        w = analytic.navier_rect_uniform(xc, yc, g.x1, g.x2, g.y1, g.y2,
+                                         cfg.q0, cfg.D)
+        return abs(float(w)), (xc, yc)
+    if (sides["x1"] == sides["x2"] and sides["y1"] == sides["y2"]
+            and kinds == {"hinge", "clamped"}):
+        if sides["x1"] == "hinge":                     # x-hinge, y-clamped
+            w = analytic.levy_rect_uniform(xc, yc, g.x1, g.x2, g.y1, g.y2,
+                                           cfg.q0, cfg.D)
+        else:                                          # поворот осей
+            w = analytic.levy_rect_uniform(yc, xc, g.y1, g.y2, g.x1, g.x2,
+                                           cfg.q0, cfg.D)
+        return abs(float(w)), (xc, yc)
+    _fail("verify.reference", "analytic",
+          "mixed: все hinge (Навье) или пары hinge/clamped по осям (Леви); "
+          "иначе — none | fem")
 
 
 def _model_gap_wmax(problem: Problem, cfg) -> float | None:
@@ -320,9 +363,13 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
               "none — эталонов контактной задачи в v0.2 нет "
               "(ворота контакта — инварианты, P3.7)")
     if v.reference == "analytic":
+        ref_val = _analytic_wmax(problem, cfg)
+        point = None
+        if isinstance(ref_val, tuple):
+            ref_val, point = ref_val
         refs.append(Reference(
             name=f"analytic ({problem.geometry.kind}, {problem.bc.type})",
-            kind="analytic", w_max=_analytic_wmax(problem, cfg), gated=True))
+            kind="analytic", w_max=ref_val, gated=True, point=point))
     elif v.reference == "mms":
         refs.append(_mms_reference(problem, cfg))
     elif v.reference == "fem":
@@ -346,7 +393,12 @@ def verify_result(result: Result) -> VerifyReport:
     tol = problem.verify.tol
     rows = []
     for ref in refs:
-        value = result.w_max if ref.value is None else ref.value
+        if ref.point is not None:
+            value = abs(float(result._plate.deflection(result._c, *ref.point)))
+        elif ref.value is not None:
+            value = ref.value
+        else:
+            value = result.w_max
         rel = abs(value - ref.w_max) / abs(ref.w_max)
         rows.append(RefRow(name=ref.name, reference=ref.w_max, value=value,
                            rel=rel, gated=ref.gated,

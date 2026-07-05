@@ -145,8 +145,15 @@ class Result:
         from .ladder import bending_moments_full
 
         solver = self._plate
-        p_struct = 2 if hasattr(solver, "S") else 1        # ω²Φ у защемления
         inside = np.isfinite(self.w_grid)
+        if hasattr(solver, "moments_at"):                   # mixed-структура (трек C)
+            Mx = np.full(self.Xg.shape, np.nan)
+            My = np.full(self.Xg.shape, np.nan)
+            Mxy = np.full(self.Xg.shape, np.nan)
+            mx, my, mxy = solver.moments_at(self._c, self.Xg[inside], self.Yg[inside])
+            Mx[inside], My[inside], Mxy[inside] = mx, my, mxy
+            return Mx, My, Mxy
+        p_struct = 2 if hasattr(solver, "S") else 1        # ω²Φ у защемления
         Mx = np.full(self.Xg.shape, np.nan)
         My = np.full(self.Xg.shape, np.nan)
         Mxy = np.full(self.Xg.shape, np.nan)
@@ -326,6 +333,12 @@ def solve(problem: Problem) -> Result:
 
     if problem.bc.type == "clamped":
         solver = ClampedPlate.from_config(dom, cfg)
+    elif problem.bc.type == "mixed":                       # трек C (v0.3)
+        from .clamped import MixedRectPlate
+
+        g = problem.geometry
+        solver = MixedRectPlate(g.x1, g.x2, g.y1, g.y2,
+                                dict(problem.bc.sides), cfg)
     else:
         solver = PlateBending.from_config(dom, cfg)
     quad = solver.quad
@@ -366,7 +379,7 @@ def _grid_fields(dom, cfg: Config, evaluate) -> tuple[np.ndarray, np.ndarray, np
 def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     f = _uniform(cfg, solver.quad) if f_values is None else f_values
     q = solver.quad
-    if problem.bc.type == "clamped":
+    if problem.bc.type in ("clamped", "mixed"):
         c = solver.solve(f)
         w_nodes = solver.deflection_at_quad(c)
         evaluate = lambda X, Y: solver.deflection(c, X, Y)      # noqa: E731
