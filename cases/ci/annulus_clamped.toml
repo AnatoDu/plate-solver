@@ -1,0 +1,30 @@
+# CI-копия annulus_clamped (лёгкая).
+
+[geometry]
+kind = "annulus"
+a = 1.0
+b = 0.4
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 10
+Q = 256
+grid_n = 16
+
+[verify]
+reference = "analytic"
+cross_1d = true
+tol = 5.0e-2
+
+[output]
+dir = "results/ci/annulus_clamped"
+

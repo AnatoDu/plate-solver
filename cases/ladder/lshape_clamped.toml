@@ -1,0 +1,28 @@
+# Ступень: L-форма, защемление; Аргирис (нужен extra fem).
+
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 10
+Q = 120
+
+[verify]
+reference = "fem"
+tol = 1.5e-1   # факт Аргирис 4.70e-2 × 3 (входящий угол, NOTES §12)
+
+[output]
+dir = "results/ladder/lshape_clamped"
+

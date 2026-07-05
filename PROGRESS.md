@@ -157,6 +157,34 @@
   1.64e-2 (tests/test_fem_reference.py, маркер fem). Сэмплинг w_max МКЭ —
   отступ 2 % от границы (полигональная сетка вписана в ω-границу).
   Константы сеток — в references.py, в схему не выносятся (ограда).
+## P4. CLI и реестр случаев
+
+- P4.1: plate-solve (решение case, сводка, Result.save), plate-verify
+  (таблица эталонов, exit 0/1), plate-ladder (каталог → сводный md с
+  провенансом); [project.scripts] дополнен.
+- P4.2: --sweep p=A:B:S и Q=... (декартово с предупреждением; в solve и
+  verify): md + csv + png (semilogy rel в verify; w_max в solve);
+  вердикт verify-свипа — по самой точной точке.
+- P4.3: cases/ladder/ — 15 ступеней (circle_{soft,clamped}, rect_{hinge,
+  clamped}, mms_{rect,circle}, annulus_{soft,clamped}, circle_point_*,
+  lshape_{soft,clamped} (+fem), lshape_contact, lshape_stamp,
+  annulus_soft_contact; standalone-кейсы P3 перенесены сюда — один
+  экземпляр допусков). lshape_stamp: тождество «zone ⊇ Ω» ≡ базовый путь
+  (побайтово, rel ≤ 1e-15), r ≡ 0 вне зоны, предельный gap_factor=2,
+  инварианты; регресс-снимок в baselines.json (r_max=200.51, 51 узел,
+  comp 0.27 — кромка штампа резче основания, та же природа NOTES §13;
+  Δ совпал с golden — та же L-серия; зона из 3 компонент — фиксация).
+  Согласованность с golden: p-свип круга через диспетчер ↔ прямой API
+  до 12 цифр и ↔ печать таблицы 4.1 (полуединица 6-й цифры) — big-тест.
+  **Отступление:** служебный kind="strip1d" (1d_strip, stamp_1d) НЕ
+  введён — 1D-ступени уже полностью гейтуются test_ladder / test_stamp /
+  test_stamp_ritz; отдельный вид геометрии в схеме ради дубля ворот
+  отложен (правило блокировки, причина здесь).
+- P4.4: реестр = ворота — параметризованный pytest по cases/ci/*.toml
+  (10 лёгких копий, Q ≤ 256, малые mor_iter; весь набор ~3 с) через
+  plate-verify exit 0; новый ci-случай автоматически становится тестом.
+  rect_hinge: reference=none (эталон Навье — в ladder.py, вне схемы v0.2).
+
 - P3.8: mms-эталон в резолвере — обёртка mms_load_and_exact /
   mms_clamped_disk_w из ladder.py; для прямоугольника ω полиномиальная
   (в т.ч. смещённый прямоугольник — поле и ω вокруг его центра).

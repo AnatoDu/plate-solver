@@ -17,7 +17,7 @@ import pytest
 from plate_solver.problem import Problem
 
 _ROOT = Path(__file__).resolve().parents[1]
-_CASE = _ROOT / "cases" / "annulus_soft_contact.toml"
+_CASE = _ROOT / "cases" / "ladder" / "annulus_soft_contact.toml"
 _BASE = json.loads((_ROOT / "cases" / "baselines.json").read_text(encoding="utf-8"))
 
 

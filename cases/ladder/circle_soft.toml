@@ -1,0 +1,29 @@
+# Ступень: круг, мягкий шарнир (репрезентативна табл. 4.1 golden; h=1.0).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 1.0
+
+[discretization]
+p = 10
+Q = 1024
+
+[verify]
+reference = "analytic"
+cross_1d = true
+tol = 1.0e-3   # факт golden ~2e-4 (табл. 4.1)
+model_gap = true
+
+[output]
+dir = "results/ladder/circle_soft"
+

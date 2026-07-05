@@ -1,0 +1,35 @@
+# Ступень: контакт L-формы (параметры golden; табл. 4.2).
+
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.5
+beta = 1.2
+max_iter = 8000
+tol = 1.0e-8
+
+[discretization]
+p = 10
+Q = 120
+grid_n = 80
+
+[verify]
+reference = "none"   # ворота контакта — инварианты (тесты золотой серии)
+
+[output]
+dir = "results/ladder/lshape_contact"
+

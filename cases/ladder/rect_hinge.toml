@@ -1,0 +1,30 @@
+# Ступень: прямоугольник, шарнир (SSSS). Эталон Навье — вне схемы v0.2.
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 10
+Q = 160
+
+[verify]
+reference = "none"   # эталон Навье живёт в ladder.py вне схемы v0.2;
+# числовые ворота ступени — tests/test_ladder.py (big)
+
+[output]
+dir = "results/ladder/rect_hinge"
+
