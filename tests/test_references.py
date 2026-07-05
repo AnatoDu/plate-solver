@@ -84,3 +84,32 @@ def test_resolver_errors():
                                       verify={"reference": "analytic",
                                               "cross_1d": False}))
     assert len(refs) == 1 and refs[0].w_max > 0.0
+
+
+def test_fem_incompatibility_reported_before_skfem_requirement(monkeypatch):
+    """P0.2 фазы 3: несовместимость постановки объясняется ДО требования skfem.
+
+    Имитация CI без extra fem (скрываем импорт skfem): несовместимый случай
+    fem+compose обязан падать сообщением про compose, а совместимый
+    fem+circle/clamped — просьбой установить scikit-fem.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def hide_skfem(name, *args, **kwargs):
+        if name == "skfem" or name.startswith("skfem."):
+            raise ImportError("skfem скрыт (имитация CI)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", hide_skfem)
+    tree = {"op": "union", "children": [{"kind": "circle", "a": 1.0},
+                                        {"kind": "circle", "a": 0.5, "cx": 1.0,
+                                         "cy": 0.0}]}
+    with pytest.raises(CaseError, match="compose"):
+        resolve_reference(_problem(geometry={"kind": "compose", "tree": tree},
+                                   bc={"type": "clamped"},
+                                   verify={"reference": "fem", "cross_1d": False}))
+    with pytest.raises(CaseError, match="scikit-fem"):
+        resolve_reference(_problem(bc={"type": "clamped"},
+                                   verify={"reference": "fem", "cross_1d": False}))
