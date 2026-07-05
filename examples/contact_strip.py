@@ -28,7 +28,7 @@ def main() -> None:
         foundation_start=45.0,
         n=100,
         beta=0.02,
-        max_iter=500_000,
+        max_iter=3_000_000,
     )
 
     print("Решение МОР 1D…")
