@@ -34,9 +34,11 @@ dev = ["pytest>=7.0", "ruff>=0.4"]
 fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
 
 [project.scripts]
-# v0.2 (P0.4): plate-solve --new <kind>; решение case-файлов и plate-verify /
-# plate-ladder добавляются в P4.
+# v0.2: plate-solve (решение case-файла; --new — шаблон; --sweep p=2:12:2),
+# plate-verify (таблица эталонов, exit 0/1), plate-ladder (каталог → сводка).
 plate-solve = "plate_solver.cli:main"
+plate-verify = "plate_solver.cli:main_verify"
+plate-ladder = "plate_solver.cli:main_ladder"
 
 [project.urls]
 Homepage = "https://github.com/AnatoDu/plate-solver"
