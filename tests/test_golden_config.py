@@ -31,3 +31,12 @@ def test_to_config_circle_overrides():
     lab = g.to_config(h=g.h_circle, Q=g.Q_circle, p=4)
     assert lab.h == g.h_circle and lab.Q == g.Q_circle and lab.p == 4
     assert lab.D == g.D                      # жёсткость круга (h=1.0)
+
+
+def test_gate_count_is_automatic():
+    """P1.5: число ворот в подписи golden считается pytest'ом, а не хардкодом."""
+    from run_golden import _count_gates
+
+    n = _count_gates()
+    assert n is not None and n >= 90         # в объединённой базе ≥ 90 ворот
+

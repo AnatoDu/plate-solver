@@ -5,12 +5,16 @@
 контакт (4.2) → КТН (4.3). Все числа в golden_results.md, три фигуры в figures/.
 Падение инварианта = числа в доклад НЕ годятся.
 
-Запуск:  plate-solver/.venv/bin/python run_golden.py
+Запуск (из корня репозитория; вывод пишется в CWD):
+    plate-solver/.venv/bin/python scripts/run_golden.py
 """
 
 from __future__ import annotations
 
 import os
+import re
+import subprocess
+import sys
 
 import matplotlib
 
@@ -29,6 +33,25 @@ def _save(fig, cfg, name):
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def _count_gates() -> int | None:
+    """Число тест-ворот комплекса: `pytest --collect-only -q` из корня репозитория.
+
+    Вывод -q — строки «tests/test_x.py: N»; суммируем N. При любом сбое
+    (нет pytest, изменился формат) возвращаем None — подпись без числа,
+    но с командой; хардкод числа не допускается (P1.5).
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        out = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+            cwd=root, capture_output=True, text=True, timeout=300, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    counts = re.findall(r"^\S+\.py: (\d+)$", out, flags=re.MULTILINE)
+    return sum(map(int, counts)) if counts else None
 
 
 def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
@@ -106,8 +129,10 @@ def write_markdown(cfg, w_free, Delta, circle, verify, contact, ktn, path):
     A(f"- `figures/circle_w_surface.png` — поверхность прогиба круга (p={cfg.p}).")
     A("- `figures/lshape_contact_summary.png` — планшет контакта (прогиб, реакция, зона, сходимость).")
     A("- `figures/ktn_reaction_compare.png` — классика vs КТН при едином Δ.\n")
-    A("## Воспроизведение\n```\nplate-solver/.venv/bin/python run_golden.py\n```\n"
-      "Корректность математики — 46 ворот-тестов (`pytest`).\n")
+    n_gates = _count_gates()
+    gates_txt = f"{n_gates} ворот-тестов" if n_gates is not None else "ворота-тесты"
+    A("## Воспроизведение\n```\nplate-solver/.venv/bin/python scripts/run_golden.py\n```\n"
+      f"Корректность математики — {gates_txt} (`pytest`).\n")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(L))
