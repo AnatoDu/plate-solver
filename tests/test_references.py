@@ -64,9 +64,13 @@ def test_resolver_errors():
         resolve_reference(_problem(geometry={"kind": "rectangle", "x1": 0.0, "x2": 1.0,
                                              "y1": 0.0, "y2": 1.0},
                                    verify={"reference": "analytic"}))
-    with pytest.raises(CaseError, match="P3.6"):
-        resolve_reference(_problem(geometry={"kind": "L", "side": 1.0, "cut": 0.5},
-                                   verify={"reference": "fem"}))
+    tree = {"op": "union", "children": [{"kind": "circle", "a": 1.0},
+                                        {"kind": "circle", "a": 0.5, "cx": 1.0,
+                                         "cy": 0.0}]}
+    with pytest.raises(CaseError, match="compose"):
+        resolve_reference(_problem(geometry={"kind": "compose", "tree": tree},
+                                   bc={"type": "clamped"},
+                                   verify={"reference": "fem", "cross_1d": False}))
     with pytest.raises(CaseError, match="инварианты"):
         resolve_reference(_problem(contact={"enabled": True, "gap_factor": 0.5},
                                    verify={"reference": "analytic"}))
