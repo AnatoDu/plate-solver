@@ -1,0 +1,41 @@
+# CI-копия lshape_stamp_force (лёгкая: Q=40, малые mor_iter).
+
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+force = 0.05
+beta = 1.0
+max_iter = 2000
+tol = 1.0e-10
+
+[contact.zone]
+kind = "rectangle"
+x1 = 0.15
+x2 = 0.45
+y1 = 0.15
+y2 = 0.45
+
+[discretization]
+p = 8
+Q = 40
+grid_n = 16
+
+[verify]
+reference = "none"
+
+[output]
+dir = "results/ci/lshape_stamp_force"
