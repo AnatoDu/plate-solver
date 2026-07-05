@@ -7,7 +7,8 @@ name = "plate-solver"
 version = "0.1.0"
 description = "Расчёт изгиба и контактного взаимодействия упругих пластин произвольного очертания (уточнённая теория КТН + R-функции + метод обобщённой реакции)."
 readme = "README.md"
-requires-python = ">=3.10"
+# tomllib (чтение case-файлов, problem.py) — stdlib начиная с 3.11.
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "А. А. Дуркин" }]
 keywords = [
@@ -31,6 +32,11 @@ dependencies = [
 # matplotlib — в основных зависимостях (viz.py и тесты графики); дубль убран.
 dev = ["pytest>=7.0", "ruff>=0.4"]
 fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
+
+[project.scripts]
+# v0.2 (P0.4): plate-solve --new <kind>; решение case-файлов и plate-verify /
+# plate-ladder добавляются в P4.
+plate-solve = "plate_solver.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/AnatoDu/plate-solver"

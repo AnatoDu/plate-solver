@@ -19,7 +19,11 @@ __pycache__/
 # (якорь на корень: данные пакета src/plate_solver/data/ — под контролем версий)
 /data/
 figures/
-results/
+# results/ — рабочие выгрузки не коммитим, НО results/golden/ — замороженный
+# снимок golden (хеш-ворота фазы 2) — под контролем версий.
+/results/*
+!/results/golden
+!/results/golden/**
 *.npz
 *.npy
 *.csv

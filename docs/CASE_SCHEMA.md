@@ -1,0 +1,241 @@
+# CASE_SCHEMA — схема case-файла (v0.2)
+
+Case-файл — TOML-описание постановки задачи: геометрия, закрепление,
+нагрузка, модель, контакт, дискретизация, верификация, вывод. Загружается
+`plate_solver.problem.Problem.from_toml`, решается `dispatch.solve(problem)`.
+Новый случай = копия шаблона (`plate-solve --new <kind>`) и правка
+нескольких строк — см. пример внизу.
+
+Правило дефолтов: физика и дискретизация по умолчанию живут в ОДНОМ месте —
+`plate_solver.config.Config`; отсутствующий ключ означает «взять дефолт
+Config», а не «второй экземпляр дефолта в схеме».
+
+## Схема
+
+Секции: `[geometry]`, `[bc]`, `[load]` — **обязательные**;
+`[model]`, `[contact]`, `[discretization]`, `[verify]`, `[output]` —
+необязательные. Неизвестные секции и ключи отклоняются с ошибкой
+(защита от опечаток). Ошибки валидатора имеют вид
+«ключ: получено X, ожидалось Y, см. docs/CASE_SCHEMA.md#секция».
+
+## Полный аннотированный пример
+
+```toml
+# Кольцо под равномерной нагрузкой, защемление, сверка с аналитикой и 1D.
+
+[geometry]
+kind = "annulus"        # circle | rectangle | L | annulus | compose
+a = 1.0                 # внешний радиус
+b = 0.4                 # внутренний радиус (0 < b < a)
+
+[bc]
+type = "clamped"        # soft_hinge | clamped (в v0.2 один тип на всю границу)
+
+[load]
+type = "uniform"        # uniform | patch | point
+q0 = 4.0                # равномерная поперечная нагрузка (q0 > 0 «вниз»)
+
+[model]
+theory = "classic"      # classic | ktn (поправки Кармана–Тимошенко–Нагди)
+# E = 2.1e6             # дефолты Config: E=2.1e6, nu=0.3, h=1.0
+# nu = 0.3
+h = 0.06                # толщина (важно для ktn)
+
+[discretization]
+p = 10                  # степень Чебышёва по оси (N = (p+1)²); дефолт 12
+Q = 1024                # узлов Гаусса–Лежандра по оси; дефолт 64
+# grid_n = 80           # фоновая сетка вывода
+
+[verify]
+reference = "analytic"  # analytic | mms | fem | none
+cross_1d = true         # сверка с 1D-Ритцем по радиусу (только circle/annulus,
+                        # равномерная нагрузка)
+tol = 1.0e-2            # допуск ворот верификации
+model_gap = false       # печатать строку «истинный Кирхгоф» (вне допуска)
+
+[output]
+dir = "results/annulus_clamped"
+figures = true
+```
+
+## Таблица ключей
+
+| Ключ | Тип | Дефолт | Допустимые значения | Исполняет |
+|---|---|---|---|---|
+| geometry.kind | str | — (обяз.) | circle, rectangle, L, annulus, compose | geometry.py |
+| geometry.a | float | — | > 0 (circle; annulus: внешний) | geometry.py |
+| geometry.b | float | — | 0 < b < a (annulus: внутренний) | geometry.py |
+| geometry.x1..y2 | float | — | x1 < x2, y1 < y2 (rectangle) | geometry.py |
+| geometry.side, cut | float | — | 0 < cut < side (L) | geometry.py |
+| geometry.tree | таблица | — | compose-дерево (см. #compose) | geometry.py |
+| bc.type | str | — (обяз.) | soft_hinge, clamped | plate.py / clamped.py |
+| load.type | str | — (обяз.) | uniform, patch, point | dispatch.py |
+| load.q0 | float | — | число (uniform, patch) | dispatch.py |
+| load.zone | таблица | — | геометрия зоны (patch; язык — как geometry) | dispatch.py |
+| load.P | float | — | число (point: результирующая сила) | dispatch.py |
+| load.x0, y0 | float | — | точка приложения (point) | dispatch.py |
+| load.eps | float | 0.05·min(шир., выс. bbox) | > 0 (point: радиус пятна) | dispatch.py |
+| model.theory | str | "classic" | classic, ktn | ktn.py |
+| model.E, nu, h | float | дефолты Config | E>0, −1<nu<0.5, h>0 | config.py |
+| contact.enabled | bool | false | true, false | contact.py |
+| contact.gap | float | — | > 0 (абсолютный зазор Δ) | contact.py |
+| contact.gap_factor | float | — | > 0 (Δ = gap_factor·w_free) | dispatch.py |
+| contact.beta | float | дефолт Config (1.2) | 0 < β < 2 (теорема 4) | contact.py |
+| contact.max_iter | int | дефолт Config | ≥ 1 | contact.py |
+| contact.tol | float | дефолт Config | > 0 | contact.py |
+| contact.stop | str | дефолт Config ("dr") | dr, comp | contact.py |
+| contact.zone | таблица | вся Ω | геометрия зоны препятствия | dispatch.py |
+| discretization.p | int | дефолт Config (12) | ≥ 1 | basis.py |
+| discretization.Q | int | дефолт Config (64) | ≥ 2 | quadrature.py |
+| discretization.grid_n | int | дефолт Config (80) | ≥ 2 | contact.py/viz.py |
+| verify.reference | str | "none" | analytic, mms, fem, none | references.py |
+| verify.cross_1d | bool | false | true, false (осесимметричные) | radial.py |
+| verify.tol | float | 1e-2 | > 0 | references.py |
+| verify.model_gap | bool | false | true, false | references.py |
+| output.dir | str | "results" | непустая строка | dispatch.py |
+| output.figures | bool | false | true, false | viz.py |
+
+Требование к зонам (`load.zone`, `contact.zone`, пятно `point`): пересечение
+зоны с Ω должно накрывать **не менее 20 узлов квадратуры**, иначе интеграл по
+маске теряет смысл. Для `point` пятно расширяется автоматически до
+наименьшего радиуса с ≥ 20 узлами (факт и новое eps — в `result.json`,
+поле `warnings`); для `patch` авторасширение зоны произвольной формы не
+определено — это ошибка с советом «увеличьте Q или зону».
+
+## Несовместимости v0.2
+
+| Комбинация | Решение |
+|---|---|
+| contact.enabled + bc.type = clamped | ошибка: в v0.2 контакт реализован для мягкого шарнира |
+| verify.reference = analytic + geometry.kind = compose | ошибка: используйте mms \| fem \| none |
+| verify.cross_1d + неосесимметричная постановка | ошибка: cross_1d — только circle/annulus с равномерной нагрузкой |
+
+## geometry
+
+Пять видов области. `circle` — круг радиуса `a` с центром в начале координат;
+`rectangle` — `[x1, x2] × [y1, y2]`; `L` — квадрат `side` с квадратным
+вырезом `cut` (входящий угол); `annulus` — кольцо `b < r < a`;
+`compose` — конструктор (см. #compose). Граница всюду задаётся R-функцией
+ω(x, y): ω > 0 внутри, ω = 0 на границе.
+
+## compose
+
+Дерево операций над примитивами (ограда v0.2 — не расширяется):
+операции `union | intersect | difference` (difference строго бинарна),
+примитивы `circle (a, cx, cy)` и `rectangle (x1, x2, y1, y2)`,
+глубина дерева ≤ 3 (узлы считаются по вертикали, примитив = 1),
+всего ≤ 7 узлов. bbox: union — объединение, intersect — пересечение,
+difference — bbox первого операнда.
+
+```toml
+[geometry]
+kind = "compose"
+
+[geometry.tree]             # квадрат с круглым вырезом
+op = "difference"
+
+[[geometry.tree.children]]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[[geometry.tree.children]]
+kind = "circle"
+a = 0.2
+cx = 0.5
+cy = 0.5
+```
+
+## bc
+
+Один тип закрепления на всю границу: `soft_hinge` — «мягкий шарнир»
+(M = 0 на ∂Ω, расщепление бигармоники на две задачи Пуассона, plate.py);
+`clamped` — жёсткое защемление (структура w = ω²Φ, прямой Ритц, clamped.py).
+Смешанные закрепления по участкам — фаза 3.
+
+## load
+
+`uniform` — равномерная `q0` по всей Ω. `patch` — `q0` внутри зоны
+`[load.zone]` (геометрия зоны — тем же языком, что `[geometry]`), ноль вне:
+`q̃ = q0·[ω_zone > 0]`. `point` — сосредоточенная сила `P` в точке
+`(x0, y0)` как регуляризованный patch: круговое пятно радиуса `eps`,
+`q = P/(π·eps²)`; дефолт `eps = 0.05·min(ширина, высота bbox)`.
+
+### Неравномерная нагрузка
+
+Через схему доступны только `patch` и `point`. Истинная δ-нагрузка в схему
+сознательно не вводится: в расщеплении (P1) — это функционал вне H¹
+(M ~ ln r), а КТН-прогиб под δ логарифмически расходится — см.
+docs/NOTES.md, раздел «Точечная сила и уточнённая теория». Произвольная
+гладкая f(x, y) — только через API, значениями в узлах квадратуры:
+
+```python
+from plate_solver import Config
+from plate_solver.geometry import make_circle
+from plate_solver.plate import PlateBending
+
+pb = PlateBending.from_config(make_circle(1.0), Config(p=10, Q=256))
+q = pb.quad
+f_values = 4.0 * (1.0 + 0.5 * q.x)        # свой закон нагрузки в узлах
+cM, cw = pb.solve(f_values)
+print(float(pb.deflection(cw, 0.0, 0.0)))
+```
+
+## model
+
+`classic` — теория Кирхгофа (расщепление). `ktn` — поправки уточнённой
+теории (поперечный сдвиг + обжатие): в контакте — через смещение контактной
+поверхности, в изгибе — `corrected_deflection` при r = 0; кривизна берётся
+из (P1) как Δw = −M/D, без численного дифференцирования.
+
+## contact
+
+Односторонний контакт с жёстким ПЛОСКИМ препятствием при постоянном зазоре
+Δ (метод обобщённой реакции). Зона препятствия `[contact.zone]` — тем же
+геометрическим языком; дефолт — вся Ω (основание), подобласть — плоский
+штамп. Ровно одно из `gap` (абсолютный Δ) / `gap_factor`
+(Δ = gap_factor·w_free; w_free считает диспетчер). Критерий останова
+`stop`: `dr` — ‖r_k − r_{k−1}‖ < tol; `comp` — безразмерная KKT-невязка
+Синьорини < tol (см. докстринг `ContactMOR.solve`).
+
+## discretization
+
+`p` — степень Чебышёва по каждой оси (N = (p+1)² функций); `Q` — узлов
+квадратуры Гаусса–Лежандра по каждой оси (маска ω > 0 отбирает внутренние);
+`grid_n` — фоновая сетка для полей вывода и фигур.
+
+## verify
+
+`reference` — эталон: `analytic` (модельно-согласованная аналитика — circle,
+annulus, point на круге), `mms` (изготовленное решение — rectangle, circle),
+`fem` (независимый scikit-fem), `none`. `cross_1d` — дополнительная сверка
+с 1D-Ритцем по радиусу (только осесимметричные постановки). `tol` — допуск
+ворот. `model_gap` — печатать строку «истинный Кирхгоф» для документирования
+модельной погрешности мягкого шарнира (NOTES §8); в допуск не входит.
+
+## output
+
+`dir` — каталог результатов (result.json: снимок Problem, git-hash, версии
+зависимостей, warnings; фигуры при `figures = true`). Каталог `results/`
+не коммитится (кроме замороженного `results/golden/`).
+
+## Новый случай за ≤ 5 строк
+
+Шаблон: `plate-solve --new annulus` → `annulus.toml` со всеми секциями
+и комментариями. Для перехода, например, к кольцу другого размера с мягким
+шарниром достаточно изменить 3–5 строк:
+
+```diff
+ [geometry]
+ kind = "annulus"
+-a = 1.0
+-b = 0.4
++a = 2.0
++b = 0.8
+
+ [bc]
+-type = "clamped"
++type = "soft_hinge"
+```

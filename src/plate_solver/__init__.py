@@ -27,6 +27,7 @@ from __future__ import annotations
 from . import config
 from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
+from .problem import CaseError, Problem
 
 __version__ = "0.1.0"
 
@@ -36,5 +37,7 @@ __all__ = [
     "KTNParams",
     "PlateMaterial",
     "flexural_rigidity",
+    "CaseError",
+    "Problem",
     "__version__",
 ]
