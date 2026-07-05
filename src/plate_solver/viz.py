@@ -244,17 +244,88 @@ def replot(result_dir, formats=("png",), dpi: int = 300) -> list:
     fig.suptitle("Напряжения на лицевых поверхностях (NOTES §19)")
     _save(fig, "stress_faces")
 
-    # 3) контакт: реакция и зона
+    # 3) контакт: реакция + зона + профиль σy⁻ вдоль сечения через зону (D1)
     if "r" in data.files:
-        fig, ax = plt.subplots(figsize=(6.5, 5.5))
+        fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.0))
         pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data["r"]),
                             cmap="magma", shading="auto")
-        if data["zone"].any():
-            ax.contour(X, Y, data["zone"].astype(float), levels=[0.5],
+        zone = data["zone"]
+        if zone.any():
+            ax.contour(X, Y, zone.astype(float), levels=[0.5],
                        colors="cyan", linewidths=1.2)
+            j = int(round(np.mean(np.nonzero(zone.any(axis=1))[0])))
+        else:
+            j = zone.shape[0] // 2
+        yline = float(data["y"][j])
+        ax.axhline(yline, color="w", ls="--", lw=0.8)
         ax.set_aspect("equal")
         ax.set_title("Реакция r(x, y) и зона контакта")
         fig.colorbar(pcm, ax=ax, label="r")
+        prof = data["sy_bot"][j, :]
+        keep = np.isfinite(prof)
+        ax2.plot(data["x"][keep], prof[keep], "o-", ms=3,
+                 label=f"σy, низ (y = {yline:.3f})")
+        in_zone = zone[j, :] & keep
+        if in_zone.any():
+            ax2.plot(data["x"][in_zone], data["sy_bot"][j, :][in_zone], "rs",
+                     ms=5, label="зона контакта (+ν/(1−ν)·r)")
+        ax2.set_xlabel("x")
+        ax2.set_ylabel("σy на нижней лицевой")
+        ax2.grid(alpha=0.3)
+        ax2.legend(fontsize=8)
+        ax2.set_title("Профиль σy⁻ через зону (влияние обжатия)")
         _save(fig, "reaction")
     return out
+
+def surface3d(X, Y, W, *, elev: float = 28.0, azim: float = -60.0,
+              cmap: str = "viridis", title: str = "w(x, y)",
+              save: str | None = None, show: bool = False, dpi: int = 300):
+    """Публикационная 3D-поверхность (D1): ракурс (elev, azim), NaN-стрижка вне ω."""
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure(figsize=(7, 5))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot_surface(np.asarray(X, float), np.asarray(Y, float),
+                    np.asarray(W, float), cmap=cmap, linewidth=0,
+                    antialiased=True)
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("w")
+    ax.set_title(title)
+    if save:
+        fig.savefig(save, dpi=dpi, bbox_inches="tight")
+    return _finish(fig, None, show)
+
+
+def stress_maps(X, Y, stresses: dict, *, components=None,
+                save: str | None = None, show: bool = False, dpi: int = 300):
+    """Карты лицевых напряжений (D1): дивергентная палитра, симметричная норма.
+
+    ``stresses`` — словарь из :func:`plate_solver.ktn.stresses_faces`;
+    ``components`` — список ключей (None ⇒ вся шестёрка сеткой 2×3).
+    """
+    import matplotlib.pyplot as plt
+
+    titles = {"sx_top": "σx, верх", "sx_bot": "σx, низ",
+              "sy_top": "σy, верх", "sy_bot": "σy, низ",
+              "txy_top": "τxy, верх", "txy_bot": "τxy, низ"}
+    keys = list(components) if components else list(titles)
+    ncol = 3 if len(keys) > 2 else len(keys)
+    nrow = int(np.ceil(len(keys) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(5 * ncol, 4.4 * nrow),
+                             squeeze=False)
+    vmax = max(float(np.nanmax(np.abs(stresses[k]))) for k in keys) or 1.0
+    pcm = None
+    for ax, key in zip(axes.ravel(), keys, strict=False):
+        pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(stresses[key]),
+                            cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+        ax.set_aspect("equal")
+        ax.set_title(titles.get(key, key))
+    for ax in axes.ravel()[len(keys):]:
+        ax.axis("off")
+    fig.colorbar(pcm, ax=axes, label="σ", shrink=0.85)
+    if save:
+        fig.savefig(save, dpi=dpi, bbox_inches="tight")
+    return _finish(fig, None, show)
 

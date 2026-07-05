@@ -121,8 +121,9 @@ class Result:
             })
         return out
 
-    def save(self, out_dir: str | Path | None = None) -> Path:
-        """Записать result.json (+ фигуры при output.figures) в каталог."""
+    def save(self, out_dir: str | Path | None = None,
+             fig_formats: tuple = ("png", "pdf")) -> Path:
+        """Записать result.json, fields.npz (+ фигуры при output.figures)."""
         out = Path(out_dir if out_dir is not None else self.problem.output.dir)
         out.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -137,7 +138,7 @@ class Result:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self.save_fields(out / "fields.npz")
         if self.problem.output.figures:
-            self._save_figures(out)
+            self._save_figures(out, formats=fig_formats)
         return out / "result.json"
 
     def moments_on_grid(self):
@@ -217,16 +218,22 @@ class Result:
                 payload["w2"] = w2
         np.savez_compressed(path, **payload)
 
-    def _save_figures(self, out: Path) -> None:
+    def _save_figures(self, out: Path, formats: tuple = ("png", "pdf")) -> None:
+        """Фигуры публикационного качества (D1/D2): из fields.npz, png+pdf.
+
+        Имена файлов получают префикс по имени case-файла (title кейса).
+        """
         from . import viz
 
-        if self.contact is not None:
+        stem = Path(self.problem.source).stem
+        paths = viz.replot(out, formats=formats)
+        if stem and stem != "<dict>":
+            for old in paths:
+                new = old.with_name(f"{stem}_{old.name}")
+                old.replace(new)
+        if self.contact is not None and not hasattr(self.contact, "w2_grid"):
             viz.plot_contact_summary(self.config, self.contact,
-                                     save=str(out / "contact_summary.png"))
-        else:
-            # plot_deflection_surface duck-типна: нужен .domain и .deflection
-            viz.plot_deflection_surface(self.config, self._plate, self._c,
-                                        save=str(out / "w_surface.png"))
+                                     save=str(out / f"{stem}_contact_summary.png"))
 
     # солвер и коэффициенты для фигур (не сериализуются)
     @property

@@ -169,3 +169,24 @@ def test_b2_fields_npz_and_replot(tmp_path):
             assert p.stat().st_size > 10_000              # непустая картинка
         else:
             assert p.read_bytes()[:4] == b"%PDF"           # валидный pdf
+
+
+def test_d4_cli_figures_smoke(tmp_path, monkeypatch):
+    """D4: смок фигур через CLI на Q=64 — png > 10 КБ, pdf валиден."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from pathlib import Path
+
+    from plate_solver.cli import main
+
+    case = Path(__file__).resolve().parents[1] / "cases" / "ci" / "rect_mms.toml"
+    out = tmp_path / "figs"
+    assert main([str(case), "--out", str(out), "--figures",
+                 "--fig-format", "png,pdf"]) == 0
+    pngs = list(out.glob("*_w_surface.png"))
+    pdfs = list(out.glob("*_w_surface.pdf"))
+    assert pngs and pdfs
+    assert pngs[0].stat().st_size > 10_000
+    assert pdfs[0].read_bytes()[:4] == b"%PDF"
+    assert (out / "fields.npz").is_file()

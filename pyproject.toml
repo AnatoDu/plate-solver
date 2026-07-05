@@ -32,6 +32,7 @@ dependencies = [
 # matplotlib — в основных зависимостях (viz.py и тесты графики); дубль убран.
 dev = ["pytest>=7.0", "ruff>=0.4"]
 fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
+notebooks = ["jupyter", "ipympl"]   # интерактивные ноутбуки (D3; не dev-зависимость)
 
 [project.scripts]
 # v0.2: plate-solve (решение case-файла; --new — шаблон; --sweep p=2:12:2),
