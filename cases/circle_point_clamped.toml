@@ -1,0 +1,35 @@
+# Точечная сила в центре защемлённого круга (фаза 2, P3.5).
+# point = регуляризованный patch: пятно eps, q = P/(π·eps²) — модельно-
+# корректный выбор (docs/NOTES.md «Точечная сила и уточнённая теория»).
+# verify.tol заморожен «потолок 2 % → факт × 3»: факт p=16, Q=1024,
+# eps=0.025: rel = 1.444e-2 ⇒ tol = 4.4e-2. ε-свип {0.1, 0.05, 0.025} —
+# информационно в cases/baselines.json (монотонность недостижима глобальным
+# полиномиальным базисом: w ~ r²ln r; обоснование — PROGRESS.md).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "point"
+P = 1.0
+x0 = 0.0
+y0 = 0.0
+eps = 0.025
+
+[model]
+h = 0.06
+
+[discretization]
+p = 16
+Q = 1024
+
+[verify]
+reference = "analytic"
+tol = 4.4e-2
+
+[output]
+dir = "results/circle_point_clamped"

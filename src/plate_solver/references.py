@@ -86,11 +86,18 @@ def _fail(key: str, got, expected: str, anchor: str = "verify") -> None:
 #  Аналитические эталоны (модельно-согласованные)
 # --------------------------------------------------------------------------- #
 def _analytic_wmax(problem: Problem, cfg) -> float:
-    g, bc = problem.geometry, problem.bc.type
-    if problem.load.type != "uniform":
+    g, bc, load = problem.geometry, problem.bc.type, problem.load
+    if load.type == "point":
+        if g.kind != "circle" or (load.x0, load.y0) != (0.0, 0.0):
+            _fail("verify.reference", "analytic",
+                  "point-эталон только для силы в ЦЕНТРЕ круга "
+                  "(x0 = y0 = 0); иначе — mms | fem | none")
+        if bc == "clamped":
+            return analytic.circle_point_clamped_wmax(g.a, load.P, cfg.D)
+        return analytic.circle_point_soft_wmax(g.a, load.P, cfg.D)
+    if load.type != "uniform":
         _fail("verify.reference", "analytic",
-              "уравномерной нагрузки: point-эталон появится в P3.5, "
-              "patch — mms | fem | none")
+              "uniform | point в центре круга; для patch — mms | fem | none")
     if g.kind == "circle":
         if bc == "clamped":
             return float(analytic.clamped_uniform_wmax(g.a, cfg.q0, cfg.D))

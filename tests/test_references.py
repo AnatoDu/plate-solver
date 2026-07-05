@@ -70,8 +70,14 @@ def test_resolver_errors():
     with pytest.raises(CaseError, match="инварианты"):
         resolve_reference(_problem(contact={"enabled": True, "gap_factor": 0.5},
                                    verify={"reference": "analytic"}))
-    with pytest.raises(CaseError, match="P3.5"):
+    with pytest.raises(CaseError, match="ЦЕНТРЕ"):
         resolve_reference(_problem(load={"type": "point", "P": 1.0,
-                                         "x0": 0.0, "y0": 0.0},
+                                         "x0": 0.3, "y0": 0.0},
                                    verify={"reference": "analytic",
                                            "cross_1d": False}))
+    # сила в центре круга — эталон существует (P3.5)
+    refs = resolve_reference(_problem(load={"type": "point", "P": 1.0,
+                                            "x0": 0.0, "y0": 0.0},
+                                      verify={"reference": "analytic",
+                                              "cross_1d": False}))
+    assert len(refs) == 1 and refs[0].w_max > 0.0
