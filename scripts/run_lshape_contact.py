@@ -49,6 +49,7 @@ def run_lshape_contact_golden(cfg, Delta):
         "n_contact": int((res.r_nodes > 0).sum()), "n_total": int(res.r_nodes.size),
         "peak_xy": (float(px), float(py)), "d_corner": float(np.hypot(px - 0.5, py - 0.5)),
         "w_under_max": float(res.w_nodes.max()),
+        "comp_residual": float(res.comp_residual), "gap_overshoot": float(res.gap_overshoot),
     }
     fig = viz.plot_contact_summary(lab, res)
     return data, fig, res
@@ -70,6 +71,8 @@ def main() -> None:
     print(f"контакт: {data['n_contact']}/{data['n_total']} узлов, r∈[{data['r_min']:.2e},"
           f"{data['r_max']:.3e}], пик {data['peak_xy']}, d={data['d_corner']:.3f}")
     print(f"max w под контактом = {data['w_under_max']:.4e} (≈ Δ = {Delta:.4e})")
+    print(f"комплементарность: max|r·(w−Δ)|/(q0·Δ) = {data['comp_residual']:.2e}, "
+          f"перелёт зазора (max w_cont − Δ)/Δ = {data['gap_overshoot']:.2e}")
     plt.close(fig)
 
 
