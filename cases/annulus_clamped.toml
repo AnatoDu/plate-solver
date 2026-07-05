@@ -1,0 +1,31 @@
+# Ступень «кольцо, изгиб» (фаза 2, P3.4): жёсткое защемление обеих границ.
+# verify.tol заморожен протоколом «потолок 1e-2 → факт × 3»:
+#   факт Q=1024, p=10: 2D↔analytic rel = 1.610e-3, 2D↔1D rel = 1.610e-3
+#   ⇒ tol = 4.9e-3. Журнал: PROGRESS.md. Модельного разрыва у защемления нет.
+
+[geometry]
+kind = "annulus"
+a = 1.0
+b = 0.4
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 10
+Q = 1024
+
+[verify]
+reference = "analytic"
+cross_1d = true
+tol = 4.9e-3
+
+[output]
+dir = "results/annulus_clamped"

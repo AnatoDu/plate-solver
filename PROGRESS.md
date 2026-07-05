@@ -91,3 +91,27 @@
   (факт ~5e-3 при Q=256, ворота 2e-2); результанта point=P (пятно из
   ~20 узлов — ворота 0.35, дефолтное eps — без предупреждений);
   КТН-поправка изгиба > 0; result.json с провенансом.
+
+## P3. Верификация как свойство постановки
+
+- P3.2: analytic.annulus_uniform — общее решение кольца, 4×4 для
+  clamped / soft / true_ss; sympy-подстановка в D·ΔΔw=q — машинный нуль;
+  КУ до 1e-12. soft = ТОЧНОЕ решение расщепления (проверено выводом).
+- P3.3: radial.py — RadialClampedAnnulus (ω²Φ, ω=(a−r)(r−b)),
+  RadialPoissonAnnulus (ω·Φ), solve_radial_soft_hinge_annulus; базис —
+  обычный Чебышёв на [b,a] (чётность нужна только при b=0 — прежний путь,
+  big-регрессия test_circle_1d_2d зелёная). Ворота: 1D↔analytic
+  rel < 1e-8 при p=16 (clamped и soft).
+- P3.1: references.py — resolve_reference / verify_result / VerifyReport
+  (таблица «эталон | значение | rel | статус», ok по гейтуемым строкам).
+  Модельная согласованность NOTES §8; cross_1d (p=16, nq=400);
+  model_gap-строка вне допуска (у clamped не создаётся). Отказы: analytic
+  для rectangle/L, fem→P3.6, mms→P3.8, point→P3.5, контакт→инварианты P3.7.
+- P3.4 (самокалибровка, потолок rel ≤ 1e-2 ПРОЙДЕН): факты Q=1024, p=10:
+  annulus_soft — 2D↔analytic 1.140e-3, 2D↔1D 1.140e-3 (ожидание ~3e-3
+  подтверждено), model_gap 9.70e-2 (инфо); annulus_clamped — 1.610e-3 /
+  1.610e-3. Заморожено факт×3: tol = 3.5e-3 (soft), 4.9e-3 (clamped) в
+  cases/annulus_{soft,clamped}.toml. Ворота — tests/test_annulus_cases.py
+  (big: полный Q=1024; light: валидация case-файлов). Интерпретация:
+  «sweep p=2..10» из TODO — инструмент P4.2 (plate-solve --sweep),
+  калибровка ворот выполнена на рабочей точке p=10.
