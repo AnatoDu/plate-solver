@@ -98,6 +98,13 @@ def test_stop_comp_certifies_kkt():
     assert abs(res.gap_overshoot) <= cfg.tol    # проникание в допуске
 
 
+def test_config_defaults_mor():
+    """Дефолты МОР в Config: β безразмерна и внутри условия теоремы 4 (0 < β < 2)."""
+    cfg = Config()
+    assert cfg.beta == 1.2                      # согласован с золотым конфигом
+    assert 0.0 < cfg.beta < 2.0                 # условие сходимости МОР
+
+
 def test_stop_default_dr_and_validation():
     """Дефолт stop='dr' — поведение прежнее; неизвестный критерий отвергается."""
     assert Config().stop == "dr"
