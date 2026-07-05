@@ -1,0 +1,44 @@
+# Контакт кольца с жёстким основанием (фаза 2, P3.7): мягкий шарнир,
+# основание под всей Ω, Δ = 0.5·w_free; β и mor_iter/tol — как в golden.
+# Q=256 (не 1024): кэш матриц структуры (порог N·M=5e7) и время 8000
+# итераций; обоснование — PROGRESS.md. Допуски инвариантов заморожены
+# «факт × 3» от рабочей точки 8000 итераций:
+#   comp_residual: факт 1.190e-2 → 3.6e-2 (потолок 5e-3 НЕДОСТИЖИМ даже
+#   при 100k итераций — кромочная сингулярность штампового давления,
+#   NOTES §13; журнал: PROGRESS.md);
+#   gap_overshoot: факт 9.62e-4 → 2.9e-3.
+# Регресс-снимок (r_max, n_contact, w_max, топология зоны) —
+# cases/baselines.json; топология только фиксируется (материал главы 4).
+
+[geometry]
+kind = "annulus"
+a = 1.0
+b = 0.4
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.5
+beta = 1.2
+max_iter = 8000
+tol = 1.0e-8
+
+[discretization]
+p = 10
+Q = 256
+grid_n = 80
+
+[verify]
+reference = "none"       # эталонов контакта нет — ворота-инварианты (P3.7)
+
+[output]
+dir = "results/annulus_soft_contact"
