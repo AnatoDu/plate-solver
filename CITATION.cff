@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "Если вы используете этот комплекс программ, пожалуйста, сошлитесь на него."
-title: "plate-solver: расчёт пластин произвольного очертания"
+title: "plate-solver: изгиб и односторонний контакт упругих пластин произвольного очертания"
 abstract: >-
   Комплекс программ для математического моделирования изгиба и одностороннего
   контакта упругих пластин произвольного очертания по уточнённой теории типа
@@ -9,7 +9,9 @@ abstract: >-
 authors:
   - family-names: "Дуркин"
     given-names: "А. А."
-version: 0.0.1
+version: 0.1.0
+date-released: 2026-07-05
+repository-code: "https://github.com/AnatoDu/plate-solver"
 license: MIT
 keywords:
   - пластины
