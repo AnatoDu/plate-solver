@@ -110,10 +110,14 @@ class ContactMOR:
         foundation_mask: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
         gap: float | None = None,
         ktn: KTNParams | None = None,
+        load_values: np.ndarray | None = None,
     ):
         self.plate = plate
         self.cfg = cfg
         self.ktn = ktn
+        # Неравномерная нагрузка (patch/point из диспетчера): значения в узлах
+        # квадратуры; None ⇒ равномерная cfg.q0 (путь и арифметика прежние).
+        self.load = None if load_values is None else np.asarray(load_values, dtype=float)
         if cfg.stop not in ("dr", "comp"):
             raise ValueError(
                 f"Неизвестный критерий останова stop={cfg.stop!r} (ожидается 'dr' или 'comp')."
@@ -166,13 +170,14 @@ class ContactMOR:
         (диагностика сходимости не меняется).
         """
         cfg, q = self.cfg, self.plate.quad
+        f0 = cfg.q0 if self.load is None else self.load       # равномерная или поле
         r = np.zeros(q.x.size)
         hist: list[float] = []
         converged = False
         iters = 0
 
         for iters in range(1, cfg.max_iter + 1):  # noqa: B007 — iters нужен после цикла
-            cM, cw = self.plate.solve(cfg.q0 - r)             # f = q0 − r → (M, w)
+            cM, cw = self.plate.solve(f0 - r)                 # f = q̃ − r → (M, w)
             w = self.plate.poisson.evaluate_at_quad(cw)       # прогиб в узлах (кэш, GEMV)
             disp = self._contact_disp(cM, w, r)               # классика: disp = w
             if self.stop == "comp" and self._kkt_residual(disp, r) < cfg.tol:
@@ -189,7 +194,7 @@ class ContactMOR:
                 converged = True
                 break
 
-        cM, cw = self.plate.solve(cfg.q0 - r)                 # финальный прогиб
+        cM, cw = self.plate.solve(f0 - r)                     # финальный прогиб
         w = self.plate.poisson.evaluate_at_quad(cw)
         w_ktn = None
         if self.ktn is not None:
