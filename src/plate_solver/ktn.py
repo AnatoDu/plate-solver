@@ -171,4 +171,47 @@ class PlateMaterial:
         return flexural_rigidity(self.E, self.h, self.nu)
 
 
-__all__ = ["KTNParams", "PlateMaterial", "flexural_rigidity"]
+
+
+# --------------------------------------------------------------------------- #
+#  Напряжения на лицевых поверхностях (фаза 3, трек B; NOTES §19)
+# --------------------------------------------------------------------------- #
+def stresses_faces(Mx, My, Mxy, h: float, nu: float, q_top=0.0, q_bottom=0.0):
+    r"""Напряжения на лицевых поверхностях z = ±h/2 (канон Ермоленко–Туркова, b=0).
+
+    Формула (11) при нулевых мембранных усилиях (линейный изгиб относительно
+    срединной плоскости, T_ij ≡ 0, b = 0):
+
+    .. math::
+        \sigma_{ii}^{\pm h/2} = \pm\,6 M_{ii}/h^2
+            + \frac{\nu}{1-\nu}\, q_n^{\pm}, \qquad
+        \sigma_{12}^{\pm h/2} = \pm\,6 M_{12}/h^2 .
+
+    Член ν/(1−ν)·q_n — вклад ПОПЕРЕЧНОГО ОБЖАТИЯ: q_n^{+} — нормальное
+    давление на верхней лицевой (внешняя нагрузка, знаки NOTES §0: q > 0
+    «вниз»), q_n^{-} — на нижней (в контактной зоне — реакция r ≥ 0, вне
+    зоны — 0). ОСИ: по конвенции §0 прогиб и нагрузка положительны «вниз»,
+    ось z сонаправлена ⇒ ВЕРХНЯЯ лицевая (сторона внешней нагрузки) — это
+    z = −h/2, НИЖНЯЯ (сторона основания/штампа) — z = +h/2. Контроль
+    физики: в пролёте при q > 0 низ растянут (σ_bot > 0), верх сжат.
+    Знаки зафиксированы 1D-тождеством (B3-т1) и таблицей NOTES §19.
+
+    Возвращает словарь шести полей: sx_top, sx_bot, sy_top, sy_bot,
+    txy_top, txy_bot (top = z=−h/2, bot = z=+h/2; формы входных массивов).
+    """
+    Mx = np.asarray(Mx, float)
+    My = np.asarray(My, float)
+    Mxy = np.asarray(Mxy, float)
+    k = 6.0 / h**2
+    c = nu / (1.0 - nu)
+    return {
+        "sx_top": -k * Mx + c * np.asarray(q_top, float),
+        "sx_bot": +k * Mx + c * np.asarray(q_bottom, float),
+        "sy_top": -k * My + c * np.asarray(q_top, float),
+        "sy_bot": +k * My + c * np.asarray(q_bottom, float),
+        "txy_top": -k * Mxy,
+        "txy_bot": +k * Mxy,
+    }
+
+
+__all__ = ["KTNParams", "PlateMaterial", "flexural_rigidity", "stresses_faces"]
