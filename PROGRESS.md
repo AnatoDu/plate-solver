@@ -45,3 +45,22 @@
 - Приёмка P0: 22 юнит-теста (валидатор, шаблоны, round-trip
   TOML→Problem→to_config), хеш-ворота зелёные, entry point работает
   (`plate-solve --new annulus` из venv).
+
+## P1. Реестр геометрий
+
+- P1.1: `r_not(f) = −f`, `r_diff(f1, f2) = r_and(f1, −f2)`,
+  `make_annulus(a, b)` (R-разность кругов, bbox (−a, a)²); `circle_expr`
+  получил центр (cx, cy) — нужен примитивам compose. Формулы в докстрингах.
+- P1.2: `make_compose(tree)` — дерево TOML → Domain; ops
+  union|intersect|difference (difference бинарна), примитивы
+  circle(a, cx, cy) / rectangle(x1..y2); bbox: union — объединение,
+  intersect — пересечение (пустое ⇒ ValueError), difference — bbox первого.
+  Ограда — ЕДИНЫЙ валидатор `problem.validate_compose_tree` (публичная
+  обёртка, переиспользуется geometry ⇒ нет дублирования пределов).
+- P1.3 ворота: (а) площадь кольца по маске против π(a²−b²): rel < 3/Q,
+  убывает (Q=128, 256); (б) знаки ω кольца и compose (тело/дырка/снаружи/
+  границы); (в) символьный ∇ω против центральной разности в 20 случайных
+  внутренних точках (rel < 1e-6, annulus и compose); (г) smoke: compose
+  глубины 3 (6 узлов) через PoissonSolver — cond конечен, v > 0;
+  (д) глубина 4 → CaseError; бонус: символьная проверка тождеств
+  r_not/r_diff (sympy.simplify == 0).

@@ -334,12 +334,22 @@ def _parse_geometry(section: str, data, *, allow_compose: bool = True) -> Geomet
               anchor)
     _require_keys(section, data, {"kind", "tree"}, "compose")
     tree = data.get("tree")
-    if not isinstance(tree, dict):
-        _fail(f"{section}.tree", tree, "таблица-дерево операций", "compose")
-    n_nodes = _validate_compose_node(f"{section}.tree", tree, depth=1)
-    if n_nodes > COMPOSE_MAX_NODES:
-        _fail(f"{section}.tree", f"{n_nodes} узлов", f"≤ {COMPOSE_MAX_NODES} узлов", "compose")
+    validate_compose_tree(tree, f"{section}.tree")
     return GeometrySpec(kind=kind, tree=tree)
+
+
+def validate_compose_tree(tree: dict, path: str = "geometry.tree") -> int:
+    """Проверить compose-дерево против ограды v0.2; вернуть число узлов.
+
+    Публичная точка входа для geometry.make_compose — единый источник правды
+    об ограде (операции, примитивы, глубина ≤ 3, ≤ 7 узлов).
+    """
+    if not isinstance(tree, dict):
+        _fail(path, tree, "таблица-дерево операций", "compose")
+    n = _validate_compose_node(path, tree, depth=1)
+    if n > COMPOSE_MAX_NODES:
+        _fail(path, f"{n} узлов", f"≤ {COMPOSE_MAX_NODES} узлов", "compose")
+    return n
 
 
 def _validate_compose_node(path: str, node: dict, depth: int) -> int:
@@ -529,4 +539,5 @@ __all__ = [
     "OutputSpec",
     "GEOMETRY_KINDS",
     "MIN_ZONE_NODES",
+    "validate_compose_tree",
 ]
