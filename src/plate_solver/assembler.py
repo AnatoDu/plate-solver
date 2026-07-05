@@ -26,8 +26,12 @@ from __future__ import annotations
 import numpy as np
 
 
-def _structure_fields(domain, basis, quad):
-    """Промежуточные матрицы N×M: ω·T и компоненты ∇ψ в узлах квадратуры."""
+def structure_fields(domain, basis, quad):
+    """Матрицы структуры N×M в узлах квадратуры: ψ = ω·T и компоненты ∇ψ.
+
+    Используются при сборке ``A`` и (при включённом кэше в PoissonSolver)
+    сохраняются, чтобы не пересчитывать базис на каждой итерации МОР (P2.1).
+    """
     X, Y, W = quad.x, quad.y, quad.w
     om = domain.omega(X, Y)                 # (M,)
     omx, omy = domain.grad_omega(X, Y)      # (M,), (M,)
@@ -39,14 +43,19 @@ def _structure_fields(domain, basis, quad):
     return psi, psi_x, psi_y, W
 
 
+def assemble_stiffness_from_fields(psi_x, psi_y, W) -> np.ndarray:
+    r"""Матрица жёсткости из готовых матриц структуры (арифметика прежняя)."""
+    A = (psi_x * W) @ psi_x.T + (psi_y * W) @ psi_y.T
+    return 0.5 * (A + A.T)                   # подавить несимметрию округления
+
+
 def assemble_stiffness(domain, basis, quad) -> np.ndarray:
     r"""Матрица жёсткости ``A[k,l] = ∫_Ω ∇ψ_k·∇ψ_l dΩ`` (N×N, СИММ., полож. опр.).
 
     Собирается один раз: не зависит от правой части.
     """
-    _, psi_x, psi_y, W = _structure_fields(domain, basis, quad)
-    A = (psi_x * W) @ psi_x.T + (psi_y * W) @ psi_y.T
-    return 0.5 * (A + A.T)                   # подавить несимметрию округления
+    _, psi_x, psi_y, W = structure_fields(domain, basis, quad)
+    return assemble_stiffness_from_fields(psi_x, psi_y, W)
 
 
 def assemble_load(domain, basis, quad, f_values) -> np.ndarray:
@@ -61,4 +70,9 @@ def assemble_load(domain, basis, quad, f_values) -> np.ndarray:
     return (psi * W) @ f_values
 
 
-__all__ = ["assemble_stiffness", "assemble_load"]
+__all__ = [
+    "structure_fields",
+    "assemble_stiffness",
+    "assemble_stiffness_from_fields",
+    "assemble_load",
+]

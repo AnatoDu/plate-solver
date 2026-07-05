@@ -74,4 +74,4 @@
 ```
 plate-solver/.venv/bin/python scripts/run_golden.py
 ```
-Корректность математики — 102 ворот-тестов (`pytest`).
+Корректность математики — 104 ворот-тестов (`pytest`).
