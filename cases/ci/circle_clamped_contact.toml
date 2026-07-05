@@ -1,0 +1,32 @@
+# CI-копия circle_clamped_contact (лёгкая).
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.5
+beta = 1.2
+max_iter = 1000
+tol = 1.0e-8
+
+[discretization]
+p = 8
+Q = 96
+grid_n = 16
+
+[verify]
+reference = "none"       # эталонов контакта нет — ворота-инварианты
+
+[output]
+dir = "results/ci/circle_clamped_contact"

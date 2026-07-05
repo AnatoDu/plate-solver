@@ -250,12 +250,6 @@ def solve(problem: Problem) -> Result:
     dom = build_domain(problem.geometry)
 
     if problem.bc.type == "clamped":
-        if problem.model.theory == "ktn":
-            raise CaseError(
-                "model.theory: получено 'ktn' при bc.type='clamped', ожидалось "
-                "classic — в v0.2 поправки КТН требуют кривизны Δw = −M/D из "
-                f"расщепления (soft_hinge), см. {_SCHEMA_DOC}#model"
-            )
         solver = ClampedPlate.from_config(dom, cfg)
     else:
         solver = PlateBending.from_config(dom, cfg)
@@ -299,10 +293,16 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     q = solver.quad
     if problem.bc.type == "clamped":
         c = solver.solve(f)
-        w_nodes = solver.deflection(c, q.x, q.y)
+        w_nodes = solver.deflection_at_quad(c)
         evaluate = lambda X, Y: solver.deflection(c, X, Y)      # noqa: E731
-        w_ktn = None
         cond = float(solver.cond)
+        w_ktn = None
+        if problem.model.theory == "ktn":
+            # КТН при защемлении: кривизна из кэша Δ(ω²Φ) (A3.3)
+            lap_w = solver.laplacian_at_quad(c)
+            kp = KTNParams.from_config(cfg)
+            w_ktn = kp.corrected_deflection(w_nodes, lap_w, cfg.q0,
+                                            np.zeros(q.x.size))
     else:
         cM, cw = solver.solve(f)
         w_nodes = solver.poisson.evaluate_at_quad(cw)
@@ -348,12 +348,17 @@ def _gap_field_values(spec, quad):
     return g
 
 
+def _cond_of(solver) -> float:
+    """cond(A) решателя: ClampedPlate.cond либо PlateBending.poisson.cond."""
+    return float(solver.cond if hasattr(solver, "cond") else solver.poisson.cond)
+
+
 def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     q = solver.quad
     # Δ: скаляр gap | gap_factor·w_free | поле [contact.gap] (A1)
     f = _uniform(cfg, q) if f_values is None else f_values
-    _, cw_free = solver.solve(f) if f_values is not None else solver.solve_uniform(cfg.q0)
-    w_free = float(np.max(np.abs(solver.poisson.evaluate_at_quad(cw_free))))
+    state_free = solver.solve(f)
+    w_free = float(np.max(np.abs(solver.w_at_quad(state_free))))
     c = problem.contact
     fmask = None
     zone_mask = None
@@ -364,7 +369,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
 
     if c.force is not None:                                     # силовой штамп (A2)
         return _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
-                                    cw_free, w_free, zone_mask, fmask)
+                                    state_free, w_free, zone_mask, fmask)
 
     if c.gap is not None:
         delta_val = c.gap
@@ -394,7 +399,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     cres = mor.solve()
     w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes
     res = Result(problem=problem, config=cfg, w_max=float(np.max(np.abs(w_nodes))),
-                 cond=float(solver.poisson.cond), Xg=cres.Xg, Yg=cres.Yg,
+                 cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
                  w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
                  delta=float(delta), w_free_max=w_free,
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
@@ -404,7 +409,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
 
 
 def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
-                         cw_free, w_free, zone_mask, fmask) -> Result:
+                         state_free, w_free, zone_mask, fmask) -> Result:
     r"""Силовой штамп (A2): задана сила P, ищется уровень штампа.
 
     Δ(x, y) = level + shape(x, y); ``shape`` — форма из ``[contact.gap]``
@@ -430,7 +435,7 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
         shape = float(shape)                       # плоский штамп или const-форма
 
     fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
-    w_free_nodes = solver.poisson.evaluate_at_quad(cw_free)
+    w_free_nodes = solver.w_at_quad(state_free)
     shape_fm = shape[fm] if np.ndim(shape) else shape
     # Верхняя граница: level + shape ≥ w_free на основании ⇒ контакта нет.
     level_hi = float(np.max(w_free_nodes[fm] - shape_fm)) * (1.0 + 1e-9) + 1e-30
@@ -466,7 +471,7 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
     delta_min = float(level_star + min_shape)
     w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes
     res = Result(problem=problem, config=cfg, w_max=float(np.max(np.abs(w_nodes))),
-                 cond=float(solver.poisson.cond), Xg=cres.Xg, Yg=cres.Yg,
+                 cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
                  w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
                  delta=delta_min, w_free_max=w_free,
                  level=float(level_star), force_total=force_total,

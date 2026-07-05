@@ -1,0 +1,37 @@
+# Контакт защемлённого круга с жёстким основанием (фаза 3, A3):
+# МОР поверх ClampedPlate (solve_rhs с факторизацией один раз; кривизна
+# для КТН — из кэша Δ(ω²Φ)). Протокол снимка: β=1.2, 8000 итераций,
+# tol=1e-8. Комплементарность гейтится на лёгкой постановке
+# (tests/test_clamped_contact.py, факт 3.12e-2 ×3).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.5
+beta = 1.2
+max_iter = 8000
+tol = 1.0e-8
+
+[discretization]
+p = 10
+Q = 256
+grid_n = 80
+
+[verify]
+reference = "none"       # эталонов контакта нет — ворота-инварианты
+
+[output]
+dir = "results/ladder/circle_clamped_contact"

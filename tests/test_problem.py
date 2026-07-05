@@ -166,10 +166,10 @@ def test_contact_checks():
                   "ровно одно")
     _expect_error(_case(contact={"enabled": True, "gap": 1e-4, "stop": "energy"}),
                   "contact.stop", "dr | comp")
-    # контакт + защемление — несовместимость v0.2
-    _expect_error(_case(bc={"type": "clamped"},
-                        contact={"enabled": True, "gap_factor": 0.5}),
-                  "мягкого шарнира")
+    # контакт + защемление разрешён с фазы 3 (A3.3)
+    p = Problem.from_dict(_case(bc={"type": "clamped"},
+                                contact={"enabled": True, "gap_factor": 0.5}))
+    assert p.contact.enabled and p.bc.type == "clamped"
 
 
 def test_verify_checks():

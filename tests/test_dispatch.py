@@ -171,9 +171,15 @@ def test_ktn_bending_correction():
     assert ktn.w_max > classic.w_max                     # уточнённая теория мягче
 
 
-def test_ktn_clamped_rejected():
-    with pytest.raises(CaseError, match="ktn"):
-        solve(_problem(bc={"type": "clamped"}, model={"theory": "ktn"}))
+def test_ktn_clamped_bending_works():
+    """Фаза 3 / A3.3: КТН при защемлении — кривизна из кэша Δ(ω²Φ)."""
+    base = dict(bc={"type": "clamped"}, model={"theory": "classic", "h": 0.2},
+                discretization={"p": 6, "Q": 64, "grid_n": 24})
+    classic = solve(_problem(**base))
+    base["model"] = {"theory": "ktn", "h": 0.2}
+    ktn = solve(_problem(**base))
+    assert ktn.w_max_classic == pytest.approx(classic.w_max, rel=1e-12)
+    assert ktn.w_max > classic.w_max                 # уточнённая теория мягче
 
 
 # --------------------------------------------------------------------------- #

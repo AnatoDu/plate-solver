@@ -153,8 +153,8 @@ class ContactMOR:
             if self._gap_ref <= 0.0:
                 raise ValueError("Поле зазора: min Δ под основанием должно быть > 0.")
         # Усиление оператора: макс. прогиб от единичной равномерной нагрузки (~‖G‖).
-        _, cw_unit = plate.solve(np.ones(q.x.size))
-        w_unit = plate.poisson.evaluate_at_quad(cw_unit)
+        state_unit = plate.solve(np.ones(q.x.size))
+        w_unit = plate.w_at_quad(state_unit)
         self.gain = float(np.max(np.abs(w_unit)))
         self.beta_eff = cfg.beta / self.gain
 
@@ -210,9 +210,9 @@ class ContactMOR:
         iters = 0
 
         for iters in range(1, cfg.max_iter + 1):  # noqa: B007 — iters нужен после цикла
-            cM, cw = self.plate.solve(f0 - r)                 # f = q̃ − r → (M, w)
-            w = self.plate.poisson.evaluate_at_quad(cw)       # прогиб в узлах (кэш, GEMV)
-            disp = self._contact_disp(cM, w, r)               # классика: disp = w
+            state = self.plate.solve(f0 - r)                  # f = q̃ − r → состояние
+            w = self.plate.w_at_quad(state)                   # прогиб в узлах (кэш, GEMV)
+            disp = self._contact_disp(state, w, r)            # классика: disp = w
             if self.stop == "comp" and self._kkt_residual(disp, r) < cfg.tol:
                 converged = True                              # (r, u(r)) уже KKT-точно
                 break
@@ -227,25 +227,30 @@ class ContactMOR:
                 converged = True
                 break
 
-        cM, cw = self.plate.solve(f0 - r)                     # финальный прогиб
-        w = self.plate.poisson.evaluate_at_quad(cw)
+        state = self.plate.solve(f0 - r)                      # финальный прогиб
+        w = self.plate.w_at_quad(state)
         w_ktn = None
         if self.ktn is not None:
-            lap_w = -self.plate.poisson.evaluate_at_quad(cM) / self.plate.D
+            lap_w = self.plate.lap_w_at_quad(state)
             w_ktn = self.ktn.corrected_deflection(w, lap_w, cfg.q0, r)
         # Диагностика комплементарности по финальному состоянию (алгоритм не меняется):
         # то же смещение u, что входит в условие контакта (классика: u = w).
-        disp = self._contact_disp(cM, w, r)
+        disp = self._contact_disp(state, w, r)
         comp_residual, gap_overshoot = self._complementarity(disp, r)
         peak = int(np.argmax(r))
-        return self._package(r, w, cw, iters, converged, np.array(hist),
+        return self._package(r, w, self.plate.coeffs_w(state), iters, converged,
+                             np.array(hist),
                              (q.x[peak], q.y[peak]), w_ktn, comp_residual, gap_overshoot)
 
-    def _contact_disp(self, cM, w, r) -> np.ndarray:
-        """Смещение контактной поверхности: классика (w) или КТН (с Δw = −M/D)."""
+    def _contact_disp(self, state, w, r) -> np.ndarray:
+        """Смещение контактной поверхности: классика (w) или КТН (с кривизной Δw).
+
+        Кривизна берётся у решателя (протокол A3.3): расщепление — Δw = −M/D
+        из (P1); защемление — Δ(ω²Φ) из кэша вторых производных структуры.
+        """
         if self.ktn is None:
             return w
-        lap_w = -self.plate.poisson.evaluate_at_quad(cM) / self.plate.D
+        lap_w = self.plate.lap_w_at_quad(state)
         return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
 
     def _kkt_residual(self, disp, r) -> float:

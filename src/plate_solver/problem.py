@@ -615,9 +615,6 @@ def _parse_output(data) -> OutputSpec:
 #  Перекрёстная валидация (несовместимости v0.2)
 # --------------------------------------------------------------------------- #
 def _validate_cross(p: Problem) -> None:
-    if p.contact.enabled and p.bc.type == "clamped":
-        _fail("bc.type", "clamped", "soft_hinge — в v0.2 контакт реализован "
-              "для мягкого шарнира (снятие ограничения — фаза 3)", "contact")
     if p.verify.reference == "analytic" and p.geometry.kind == "compose":
         _fail("verify.reference", "analytic",
               "mms | fem | none — для compose-геометрии аналитического эталона нет", "verify")
