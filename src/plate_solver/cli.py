@@ -249,6 +249,11 @@ def _run_case(args, do_verify: bool) -> int:
             return 0 if rows[-1]["ok"] else 1      # вердикт — по самой точной точке
         return 0
 
+    if getattr(args, "figures", False):
+        import dataclasses
+
+        problem = dataclasses.replace(
+            problem, output=dataclasses.replace(problem.output, figures=True))
     res = _solve(problem)
     if do_verify:
         from .references import verify_result
@@ -257,7 +262,9 @@ def _run_case(args, do_verify: bool) -> int:
         print(rep.table())
         print(f"допуск tol = {rep.tol:g}; вердикт: {'PASS' if rep.ok else 'FAIL'}")
         return 0 if rep.ok else 1
-    path = res.save(out_dir)
+    formats = tuple(f.strip() for f in getattr(args, "fig_format", "png,pdf")
+                    .split(",") if f.strip())
+    path = res.save(out_dir, fig_formats=formats)
     s = res.scalars()
     print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
     if res.contact is not None:
@@ -279,6 +286,10 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
                         help="свип по p или Q (можно оба — декартово произведение)")
     parser.add_argument("--out", metavar="DIR", default=None,
                         help="каталог результатов (по умолчанию output.dir case-файла)")
+    parser.add_argument("--figures", action="store_true",
+                        help="форсировать output.figures = true (png 300 dpi + pdf)")
+    parser.add_argument("--fig-format", metavar="png,pdf", default="png,pdf",
+                        help="форматы фигур через запятую (по умолчанию png,pdf)")
     return parser
 
 
