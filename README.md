@@ -30,7 +30,36 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"        # + ".[dev,fem]" для независимой МКЭ-верификации
 ```
 
-## Быстрый старт: контакт L-формы с жёстким основанием
+## Быстрый старт через case-файлы (v0.2)
+
+Постановка задачи описывается TOML-файлом (схема — [docs/CASE_SCHEMA.md](docs/CASE_SCHEMA.md)):
+
+```bash
+plate-solve --new annulus        # шаблон annulus.toml (закомментирован)
+plate-solve annulus.toml         # решить: result.json + фигуры
+plate-verify annulus.toml        # таблица «эталон | значение | rel | статус», exit 0/1
+plate-verify annulus.toml --sweep p=2:12:2   # сходимость: md + csv + png
+plate-ladder cases/ci            # каталог случаев → сводный md с провенансом
+```
+
+| Команда | Что делает |
+|---|---|
+| `plate-solve case.toml` | решает постановку, пишет `result.json` (+фигуры) |
+| `plate-solve --new KIND` | шаблон case-файла (circle/rectangle/L/annulus) |
+| `plate-verify case.toml` | сверка с эталонами `[verify]`, exit 0/1 по tol |
+| `--sweep p=2:12:2`, `Q=…` | свип дискретизации (md+csv+png), в solve и verify |
+| `plate-ladder КАТАЛОГ` | прогон реестра случаев, сводка с провенансом |
+
+Нагрузки в схеме: `uniform` (q0), `patch` (q0 + зона тем же геометрическим
+языком), `point` (P, x0, y0 — регуляризованное пятно eps; истинная δ
+сознательно не вводится — см. docs/NOTES.md §18). Произвольная гладкая
+f(x, y) — через API (`f_values` в узлах квадратуры, пример в CASE_SCHEMA).
+
+Реестры: [cases/ladder/](cases/ladder) — полные ступени верификации
+(лестница), [cases/ci/](cases/ci) — лёгкие копии, каждая автоматически
+является CI-тестом. Блок-схема диспетчера — [docs/dispatch_flow.md](docs/dispatch_flow.md).
+
+## Быстрый старт через API: контакт L-формы с жёстким основанием
 
 ```python
 from plate_solver import Config, viz
