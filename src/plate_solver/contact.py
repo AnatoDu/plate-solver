@@ -123,12 +123,35 @@ class ContactMOR:
                 f"Неизвестный критерий останова stop={cfg.stop!r} (ожидается 'dr' или 'comp')."
             )
         self.stop = cfg.stop
-        self.gap = float(cfg.Delta if gap is None else gap)
+        # Зазор: скаляр (путь v0.2, арифметика прежняя) ИЛИ поле Δ(x, y)
+        # значениями в узлах квадратуры (фаза 3, A1: неплоский штамп,
+        # криволинейное основание, ступени). Нормировка gain не меняется.
+        gap_raw = cfg.Delta if gap is None else gap
+        if np.ndim(gap_raw) == 0:
+            self.gap = float(gap_raw)
+        else:
+            self.gap = np.asarray(gap_raw, dtype=float)
+            if self.gap.shape != (plate.quad.x.size,):
+                raise ValueError(
+                    f"Поле зазора: ожидается массив длины M = {plate.quad.x.size} "
+                    f"(узлы квадратуры), получено {self.gap.shape}."
+                )
+        self._gap_scalar = np.ndim(self.gap) == 0
+        # Масштаб Δ для безразмерных метрик: скаляр — сам зазор; поле —
+        # минимальный зазор под основанием (контактно-релевантный масштаб).
+        self._gap_ref = float(self.gap) if self._gap_scalar else None
         q = plate.quad
         if foundation_mask is None:
             self.fmask = np.ones(q.x.size, dtype=bool)
         else:
             self.fmask = np.asarray(foundation_mask(q.x, q.y), dtype=bool)
+        if self._gap_scalar:
+            self._gap_f = self.gap                       # тот же float — путь v0.2
+        else:
+            self._gap_f = self.gap[self.fmask]           # значения поля под основанием
+            self._gap_ref = float(np.min(self._gap_f))
+            if self._gap_ref <= 0.0:
+                raise ValueError("Поле зазора: min Δ под основанием должно быть > 0.")
         # Усиление оператора: макс. прогиб от единичной равномерной нагрузки (~‖G‖).
         _, cw_unit = plate.solve(np.ones(q.x.size))
         w_unit = plate.poisson.evaluate_at_quad(cw_unit)
@@ -184,7 +207,7 @@ class ContactMOR:
                 converged = True                              # (r, u(r)) уже KKT-точно
                 break
             r_new = r.copy()
-            r_new[self.fmask] = r[self.fmask] + self.beta_eff * (disp[self.fmask] - self.gap)
+            r_new[self.fmask] = r[self.fmask] + self.beta_eff * (disp[self.fmask] - self._gap_f)
             np.maximum(r_new, 0.0, out=r_new)                 # проекция r ≥ 0
             r_new[~self.fmask] = 0.0                          # реакция только под основанием
             res = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
@@ -223,8 +246,9 @@ class ContactMOR:
 
         (комплементарность + проникание; см. докстринг :meth:`solve`).
         """
-        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self.gap))
-        pen = float(np.max(np.maximum(disp[self.fmask] - self.gap, 0.0), initial=0.0) / self.gap)
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self._gap_ref))
+        pen = float(np.max(np.maximum(disp[self.fmask] - self._gap_f, 0.0), initial=0.0)
+                    / self._gap_ref)
         return max(comp, pen)
 
     def _complementarity(self, disp, r) -> tuple[float, float]:
@@ -232,9 +256,9 @@ class ContactMOR:
 
         comp_residual = max|r·(u−Δ)| / (q0·Δ);  gap_overshoot = (max u|_{r>0} − Δ)/Δ.
         """
-        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self.gap))
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self._gap_ref))
         contact = r > 0.0
-        over = (float(disp[contact].max() - self.gap) / self.gap
+        over = (float(np.max((disp - self.gap)[contact])) / self._gap_ref
                 if contact.any() else float("nan"))
         return comp, over
 

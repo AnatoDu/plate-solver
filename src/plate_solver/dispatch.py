@@ -84,7 +84,7 @@ class Result:
     timings: dict = field(default_factory=dict)     # секунды: build, solve
     # контакт (None, если contact.enabled = false)
     contact: ContactResult | None = None
-    delta: float | None = None         # разрешённый зазор Δ (gap или gap_factor·w_free)
+    delta: float | None = None         # скалярный Δ; для поля зазора — min Δ на основании
     w_free_max: float | None = None    # max|w| без контакта (опора gap_factor)
     # нагрузка point (после защиты ≥ MIN_ZONE_NODES узлов)
     eps_eff: float | None = None
@@ -324,23 +324,64 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     return res
 
 
+def _gap_field_values(spec, quad):
+    """Поле зазора Δ(x, y) в узлах квадратуры по GapSpec (A1.2); const → скаляр.
+
+    ``const`` возвращает СКАЛЯР — путь и арифметика тождественны скалярному
+    ``gap`` v0.2 (ворота-тождество A1.3-т1).
+    """
+    if spec.kind == "const":
+        return spec.value
+    if spec.kind == "plane":
+        return spec.a * quad.x + spec.b * quad.y + spec.c
+    if spec.kind == "paraboloid":
+        return spec.apex + ((quad.x - spec.cx) ** 2 + (quad.y - spec.cy) ** 2) \
+            / (2.0 * spec.r_curv)
+    g = np.full(quad.x.size, float(spec.base))          # steps
+    for zone_geom, value in spec.zones:
+        zdom = build_domain(zone_geom)
+        g[zdom.omega(quad.x, quad.y) > 0.0] = value
+    return g
+
+
 def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     q = solver.quad
-    # Δ: абсолютный gap либо gap_factor·w_free (свободный прогиб той же нагрузки)
+    # Δ: скаляр gap | gap_factor·w_free | поле [contact.gap] (A1)
     f = _uniform(cfg, q) if f_values is None else f_values
     _, cw_free = solver.solve(f) if f_values is not None else solver.solve_uniform(cfg.q0)
     w_free = float(np.max(np.abs(solver.poisson.evaluate_at_quad(cw_free))))
-    delta = (problem.contact.gap if problem.contact.gap is not None
-             else problem.contact.gap_factor * w_free)
+    c = problem.contact
+    if c.gap is not None:
+        delta_val = c.gap
+    elif c.gap_factor is not None:
+        delta_val = c.gap_factor * w_free
+    else:
+        delta_val = _gap_field_values(c.gap_field, q)
 
     fmask = None
+    zone_mask = None
     if problem.contact.zone is not None:
         zone_mask = _zone_mask(problem.contact.zone, q, key="contact.zone",
                                advice="увеличьте Q или зону")
         fmask = lambda X, Y: zone_mask                          # noqa: E731
 
+    if np.ndim(delta_val) == 0:
+        delta = float(delta_val)
+        if delta <= 0:
+            raise CaseError(f"contact.gap: получено Δ = {delta:.3g}, ожидалось > 0, "
+                            f"см. {_SCHEMA_DOC}#contact")
+    else:
+        fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
+        gmin = float(np.min(delta_val[fm]))
+        if gmin <= 0:
+            raise CaseError(
+                f"contact.gap: получено min Δ = {gmin:.3g} на основании, ожидалось "
+                f"> 0 (поле зазора не должно пересекать пластину), "
+                f"см. {_SCHEMA_DOC}#contact")
+        delta = gmin                                     # скаляр для отчёта: min Δ
+
     ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn" else None
-    mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=delta, ktn=ktn,
+    mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=delta_val, ktn=ktn,
                      load_values=f_values)
     cres = mor.solve()
     w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes
