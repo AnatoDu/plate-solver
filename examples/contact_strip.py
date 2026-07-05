@@ -13,8 +13,8 @@
 
 import matplotlib.pyplot as plt
 
-from plate_solver.analytic.strip_contact import W_MAPLE, X_MAPLE
-from plate_solver.contact.mor1d import ContactStrip1D, solve_mor_1d
+from plate_solver.mor1d import ContactStrip1D, solve_mor_1d
+from plate_solver.strip_contact import W_MAPLE, X_MAPLE
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plate-solver"
-version = "0.0.1"
+version = "0.1.0"
 description = "Расчёт изгиба и контактного взаимодействия упругих пластин произвольного очертания (уточнённая теория КТН + R-функции + метод обобщённой реакции)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,24 +24,35 @@ dependencies = [
     "matplotlib>=3.10.9",
     "numpy>=1.24",
     "scipy>=1.10",
+    "sympy>=1.12",
 ]
 
 [project.optional-dependencies]
-examples = ["matplotlib>=3.7"]
+# matplotlib — в основных зависимостях (viz.py и тесты графики); дубль убран.
 dev = ["pytest>=7.0", "ruff>=0.4"]
+fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
 
 [project.urls]
-Homepage = "https://github.com/<your-username>/plate-solver"
-Repository = "https://github.com/<your-username>/plate-solver"
+Homepage = "https://github.com/AnatoDu/plate-solver"
+Repository = "https://github.com/AnatoDu/plate-solver"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Эталон Maple (аналитическое решение задачи со штампом) едет вместе с пакетом.
+plate_solver = ["data/*.txt"]
+
 [tool.pytest.ini_options]
-# pythonpath = ["src"] позволяет запускать `pytest` без установки пакета.
-pythonpath = ["src"]
+# pythonpath = ["src"] позволяет запускать `pytest` без установки пакета;
+# "scripts" нужен тестам-воротам, импортирующим run_*-скрипты (test_ladder и др.).
+pythonpath = ["src", "scripts"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "big: тяжёлые тесты (квадратуры Q≥1024: много памяти и времени); исключать: -m 'not big'",
+    "fem: требуют scikit-fem (независимая МКЭ-верификация); исключать: -m 'not fem'",
+]
 
 [tool.ruff]
 line-length = 100

@@ -17,10 +17,11 @@
 - `examples/`  — минимальные воспроизводимые примеры
 
 ## Команды
-- Установка: `pip install -e ".[dev,examples]"`
-- Тесты: `pytest`
+- Установка: `pip install -e ".[dev]"` (+ `.[dev,fem]` для МКЭ-верификации)
+- Тесты: `pytest -m "not big and not fem"` (быстрые); полный — `pytest`
 - Стиль: `ruff check .`
 - Пример: `python examples/circular_plate.py`
+- Золотой прогон: `python scripts/run_golden.py` (из корня; пишет в CWD)
 
 ## Правила для агента
 - IMPORTANT: НЕ ослаблять тест верификации 1D↔2D, чтобы он «прошёл».

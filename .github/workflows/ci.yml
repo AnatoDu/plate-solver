@@ -1,0 +1,29 @@
+# CI комплекса программ: стиль + быстрые тест-ворота.
+# Тяжёлые квадратуры (-m big) и МКЭ-верификация (-m fem) гоняются локально:
+# см. pyproject [tool.pytest.ini_options] markers. Секретов нет — только публичное.
+name: ci
+
+on:
+  push:
+    branches: [main, migration]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Установка (editable + dev)
+        run: pip install -e ".[dev]"
+      - name: Стиль (ruff)
+        run: ruff check .
+      - name: Тесты (без big и fem)
+        run: pytest -m "not big and not fem" -q

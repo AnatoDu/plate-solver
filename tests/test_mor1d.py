@@ -10,7 +10,7 @@
 import numpy as np
 import pytest
 
-from plate_solver.contact.mor1d import ContactStrip1D, solve_mor_1d
+from plate_solver.mor1d import ContactStrip1D, solve_mor_1d
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_verification_vs_maple():
     β-схемы (β=0.02) остаётся ≈5 %. Допуск 6 % отражает этот порог, а не
     подгонку: уточнение сетки/итераций монотонно снижает расхождение.
     """
-    from plate_solver.analytic.strip_contact import W_MAPLE, X_MAPLE
+    from plate_solver.strip_contact import W_MAPLE, X_MAPLE
 
     p = ContactStrip1D(beta=0.02, n=100, max_iter=500_000, tol=1e-9)
     x, w, _ = solve_mor_1d(p)
