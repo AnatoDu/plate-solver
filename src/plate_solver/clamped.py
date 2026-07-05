@@ -219,6 +219,25 @@ class ClampedPlate:
         """
         return np.tensordot(np.asarray(c, float), self._lap_psi, axes=(0, 0))
 
+    def load_vector(self, f_values) -> np.ndarray:
+        """Вектор нагрузки ``b[k] = ∫ f ψ_k`` (внешние правые части, A4)."""
+        return (self._psi * self._W) @ np.asarray(f_values, float)
+
+    def solve_from_b(self, b) -> np.ndarray:
+        """Решить по ГОТОВОМУ вектору нагрузки (факторизация уже сделана; A4)."""
+        bn = np.asarray(b, float) * self._d
+        if self._chol is not None:
+            cn = sla.cho_solve(self._chol, bn)
+        else:
+            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        return cn * self._d
+
+    def structure_at(self, X, Y) -> np.ndarray:
+        """Матрица структуры ψ_k = ω²·T_k в произвольных точках: (N, len(X)) (A4)."""
+        Phi = self.basis.values(X, Y)
+        om = self.domain.omega(X, Y)
+        return om**2 * Phi
+
     # -- протокол контакта (общий с PlateBending; A3.3) -------------------- #
     def w_at_quad(self, state) -> np.ndarray:
         """Прогиб в узлах квадратуры по состоянию решения (state = c)."""

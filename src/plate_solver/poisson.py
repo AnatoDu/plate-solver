@@ -91,6 +91,16 @@ class PoissonSolver:
             b = assemble_load(self.domain, self.basis, self.quad, f_values)
         return sla.cho_solve(self.chol, b)
 
+    def load_vector(self, f_values) -> np.ndarray:
+        """Вектор нагрузки ``b[k] = ∫ f ψ_k`` (для внешних правых частей, A4)."""
+        if self.cache_fields:
+            return self.psiW @ np.asarray(f_values, dtype=float)
+        return assemble_load(self.domain, self.basis, self.quad, f_values)
+
+    def solve_b(self, b) -> np.ndarray:
+        """Решение по ГОТОВОМУ вектору нагрузки (две подстановки Холецкого; A4)."""
+        return sla.cho_solve(self.chol, np.asarray(b, dtype=float))
+
     def evaluate(self, c, X, Y) -> np.ndarray:
         """Значения ``v = ω·Σ_k c_k T_k`` в точках (X, Y)."""
         Phi = self.basis.values(X, Y)               # (N, *shape)

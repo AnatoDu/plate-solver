@@ -316,4 +316,222 @@ def solve_contact(
     return ContactMOR(plate, cfg, foundation_mask=foundation_mask, gap=gap, ktn=ktn).solve()
 
 
-__all__ = ["ContactResult", "ContactMOR", "solve_contact"]
+
+
+# --------------------------------------------------------------------------- #
+#  Контакт двух пластин (фаза 3, A4)
+# --------------------------------------------------------------------------- #
+@dataclass
+class TwoPlateResult:
+    r"""Результат контакта двух пластин (узлы контакта — квадратура ПЕРВОЙ).
+
+    Поля повторяют :class:`ContactResult`, где осмыслено; дополнительно —
+    прогиб второй пластины. ``r_nodes`` — реакция взаимодействия (пара ±r):
+    первая пластина получает −r, вторая +r.
+    """
+
+    Xg: np.ndarray
+    Yg: np.ndarray
+    w_grid: np.ndarray                  # прогиб первой на сетке (NaN вне Ω₁)
+    w2_grid: np.ndarray                 # прогиб второй на сетке (NaN вне Ω₂)
+    r_grid: np.ndarray
+    contact_zone: np.ndarray
+    r_nodes: np.ndarray                 # узлы квадратуры первой пластины
+    w_nodes: np.ndarray                 # w₁ в узлах первой
+    w2_nodes: np.ndarray                # w₂ в узлах первой (NaN вне ω₂ > 0)
+    iters: int
+    converged: bool
+    residual_history: np.ndarray
+    peak_xy: tuple
+    plate: object                       # первая пластина (для viz-совместимости)
+    plate2: object
+    cw: np.ndarray                      # коэффициенты прогиба первой
+    cw2: np.ndarray                     # коэффициенты прогиба второй
+    comp_residual: float = float("nan")
+    gap_overshoot: float = float("nan")
+    w_ktn_nodes: np.ndarray | None = None   # КТН для пары отложен (фаза 5)
+
+
+class TwoPlateMOR:
+    r"""МОР для одностороннего контакта ДВУХ пластин (A4).
+
+    Итерация на разности прогибов (реакция — пара ±r):
+
+    .. math:: r \leftarrow \big[r + \beta_{eff}\,((w_1 - w_2) - \Delta)\big]_+ ,
+              \qquad q_1 - r, \quad q_2 + r;
+
+    сходимость — теорема 4 с суммарным оператором G = G₁ + G₂
+    (β_eff = β / (gain₁ + gain₂)).
+
+    Узлы контакта — квадратура ПЕРВОЙ пластины, маскированная ω₂ > 0
+    (пересечение планформ) и зоной. Межсеточного переноса НЕТ — это
+    преимущество метода: (i) прогиб второй пластины вычисляется в узлах
+    первой ПРЯМО через её структуру ψ₂(x₁) (глобальное разложение, не
+    сетка); (ii) вклад реакции в нагрузку второй интегрируется по РОДНОЙ
+    квадратуре реакции: b₂ += ψ₂(x₁)·(W₁·r) — реакция нигде не
+    интерполируется.
+
+    Метрики Синьорини нормируются ФИЗИЧЕСКИМ масштабом щели
+    ``w_scale = max|w₁_free| + max|w₂_free|`` (свободные прогибы от
+    фактических нагрузок — максимальный размах u = w₁ − w₂ без
+    взаимодействия; Δ может быть нулевым — касание):
+    comp = max|r·(u−Δ)| / (q₀·w_scale), overshoot = max(u−Δ)|контакт / w_scale.
+    Нормировка шага β_eff = β/(gain₁+gain₂) отдельна — по теореме 4
+    gain берётся от ЕДИНИЧНОЙ нагрузки (оценка ‖G₁+G₂‖).
+    """
+
+    def __init__(self, plate1, plate2, cfg: Config,
+                 f1_values: np.ndarray | None = None,
+                 f2_values: np.ndarray | None = None,
+                 q2: float | None = None,
+                 gap=0.0,
+                 zone_mask: np.ndarray | None = None):
+        self.plate1, self.plate2, self.cfg = plate1, plate2, cfg
+        if cfg.stop not in ("dr", "comp"):
+            raise ValueError(f"Неизвестный критерий останова stop={cfg.stop!r}.")
+        self.stop = cfg.stop
+        q1 = plate1.quad
+        om2 = plate2.domain.omega(q1.x, q1.y)
+        mask = om2 > 0.0                                # пересечение планформ
+        if zone_mask is not None:
+            mask &= np.asarray(zone_mask, dtype=bool)
+        if int(mask.sum()) == 0:
+            raise ValueError("Контакт двух пластин: пересечение планформ пусто.")
+        self.mask = mask
+        # кэш структуры второй пластины в контактных узлах первой (N₂ × m)
+        self.psi2_c = plate2.structure_at(q1.x[mask], q1.y[mask])
+        self.W1m = q1.w[mask]
+        # нагрузки
+        self.f1 = cfg.q0 if f1_values is None else np.asarray(f1_values, float)
+        if f2_values is None:
+            q2v = cfg.q0 if q2 is None else float(q2)
+            f2 = np.full(plate2.quad.x.size, q2v)
+        else:
+            f2 = np.asarray(f2_values, float)
+        self.b2_base = plate2.load_vector(f2)
+        # зазор: скаляр ≥ 0 или поле на узлах первой (берём контактный срез)
+        if np.ndim(gap) == 0:
+            self.gap_c = float(gap)
+            self._gap_full = float(gap)
+        else:
+            g = np.asarray(gap, dtype=float)
+            if g.shape != (q1.x.size,):
+                raise ValueError("Поле зазора: ожидается массив узлов первой пластины.")
+            self.gap_c = g[mask]
+            self._gap_full = g
+        # усиление суммарного оператора G = G₁ + G₂ (теорема 4; единичная нагрузка)
+        s1 = plate1.solve(np.ones(q1.x.size))
+        gain1 = float(np.max(np.abs(plate1.w_at_quad(s1))))
+        s2 = plate2.solve(np.ones(plate2.quad.x.size))
+        gain2 = float(np.max(np.abs(plate2.w_at_quad(s2))))
+        self.gain = gain1 + gain2
+        self.beta_eff = cfg.beta / self.gain
+        # физический масштаб щели для метрик: свободные прогибы от НАГРУЗОК
+        sf1 = plate1.solve(self.f1 if np.ndim(self.f1) else
+                           np.full(q1.x.size, self.f1))
+        sf2 = plate2.solve_from_b(self.b2_base)
+        self.w_scale = (float(np.max(np.abs(plate1.w_at_quad(sf1))))
+                        + float(np.max(np.abs(plate2.w_at_quad(sf2)))))
+
+    def _u_contact(self, state1, cw2) -> tuple[np.ndarray, np.ndarray]:
+        """(w₁ в узлах первой, u = w₁ − w₂ в контактных узлах)."""
+        w1 = self.plate1.w_at_quad(state1)
+        w2_c = np.tensordot(np.asarray(cw2, float), self.psi2_c, axes=(0, 0))
+        return w1, w1[self.mask] - w2_c
+
+    def _eta(self, u, r) -> float:
+        """Безразмерная KKT-невязка пары (нормировка w_scale, Δ может быть 0)."""
+        rm = r[self.mask]
+        comp = float(np.max(np.abs(rm * (u - self.gap_c))) /
+                     (self.cfg.q0 * self.w_scale))
+        pen = float(np.max(np.maximum(u - self.gap_c, 0.0), initial=0.0)
+                    / self.w_scale)
+        return max(comp, pen)
+
+    def solve(self, r0: np.ndarray | None = None) -> TwoPlateResult:
+        """Внешний цикл МОР пары пластин; критерии останова — как у ContactMOR."""
+        cfg = self.cfg
+        q1 = self.plate1.quad
+        if r0 is None:
+            r = np.zeros(q1.x.size)
+        else:
+            r = np.maximum(np.asarray(r0, float).copy(), 0.0)
+            r[~self.mask] = 0.0
+        hist: list[float] = []
+        converged = False
+        iters = 0
+        for iters in range(1, cfg.max_iter + 1):  # noqa: B007 — нужен после цикла
+            state1 = self.plate1.solve(self.f1 - r)
+            state2 = self.plate2.solve_from_b(
+                self.b2_base + self.psi2_c @ (self.W1m * r[self.mask]))
+            cw2 = self.plate2.coeffs_w(state2)
+            w1, u = self._u_contact(state1, cw2)
+            if self.stop == "comp":
+                comp = float(np.max(np.abs(r[self.mask] * (u - self.gap_c))) /
+                             (cfg.q0 * self.w_scale))
+                pen = float(np.max(np.maximum(u - self.gap_c, 0.0), initial=0.0)
+                            / self.w_scale)
+                if max(comp, pen) < cfg.tol:
+                    converged = True
+                    break
+            r_new = r.copy()
+            r_new[self.mask] = r[self.mask] + self.beta_eff * (u - self.gap_c)
+            np.maximum(r_new, 0.0, out=r_new)
+            r_new[~self.mask] = 0.0
+            res = float(np.sqrt(np.sum(q1.w * (r_new - r) ** 2)))
+            hist.append(res)
+            r = r_new
+            if self.stop == "dr" and res < cfg.tol:
+                converged = True
+                break
+        # финальное состояние
+        state1 = self.plate1.solve(self.f1 - r)
+        state2 = self.plate2.solve_from_b(
+            self.b2_base + self.psi2_c @ (self.W1m * r[self.mask]))
+        cw2 = self.plate2.coeffs_w(state2)
+        w1, u = self._u_contact(state1, cw2)
+        rm = r[self.mask]
+        comp = float(np.max(np.abs(rm * (u - self.gap_c))) /
+                     (cfg.q0 * self.w_scale))
+        contact = rm > 0.0
+        over = (float(np.max((u - self.gap_c)[contact])) / self.w_scale
+                if contact.any() else float("nan"))
+        peak = int(np.argmax(r))
+        return self._package(r, w1, cw2, self.plate1.coeffs_w(state1),
+                             iters, converged, np.array(hist),
+                             (q1.x[peak], q1.y[peak]), comp, over)
+
+    def _package(self, r, w1, cw2, cw1, iters, converged, hist, peak_xy,
+                 comp, over) -> TwoPlateResult:
+        from scipy.interpolate import griddata
+
+        cfg = self.cfg
+        q1 = self.plate1.quad
+        dom1, dom2 = self.plate1.domain, self.plate2.domain
+        x0, x1, y0, y1 = dom1.bbox
+        gx = np.linspace(x0, x1, cfg.grid_n)
+        gy = np.linspace(y0, y1, cfg.grid_n)
+        Xg, Yg = np.meshgrid(gx, gy)
+        in1 = dom1.omega(Xg, Yg) > 0.0
+        in2 = dom2.omega(Xg, Yg) > 0.0
+        w_grid = np.full(Xg.shape, np.nan)
+        w_grid[in1] = self.plate1.deflection(cw1, Xg[in1], Yg[in1])
+        w2_grid = np.full(Xg.shape, np.nan)
+        w2_grid[in2] = self.plate2.deflection(cw2, Xg[in2], Yg[in2])
+        r_grid = griddata((q1.x, q1.y), r, (Xg, Yg), method="linear", fill_value=0.0)
+        r_grid[~(in1 & in2)] = np.nan
+        zone = in1 & in2 & (np.nan_to_num(r_grid) > 0.0)
+        w2_nodes = np.full(q1.x.size, np.nan)
+        w2_nodes[self.mask] = np.tensordot(np.asarray(cw2, float),
+                                           self.psi2_c, axes=(0, 0))
+        return TwoPlateResult(
+            Xg=Xg, Yg=Yg, w_grid=w_grid, w2_grid=w2_grid, r_grid=r_grid,
+            contact_zone=zone, r_nodes=r, w_nodes=w1, w2_nodes=w2_nodes,
+            iters=iters, converged=converged, residual_history=hist,
+            peak_xy=peak_xy, plate=self.plate1, plate2=self.plate2,
+            cw=cw1, cw2=cw2, comp_residual=comp, gap_overshoot=over,
+        )
+
+
+__all__ = ["ContactResult", "ContactMOR", "TwoPlateResult", "TwoPlateMOR",
+           "solve_contact"]
