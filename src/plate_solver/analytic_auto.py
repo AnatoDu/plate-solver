@@ -314,6 +314,7 @@ def navier_solution(*, x1: float, x2: float, y1: float, y2: float,
 
 def levy_solution(*, x1: float, x2: float, y1: float, y2: float,
                   D: float, q0: float, bc_y1: str, bc_y2: str,
+                  nu: float | None = None,
                   n_terms: int = 80) -> CertifiedSolution:
     r"""Ряд Леви: x-пара hinge, y-кромки bc_y1 | bc_y2 ∈ {hinge, clamped}.
 
@@ -323,8 +324,12 @@ def levy_solution(*, x1: float, x2: float, y1: float, y2: float,
     по КУ, сертификат — невязки КУ каждой моды.
     """
     for bc in (bc_y1, bc_y2):
-        if bc not in ("hinge", "clamped"):
-            raise FactoryError(f"Леви: КУ {bc!r} вне ограды (hinge | clamped)")
+        if bc not in ("hinge", "clamped", "free"):
+            raise FactoryError(f"Леви: КУ {bc!r} вне ограды "
+                               "(hinge | clamped | free)")
+    if ("free" in (bc_y1, bc_y2)) and nu is None:
+        raise FactoryError("Леви-free: нужен nu (естественные условия "
+                           "M_y = 0, V_y = 0 зависят от ν)")
     Lx, Ly = x2 - x1, y2 - y1
     c = Ly / 2.0
 
@@ -356,7 +361,17 @@ def levy_solution(*, x1: float, x2: float, y1: float, y2: float,
                              2 * al * ch / c + al**2 * t * sh])
             if bc == "clamped":
                 return [(val, -yp), (der, 0.0)]
-            return [(val, -yp), (der2 / al**2, 0.0)]  # hinge: Y = Y″ = 0
+            if bc == "hinge":
+                return [(val, -yp), (der2 / al**2, 0.0)]   # Y = Y″ = 0
+            # free (F10.3): на моде w = Y(y)·sin(αx) естественные условия
+            #   M_y = −D(Y″ − ν α² Y) = 0     (вклад частного: −ν α² y_p)
+            #   V_y = −D(Y‴ − (2−ν) α² Y′) = 0 (частное — константа, 0)
+            der3 = np.array([al**3 * sh, al**3 * ch,
+                             3 * al**2 * ch / c + al**3 * t * sh,
+                             3 * al**2 * sh / c + al**3 * t * ch])
+            row_m = ((der2 - nu * al**2 * val) / al**2, nu * yp)
+            row_v = ((der3 - (2 - nu) * al**2 * der) / al**3, 0.0)
+            return [row_m, row_v]
 
         rows = rows_at(-c, bc_y1) + rows_at(+c, bc_y2)
         A = np.array([r_[0] for r_ in rows])

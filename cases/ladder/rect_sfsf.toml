@@ -1,0 +1,50 @@
+# Ступень F10: прямоугольник SFSF — x-края шарнир, y-края СВОБОДНЫ.
+# Эталон: ряд Леви со свободными кромками (фабрика: M_y = 0 и обобщённая
+# перерезывающая Кирхгофа V_y = Y‴ − (2−ν)α²Y′ = 0 на модах). Сравнение
+# в центре. verify.tol заморожен «факт × 3»:
+#   факт p=12, Q=160: rel = 4.04e-10 → tol = 1.2e-9.
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "mixed"
+
+[[bc.sides]]
+side = "x1"
+type = "hinge"
+
+[[bc.sides]]
+side = "x2"
+type = "hinge"
+
+[[bc.sides]]
+side = "y1"
+type = "free"
+
+[[bc.sides]]
+side = "y2"
+type = "free"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 12
+Q = 160
+grid_n = 48
+
+[verify]
+reference = "analytic"
+tol = 1.2e-9
+
+[output]
+dir = "results/ladder/rect_sfsf"

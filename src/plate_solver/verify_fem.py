@@ -247,3 +247,63 @@ __all__ = [
     "FemComparison",
     "compare_rfm_vs_fem",
 ]
+
+
+# --------------------------------------------------------------------------- #
+#  Прямоугольник со смешанными сторонами, включая СВОБОДНЫЕ (F10.4)
+# --------------------------------------------------------------------------- #
+def rect_mesh(x1: float, x2: float, y1: float, y2: float, m: int = 32):
+    """Структурная треугольная сетка прямоугольника (MeshTri, тензорная)."""
+    from skfem import MeshTri
+
+    xs = np.linspace(x1, x2, m + 1)
+    ys = np.linspace(y1, y2, m + 1)
+    return MeshTri.init_tensor(xs, ys)
+
+
+def solve_rect_fem_mixed(mesh, D: float, q: float, nu: float, sides: dict,
+                         bbox: tuple) -> FemSolution:
+    """Кирхгоф (элемент Морли) на прямоугольнике: стороны clamped|hinge|free.
+
+    Свободные стороны НЕ получают кинематических связей: естественные
+    условия (M_n = 0, обобщённая перерезывающая Кирхгофа V_n = 0)
+    обслуживает сама слабая форма полной энергии с ν. hinge — w = 0 в
+    вершинных dof стороны; clamped — плюс нормальная производная на рёбрах.
+    """
+    from skfem import (
+        Basis,
+        BilinearForm,
+        ElementTriMorley,
+        LinearForm,
+        condense,
+        solve,
+    )
+    from skfem.helpers import dd, ddot, trace
+
+    x1, x2, y1, y2 = bbox
+
+    @BilinearForm
+    def plate(u, v, w):
+        return D * ((1 - nu) * ddot(dd(u), dd(v)) + nu * trace(dd(u)) * trace(dd(v)))
+
+    @LinearForm
+    def load(v, w):
+        return q * v
+
+    basis = Basis(mesh, ElementTriMorley())
+    tol = 1e-10 * max(x2 - x1, y2 - y1)
+    tests = {"x1": lambda p: np.abs(p[0] - x1) < tol,
+             "x2": lambda p: np.abs(p[0] - x2) < tol,
+             "y1": lambda p: np.abs(p[1] - y1) < tol,
+             "y2": lambda p: np.abs(p[1] - y2) < tol}
+    ess = []
+    for side, test in tests.items():
+        bc = sides[side]
+        if bc == "free":
+            continue                                  # естественные условия
+        dofs = basis.get_dofs(mesh.facets_satisfying(test))
+        ess.append(dofs.all("u") if bc == "hinge" else dofs.all())
+    idx = (np.unique(np.concatenate(ess)) if ess
+           else np.array([], dtype=np.int64))
+    wsol = solve(*condense(plate.assemble(basis), load.assemble(basis), D=idx))
+    return FemSolution(basis, wsol, "kirchhoff-mixed")

@@ -169,19 +169,21 @@ def _rect_analytic_wmax(problem: Problem, cfg) -> float:
     from .analytic_auto import levy_solution
 
     if (sides["x1"] == sides["x2"] == "hinge"
-            and {sides["y1"], sides["y2"]} <= {"hinge", "clamped"}):
+            and {sides["y1"], sides["y2"]} <= {"hinge", "clamped", "free"}):
         sol = levy_solution(x1=g.x1, x2=g.x2, y1=g.y1, y2=g.y2, D=cfg.D,
-                            q0=cfg.q0, bc_y1=sides["y1"], bc_y2=sides["y2"])
+                            q0=cfg.q0, bc_y1=sides["y1"], bc_y2=sides["y2"],
+                            nu=cfg.nu)
         return abs(float(sol.w(xc, yc))), (xc, yc)
     if (sides["y1"] == sides["y2"] == "hinge"
-            and {sides["x1"], sides["x2"]} <= {"hinge", "clamped"}):
+            and {sides["x1"], sides["x2"]} <= {"hinge", "clamped", "free"}):
         sol = levy_solution(x1=g.y1, x2=g.y2, y1=g.x1, y2=g.x2, D=cfg.D,
-                            q0=cfg.q0, bc_y1=sides["x1"], bc_y2=sides["x2"])
+                            q0=cfg.q0, bc_y1=sides["x1"], bc_y2=sides["x2"],
+                            nu=cfg.nu)
         return abs(float(sol.w(yc, xc))), (xc, yc)
     _fail("verify.reference", "analytic",
-          "mixed: все hinge (Навье), пары hinge/clamped по осям (Леви) или "
-          "hinge-пара по одной оси + hinge/clamped кромки (Леви, фабрика); "
-          "иначе — none | fem")
+          "mixed: все hinge (Навье), пары hinge/clamped по осям (Леви), "
+          "hinge-пара по одной оси + hinge/clamped/free кромки (Леви, "
+          "фабрика; free — SFSF/SFCF); иначе — none | fem")
 
 
 def _navier_factory_ref(problem: Problem, cfg):
@@ -309,6 +311,7 @@ def _mms_reference(problem: Problem, cfg) -> Reference:
 _FEM_LSHAPE_M, _FEM_LSHAPE_REFINE = 16, 2
 _FEM_CIRCLE_NREF = 4
 _FEM_RECT_N = 32
+_FEM_RECT_MIXED_M = 48
 _FEM_ANNULUS_NR, _FEM_ANNULUS_NT = 24, 96
 
 
@@ -349,6 +352,8 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
     if bc == "clamped" and g.kind not in ("circle", "rectangle", "L", "annulus"):
         _fail("verify.reference", "fem",
               "circle | rectangle | L | annulus (для compose — mms | none)")
+    # mixed (в т.ч. free-стороны, F10.4): прямоугольник гарантирован
+    # валидатором; Кирхгоф (Морли) со сторонами по типам
     try:
         import skfem  # noqa: F401
     except ImportError:
@@ -358,6 +363,30 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
 
     dom = build_domain(g)
     D, q0, nu = cfg.D, cfg.q0, cfg.nu
+
+    if bc == "mixed":
+        from . import verify_fem as vf
+
+        sides = dict(problem.bc.sides)
+        mesh = vf.rect_mesh(g.x1, g.x2, g.y1, g.y2, m=_FEM_RECT_MIXED_M)
+        fem = vf.solve_rect_fem_mixed(mesh, D, q0, nu, sides,
+                                      (g.x1, g.x2, g.y1, g.y2))
+        tag = "".join(s[0].upper() for _, s in sorted(sides.items()))
+        # Сравнение В ТОЧКЕ (детерминированной): при free-сторонах максимум
+        # лежит НА КРОМКЕ — сопоставление max-областей с внутренним отступом
+        # даёт ложную систематику; точка — середина первой free-стороны
+        # (наибольший прогиб свободной кромки), иначе центр.
+        xc, yc = 0.5 * (g.x1 + g.x2), 0.5 * (g.y1 + g.y2)
+        pt = (xc, yc)
+        mids = {"x1": (g.x1, yc), "x2": (g.x2, yc),
+                "y1": (xc, g.y1), "y2": (xc, g.y2)}
+        for side in ("x1", "x2", "y1", "y2"):
+            if sides[side] == "free":
+                pt = mids[side]
+                break
+        val = abs(float(fem.at(np.array([pt[0]]), np.array([pt[1]]))[0]))
+        return [Reference(name=f"FEM-Кирхгоф, Морли (mixed {tag})",
+                          kind="fem", w_max=val, point=pt, gated=True)]
 
     if bc == "soft_hinge":
         from . import verify_fem as vf

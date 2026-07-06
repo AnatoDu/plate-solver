@@ -1,0 +1,50 @@
+# Ступень F10: КОНСОЛЬ — сторона x1 защемлена, остальные СВОБОДНЫ (CFFF).
+# Замкнутой аналитики нет (Леви требует hinge-пару) — эталон: независимый
+# Кирхгоф (scikit-fem, элемент Морли, сетка 48×48), сравнение В ТОЧКЕ
+# середины свободной кромки напротив заделки (там максимум прогиба).
+# verify.tol заморожен «факт × 3»: факт p=12, Q=160: rel = 1.19e-3 → 3.6e-3.
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "mixed"
+
+[[bc.sides]]
+side = "x1"
+type = "clamped"
+
+[[bc.sides]]
+side = "x2"
+type = "free"
+
+[[bc.sides]]
+side = "y1"
+type = "free"
+
+[[bc.sides]]
+side = "y2"
+type = "free"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 12
+Q = 160
+grid_n = 48
+
+[verify]
+reference = "fem"
+tol = 3.6e-3
+
+[output]
+dir = "results/ladder/rect_cfff"

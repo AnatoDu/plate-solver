@@ -419,9 +419,13 @@ class MixedRectPlate:
     r"""Смешанные КУ на прямоугольнике (v0.3): w = (∏ω_c²)(∏ω_h)·Φ.
 
     Стороны ``sides = {"x1": ..., "x2": ..., "y1": ..., "y2": ...}`` со
-    значениями ``clamped`` (множитель ω² — зануляет w и ∂w/∂n) или ``hinge``
+    значениями ``clamped`` (множитель ω² — зануляет w и ∂w/∂n), ``hinge``
     (множитель ω — зануляет только w; статика ИСТИННОГО шарнира M_n = 0
-    выходит ЕСТЕСТВЕННО из ПОЛНОЙ билинейной формы, NOTES §20). Все
+    выходит ЕСТЕСТВЕННО из ПОЛНОЙ билинейной формы, NOTES §20) или ``free``
+    (F10: БЕЗ множителя — незакреплённая сторона; естественные условия
+    полной формы: M_n = 0 и обобщённая перерезывающая Кирхгофа V_n = 0).
+    Набор сторон обязан исключать жёсткие смещения (≥ 1 clamped либо
+    ≥ 2 hinge). Все
     множители — полиномы (x − x₁), (x₂ − x), … ⇒ домен = bbox, квадратура
     Гаусса точна, изломов ω нет: полная форма работает без квадратурного
     пола маски (контраст с кривыми границами, см. PROGRESS C1).
@@ -436,17 +440,27 @@ class MixedRectPlate:
         from .quadrature import interior_nodes
 
         wanted = {"x1", "x2", "y1", "y2"}
-        if set(sides) != wanted or not all(v in ("clamped", "hinge")
+        if set(sides) != wanted or not all(v in ("clamped", "hinge", "free")
                                            for v in sides.values()):
             raise ValueError("sides: нужны все четыре стороны x1|x2|y1|y2 "
-                             "со значениями clamped|hinge.")
+                             "со значениями clamped|hinge|free.")
+        n_c = sum(1 for v in sides.values() if v == "clamped")
+        n_h = sum(1 for v in sides.values() if v == "hinge")
+        if n_c == 0 and n_h < 2:
+            raise ValueError("sides: жёсткие смещения не исключены — нужно "
+                             "≥ 1 clamped либо ≥ 2 hinge (ядро {1, x, y}).")
         self.cfg = cfg
         self.D = float(cfg.D)
         self.sides = dict(sides)
         factors = {"x1": _gx - x1, "x2": x2 - _gx, "y1": _gy - y1, "y2": y2 - _gy}
         g_expr = sp.Integer(1)
         for side, f in factors.items():
-            g_expr *= f**2 if sides[side] == "clamped" else f
+            if sides[side] == "clamped":
+                g_expr *= f**2
+            elif sides[side] == "hinge":
+                g_expr *= f
+            # free (F10.2): БЕЗ множителя — сторона не несёт кинематических
+            # условий; M_n = 0 и V_n = 0 выходят ЕСТЕСТВЕННО из полной формы
         self._g_expr = g_expr
         # маска/сетка: полиномиальная ω прямоугольника (>0 внутри)
         from .geometry import Domain

@@ -484,13 +484,25 @@ def _parse_bc(data) -> BCSpec:
         st = s.get("type")
         if side not in ("x1", "x2", "y1", "y2"):
             _fail(f"bc.sides[{i}].side", side, "x1 | x2 | y1 | y2", "bc")
-        if st not in ("clamped", "hinge"):
-            _fail(f"bc.sides[{i}].type", st, "clamped | hinge", "bc")
+        if st not in ("clamped", "hinge", "free"):
+            _fail(f"bc.sides[{i}].type", st, "clamped | hinge | free", "bc")
         if side in sides:
             _fail(f"bc.sides[{i}].side", side, "каждая сторона один раз", "bc")
         sides[side] = st
     if set(sides) != {"x1", "x2", "y1", "y2"}:
         _fail("bc.sides", sorted(sides), "все четыре стороны x1, x2, y1, y2", "bc")
+    # Правило жёстких смещений (F10.1): кинематические условия обязаны
+    # уничтожать ядро {1, x, y}. Достаточно ≥ 1 clamped (линейная функция,
+    # зануляющаяся на прямой ВМЕСТЕ с нормальной производной, ≡ 0) ЛИБО
+    # ≥ 2 hinge (линейная функция, зануляющаяся на двух РАЗЛИЧНЫХ прямых —
+    # параллельных или пересекающихся, — ≡ 0). Иначе задача изгиба
+    # вырождена (свободные стороны пластину не закрепляют).
+    n_clamped = sum(1 for v in sides.values() if v == "clamped")
+    n_hinge = sum(1 for v in sides.values() if v == "hinge")
+    if n_clamped == 0 and n_hinge < 2:
+        _fail("bc.sides", [f"{k}={v}" for k, v in sorted(sides.items())],
+              "набор сторон, исключающий жёсткие смещения: не менее одной "
+              "clamped либо не менее двух hinge (ядро {1, x, y})", "bc")
     return BCSpec(type=t, sides=tuple(sorted(sides.items())))
 
 
