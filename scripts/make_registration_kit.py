@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_registration_kit.py — комплект материалов госрегистрации ПрЭВМ (F8).
+"""make_registration_kit.py — комплект материалов госрегистрации ПрЭВМ.
 
 Собирает в НЕОТСЛЕЖИВАЕМЫЙ каталог private/registration/:
 

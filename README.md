@@ -133,9 +133,8 @@ ruff check .                        # стиль
 `pytest` работает и без установки пакета: пути `src/` и `scripts/` прописаны
 в `pyproject.toml`.
 
-Архив для ревью (исходники + лёгкий снимок полей + свежий pytest-лог)
-собирается одной командой: `scripts/make_review_zip.sh` (по умолчанию —
-в неотслеживаемый `private/review/`).
+Снимок исходников одной командой: `git archive -o plate-solver.zip HEAD`
+(войдёт ровно отслеживаемое дерево — с docs/, cases/, notebooks/).
 
 ## Структура
 

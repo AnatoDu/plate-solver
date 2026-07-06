@@ -21,7 +21,7 @@ from plate_solver.ladder import bending_moments, bending_moments_full
 
 
 def test_b0_full_formula_reduces_to_kernel():
-    r"""B0: полный вид (11) при T = 0 редуцируется к ядру (F0.1, по первоисточнику).
+    r"""B0: полный вид (11) при T = 0 редуцируется к ядру (по первоисточнику).
 
     σ±ᵢᵢ = Tᵢᵢ/h ± 6Mᵢᵢ/h̊² + ν/(1−ν)·q±ₙ ∓ 3b·Tᵢᵢ/h̊²: мембранный член —
     с толщиной h, изгибный и b-поправка — с h̊² (h̊ — толщина с учётом
@@ -173,7 +173,7 @@ def test_b2_fields_npz_and_replot(tmp_path):
     data = np.load(tmp_path / "fields.npz")
     need = {"fields_schema", "x", "y", "w", "Mx", "My", "Mxy", "sx_top", "sx_bot",
             "sy_top", "sy_bot", "txy_top", "txy_bot", "r", "zone", "problem_json",
-            "w_top", "w_bot", "dh"}                     # схема 2 (NOTES §21, F3.7)
+            "w_top", "w_bot", "dh"}                     # схема 2 (NOTES §21)
     assert need <= set(data.files)
     assert int(data["fields_schema"]) == 2
     paths = viz.replot(tmp_path, formats=("png", "pdf"))

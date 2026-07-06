@@ -187,7 +187,7 @@ def plot_contact_summary(
 def plot_pair_summary(
     result, *, save: str | None = None, show: bool = False,
 ):
-    """Планшет 2×2 для контакта ДВУХ пластин (F0.2): w₁, w₂, r, сходимость.
+    """Планшет 2×2 для контакта ДВУХ пластин: w₁, w₂, r, сходимость.
 
     ``result`` — :class:`plate_solver.contact.TwoPlateResult`; поля берутся
     с фоновой сетки (NaN вне соответствующей области). Реакция ``r`` —
@@ -265,7 +265,7 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
             out.append(path)
         plt.close(fig)
 
-    # 1) поверхность прогиба (выбор поверхности — F3.7)
+    # 1) поверхность прогиба (выбор поверхности)
     key, label = {"mid": ("w", "w"), "top": ("w_top", "w (верхняя лицевая)"),
                   "bottom": ("w_bot", "w (нижняя лицевая)")}.get(surface, (None, None))
     if key is None:

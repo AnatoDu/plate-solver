@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""doc_matrix.py — матрица возможностей → docs/FEATURES.md (F2.1).
+"""doc_matrix.py — матрица возможностей → docs/FEATURES.md.
 
 Автоматический реестр трёх видов возможностей:
 

@@ -57,7 +57,7 @@ Documentation = "https://github.com/AnatoDu/plate-solver/tree/main/docs"
 where = ["src"]
 
 [tool.setuptools.dynamic]
-# Единый источник версии (F7.2) — plate_solver.__version__.
+# Единый источник версии — plate_solver.__version__.
 version = { attr = "plate_solver.__version__" }
 
 [tool.setuptools.package-data]

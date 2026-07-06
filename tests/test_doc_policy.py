@@ -1,4 +1,4 @@
-"""Ворота депроцессизации (F1.6): документация — язык продукта.
+"""Ворота депроцессизации: документация — язык продукта.
 
 Стоп-словарь процессных привязок (внутренние рукописи, фазы разработки)
 не должен встречаться в отслеживаемых текстовых файлах. Белый список —
@@ -20,10 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 #: процессные привязки; \b — юникодные границы слов (не байтовые, как grep)
 STOP = re.compile(
     r"диссерта|глав[аеы]\b|стать[яеи]\b|доклад|фаз[аы]\b|трек\b|"
-    r"ЮСНВ|ВМСС|Вестник|P[0-9]\.[0-9]|положение на защиту"
+    r"ЮСНВ|ВМСС|Вестник|положение на защиту|"
+    # метки внутренних планов работ (v0.3.1): F1…F10, P1.1…
+    r"\bF[0-9]{1,2}\b|\bP[0-9]{1,2}\.[0-9]\b"
 )
 
-#: до миграции эталонного отчёта (F5.3) golden-семейство заморожено как есть
+#: белый список — явным перечнем
 WHITELIST = {
     "CHANGELOG.md",                  # исторические примечания релизов
     "tests/test_doc_policy.py",      # сам словарь
@@ -41,13 +43,24 @@ def _tracked_files() -> list[str]:
     return out.stdout.split()
 
 
+def _text_of(rel: str) -> str:
+    """Текст файла; у ноутбуков — ТОЛЬКО source-ячейки (в выводах фигур
+    base64-пиксели дают ложные срабатывания коротких паттернов)."""
+    raw = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+    if not rel.endswith(".ipynb"):
+        return raw
+    import json
+
+    nb = json.loads(raw)
+    return "\n".join("".join(c.get("source", [])) for c in nb.get("cells", []))
+
+
 def test_no_process_stopwords_in_tracked_docs():
     bad: list[str] = []
     for rel in _tracked_files():
         if rel in WHITELIST or not rel.endswith(EXTS):
             continue
-        text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
-        for i, line in enumerate(text.splitlines(), 1):
+        for i, line in enumerate(_text_of(rel).splitlines(), 1):
             m = STOP.search(line)
             if m:
                 bad.append(f"{rel}:{i}: [{m.group(0)}] {line.strip()[:80]}")
@@ -55,7 +68,7 @@ def test_no_process_stopwords_in_tracked_docs():
 
 
 def test_private_dir_is_never_tracked():
-    """Контроль F0.5: домашние материалы не попадают в индекс."""
+    """Контроль: домашние материалы не попадают в индекс."""
     out = subprocess.run(["git", "ls-files", "private/"], cwd=ROOT,
                          capture_output=True, text=True)
     if out.returncode != 0:

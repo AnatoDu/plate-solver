@@ -172,7 +172,7 @@ def test_gate_c_circle_over_ring_regression():
 
 
 def test_f0_2_pair_summary_has_w2_panel(tmp_path):
-    """F0.2: контактный планшет пары — 4 панели, среди них w₁ И w₂."""
+    """Контактный планшет пары — 4 панели, среди них w₁ И w₂."""
     import matplotlib
 
     matplotlib.use("Agg")

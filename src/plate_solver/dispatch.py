@@ -127,7 +127,7 @@ class Result:
         """Записать result.json, fields.npz (+ фигуры при output.figures).
 
         ``surface`` — какую поверхность рисовать на w-фигуре:
-        ``mid`` | ``top`` | ``bottom`` (лицевые — NOTES §21, F3.7).
+        ``mid`` | ``top`` | ``bottom`` (лицевые — NOTES §21).
         """
         out = Path(out_dir if out_dir is not None else self.problem.output.dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -139,7 +139,7 @@ class Result:
             "timings": self.timings,
             "provenance": _provenance(),
         }
-        # Строгий JSON (F0.3): NaN не входит в стандарт — метрики, не
+        # Строгий JSON: NaN не входит в стандарт — метрики, не
         # определённые на пустой зоне (gap_overshoot и т.п.), пишутся null.
         (out / "result.json").write_text(
             json.dumps(_sanitize_nan(payload), ensure_ascii=False, indent=2,
@@ -198,7 +198,7 @@ class Result:
         return q_top, q_bot
 
     def faces_on_grid(self):
-        """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей (F3.7).
+        """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей.
 
         theory = ktn — КАНОН 21.1 (кинематика КТН, формулы кода, NOTES §21):
         w_bot = u_c = ktn.contact_displacement(w, Δw, q⁺, q⁻) — прогиб
@@ -257,7 +257,7 @@ class Result:
         np.savez_compressed(path, **payload)
 
     def _second_plate_fields(self) -> dict:
-        """Моменты и σ-шестёрка НИЖНЕЙ пластины пары (F3.5б, канон §19).
+        """Моменты и σ-шестёрка НИЖНЕЙ пластины пары (канон §19).
 
         Реакция взаимодействия r приходит на ВЕРХНЮЮ лицевую нижней
         пластины: q⁺₂ = r, q⁻₂ = 0 (основания под второй нет).
@@ -301,7 +301,7 @@ class Result:
                 old.replace(new)
         if self.contact is not None:
             dest = str(out / f"{stem}_contact_summary.png")
-            if hasattr(self.contact, "w2_grid"):        # пара пластин (F0.2)
+            if hasattr(self.contact, "w2_grid"):        # пара пластин
                 viz.plot_pair_summary(self.contact, save=dest)
             else:
                 viz.plot_contact_summary(self.config, self.contact, save=dest)
