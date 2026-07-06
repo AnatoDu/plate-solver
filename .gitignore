@@ -41,3 +41,6 @@ CLAUDE.local.md
 
 # unignore csv эталонного отчёта (глобальный *.csv выше)
 !/results/reference/reference_v0.3.csv
+
+# артефакт разового coverage-прогона
+.coverage
