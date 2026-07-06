@@ -21,12 +21,22 @@ from plate_solver.ladder import bending_moments, bending_moments_full
 
 
 def test_b0_full_formula_reduces_to_kernel():
-    """B0: полный вид (с T, b) при T = 0 редуцируется к ядру (11)."""
-    T, M, b, h, nu, qn = sp.symbols("T M b h nu q_n", real=True, positive=False)
+    r"""B0: полный вид (11) при T = 0 редуцируется к ядру (F0.1, по первоисточнику).
+
+    σ±ᵢᵢ = Tᵢᵢ/h ± 6Mᵢᵢ/h̊² + ν/(1−ν)·q±ₙ ∓ 3b·Tᵢᵢ/h̊²: мембранный член —
+    с толщиной h, изгибный и b-поправка — с h̊² (h̊ — толщина с учётом
+    обжатия); знак b-поправки ПРОТИВОПОЛОЖЕН изгибному. При T ≡ 0 обе
+    T-поправки исчезают, h̊ → h — остаётся ядро stresses_faces.
+    """
+    T, M, b, qn = sp.symbols("T M b q_n", real=True)
+    h, h_ring, nu = sp.symbols("h h_ring nu", positive=True)
     for sign in (+1, -1):
-        full = T / h + sign * 6 * (M + b * T) / h**2 + nu / (1 - nu) * qn
+        full = (T / h + sign * 6 * M / h_ring**2 + nu / (1 - nu) * qn
+                - sign * 3 * b * T / h_ring**2)
         kernel = sign * 6 * M / h**2 + nu / (1 - nu) * qn
-        assert sp.simplify(full.subs(T, 0) - kernel) == 0
+        assert sp.simplify(full.subs(T, 0).subs(h_ring, h) - kernel) == 0
+        # b-поправка — строго мембранной природы: при T=0 её нет при любом b
+        assert sp.diff(full.subs(T, 0), b) == 0
 
 
 def test_b3_t1_strip_signs_fixed_by_hand():

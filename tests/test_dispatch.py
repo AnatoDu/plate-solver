@@ -193,3 +193,23 @@ def test_result_save_json(tmp_path):
     assert data["scalars"]["w_max"] == pytest.approx(res.w_max)
     assert data["provenance"]["numpy"]
     assert "warnings" in data and "timings" in data
+
+
+def test_no_touch_contact_block_present_and_strict_json(tmp_path):
+    """F0.3: касания нет (Δ ≫ w_free) — contact-блок ЕСТЬ, JSON строгий.
+
+    Пустая зона: r ≡ 0, converged, n_contact = 0; неопределённые на пустой
+    зоне метрики (gap_overshoot) сериализуются null, не NaN (json строгий:
+    allow_nan=False + рекурсивная санация в Result.save).
+    """
+    res = solve(_problem(contact={"enabled": True, "gap": 1.0, "max_iter": 50}))
+    assert res.contact is not None
+    path = res.save(tmp_path / "out")
+    txt = path.read_text(encoding="utf-8")
+    assert "NaN" not in txt and "Infinity" not in txt
+    data = json.loads(txt)
+    sc = data["scalars"]
+    assert sc["converged"] is True and sc["iters"] >= 1
+    assert sc["n_contact"] == 0 and sc["r_max"] == 0.0
+    assert sc["residual_first"] == 0.0 and sc["residual_last"] == 0.0
+    assert sc["gap_overshoot"] is None                  # NaN → null

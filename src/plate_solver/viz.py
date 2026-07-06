@@ -184,6 +184,39 @@ def plot_contact_summary(
     return _finish(fig, save, show)
 
 
+def plot_pair_summary(
+    result, *, save: str | None = None, show: bool = False,
+):
+    """Планшет 2×2 для контакта ДВУХ пластин (F0.2): w₁, w₂, r, сходимость.
+
+    ``result`` — :class:`plate_solver.contact.TwoPlateResult`; поля берутся
+    с фоновой сетки (NaN вне соответствующей области). Реакция ``r`` —
+    пара взаимодействия: первая пластина получает −r, вторая +r.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    for ax, fld, ttl in ((axes[0, 0], result.w_grid, "Прогиб w₁ (верхняя пластина)"),
+                         (axes[0, 1], result.w2_grid, "Прогиб w₂ (нижняя пластина)")):
+        pcm = ax.contourf(result.Xg, result.Yg, np.ma.masked_invalid(fld),
+                          levels=20, cmap="viridis")
+        fig.colorbar(pcm, ax=ax, label="w")
+        ax.set_aspect("equal")
+        ax.set_title(ttl)
+    ax = axes[1, 0]
+    pcm = ax.pcolormesh(result.Xg, result.Yg, np.ma.masked_invalid(result.r_grid),
+                        cmap="magma", shading="auto")
+    fig.colorbar(pcm, ax=ax, label="r")
+    if result.contact_zone.any():
+        ax.contour(result.Xg, result.Yg, result.contact_zone.astype(float),
+                   levels=[0.5], colors="cyan", linewidths=1.2)
+    ax.set_aspect("equal")
+    ax.set_title("Реакция взаимодействия r (пара ±r)")
+    plot_convergence(result, ax=axes[1, 1])
+    fig.tight_layout()
+    return _finish(fig, save, show)
+
+
 __all__ = [
     "plot_deflection_surface",
     "plot_deflection_contour",
@@ -191,6 +224,7 @@ __all__ = [
     "plot_contact_zone",
     "plot_convergence",
     "plot_contact_summary",
+    "plot_pair_summary",
 ]
 
 # --------------------------------------------------------------------------- #

@@ -169,3 +169,22 @@ def test_gate_c_circle_over_ring_regression():
     assert int((c.r_nodes > 0).sum()) == b["n_contact"]
     n_comp = int(ndimage.label(c.contact_zone)[1])
     assert n_comp >= 1                                # топология фиксируется, не гейт
+
+
+def test_f0_2_pair_summary_has_w2_panel(tmp_path):
+    """F0.2: контактный планшет пары — 4 панели, среди них w₁ И w₂."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from plate_solver import viz
+
+    res = solve(Problem.from_toml(_ROOT / "cases" / "ci" / "two_plates_ring.toml"))
+    dest = tmp_path / "pair.png"
+    fig = viz.plot_pair_summary(res.contact, save=str(dest))
+    titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+    assert any("w₁" in t for t in titles) and any("w₂" in t for t in titles)
+    assert dest.stat().st_size > 10_000
+    # штатный путь фигур: Result._save_figures выбирает планшет пары
+    res.save_fields(tmp_path / "fields.npz")
+    res._save_figures(tmp_path, formats=("png",))
+    assert (tmp_path / "two_plates_ring_contact_summary.png").is_file()

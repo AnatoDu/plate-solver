@@ -29,6 +29,9 @@ figures/
 *.csv
 *.vtk
 
+# --- домашнее (материалы автора: карты, комплекты подачи, legacy) — НЕ публиковать ---
+private/
+
 # --- личные настройки Claude Code / редактора ---
 .claude/settings.local.json
 CLAUDE.local.md

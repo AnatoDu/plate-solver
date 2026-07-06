@@ -385,3 +385,28 @@
   дискретизации (Reference.value) — сертификат метода на постановке.
   Ворота: прямоугольник — машинная точность (rel < 1e-10); круг —
   пол маски ~1/Q, убывает с Q; отказы: mms для soft_hinge и L/compose.
+
+# FREEZE (TODO_FREEZE.md, июль 2026)
+
+## F0. Известные исправления
+
+- F0.1: тест редукции B0 — полный вид (11) по первоисточнику:
+  σ±ᵢᵢ = Tᵢᵢ/h ± 6Mᵢᵢ/h̊² + ν/(1−ν)·q±ₙ ∓ 3b·Tᵢᵢ/h̊² (мембранный член — h,
+  изгибный и b-поправка — h̊²; знак b-поправки противоположен изгибному);
+  редукция T=0, h̊→h к ядру + проверка ∂/∂b = 0. Закрывает кандидата №1
+  из «Кандидатов в фриз-правки».
+- F0.2: viz.plot_pair_summary — планшет пары 2×2 (w₁, w₂, r-пара, сходимость);
+  _save_figures выбирает планшет по типу результата; notebooks/05 переведён
+  на штатную функцию. Ворота: тест панелей w₁/w₂ + файл штатного пути.
+  Закрывает кандидата №2.
+- F0.3: result.json строгий JSON (allow_nan=False + рекурсивная санация
+  NaN/Inf → null). Диагноз: при «касании нет» gap_overshoot=NaN писался
+  литералом NaN (невалидный строгий JSON); contact-блок присутствовал всегда,
+  отдельной правки состава не потребовалось (feature-freeze: сомнение → не
+  делать). Ворота: тест «касания нет» (converged, n_contact=0, null).
+- F0.4: scripts/make_review_zip.sh — фильтр py/md/toml/cfg/txt/yml/yaml/json/
+  csv/cff/ipynb/mmd + LICENSE + review_extras/{fields.npz (ci/lshape_stamp),
+  pytest_light.log (прогон в скрипте)}; выход private/review/. Прогон:
+  147 файлов, 328К, лёгкая связка 216 passed. README-строка добавлена.
+- F0.5: private/ в .gitignore + правило в CLAUDE.md; .claude/settings.local.json
+  уже был в .gitignore и вне индекса. Контроль: git ls-files private/ пуст.
