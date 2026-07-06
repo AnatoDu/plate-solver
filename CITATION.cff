@@ -11,8 +11,10 @@ abstract: >-
   the generalized reaction method resolves contact with a free boundary, with
   refined-theory (Karman-Timoshenko-Naghdi type) corrections.
 authors:
-  - family-names: "Дуркин"
-    given-names: "А. А."
+  - family-names: Durkin
+    given-names: Anatoly A.
+    orcid: "https://orcid.org/0009-0009-9118-4629"
+    affiliation: "Pitirim Sorokin Syktyvkar State University"
 version: 0.3.1
 date-released: 2026-07-06
 repository-code: "https://github.com/AnatoDu/plate-solver"

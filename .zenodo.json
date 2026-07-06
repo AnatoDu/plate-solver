@@ -3,9 +3,12 @@
   "description": "Комплекс программ: R-функции (Рвачёв) для геометрии, метод Ритца для изгиба, метод обобщённой реакции для одностороннего контакта со свободной границей, поправки уточнённой теории типа Кармана–Тимошенко–Нагди. Bending and unilateral contact of thin elastic plates of arbitrary planform (R-functions + Ritz + generalized reaction method + refined-theory corrections).",
   "creators": [
     {
-      "name": "Дуркин, А. А."
+      "name": "Durkin, Anatoly A.",
+      "affiliation": "Pitirim Sorokin Syktyvkar State University",
+      "orcid": "0009-0009-9118-4629"
     }
   ],
+  "version": "0.3.1",
   "license": "MIT",
   "upload_type": "software",
   "language": "rus",
@@ -16,7 +19,10 @@
     "R-functions",
     "generalized reaction method",
     "biharmonic",
-    "computational mechanics"
+    "computational mechanics",
+    "signorini problem",
+    "refined plate theory",
+    "finite element verification"
   ],
   "related_identifiers": [
     {
