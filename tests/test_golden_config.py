@@ -33,10 +33,12 @@ def test_to_config_circle_overrides():
     assert lab.D == g.D                      # жёсткость круга (h=1.0)
 
 
-def test_gate_count_is_automatic():
-    """Число ворот в подписи golden считается pytest'ом, а не хардкодом."""
-    from run_golden import _count_gates
+def test_reference_report_exists_and_deterministic_header():
+    """Эталонный отчёт существует, начинается детерминированным заголовком
+    (провенанс — в спутнике, вне хеша); подпись без хардкода чисел."""
+    from pathlib import Path
 
-    n = _count_gates()
-    assert n is not None and n >= 90         # в объединённой базе ≥ 90 ворот
-
+    ref = (Path(__file__).resolve().parents[1] / "results" / "reference"
+           / "reference_v0.3.md").read_text(encoding="utf-8")
+    assert ref.startswith("# Эталонный отчёт plate-solver v0.3")
+    assert "provenance.json" in ref              # провенанс вынесен из отчёта

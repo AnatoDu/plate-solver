@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plate-solver"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Расчёт изгиба и контактного взаимодействия упругих пластин произвольного очертания (уточнённая теория КТН + R-функции + метод обобщённой реакции)."
 readme = "README.md"
 # tomllib (чтение case-файлов, problem.py) — stdlib начиная с 3.11.
@@ -16,9 +16,15 @@ keywords = [
     "generalized-reaction-method", "biharmonic", "computational-mechanics",
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Physics",
+    "Natural Language :: Russian",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -30,7 +36,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # matplotlib — в основных зависимостях (viz.py и тесты графики); дубль убран.
-dev = ["pytest>=7.0", "ruff>=0.4"]
+dev = ["pytest>=7.0", "ruff>=0.4", "build>=1.0", "twine>=5.0"]
 fem = ["scikit-fem>=9"]      # независимая МКЭ-верификация (тесты с маркером fem)
 notebooks = ["jupyter", "ipympl"]   # интерактивные ноутбуки (D3; не dev-зависимость)
 
@@ -44,9 +50,15 @@ plate-ladder = "plate_solver.cli:main_ladder"
 [project.urls]
 Homepage = "https://github.com/AnatoDu/plate-solver"
 Repository = "https://github.com/AnatoDu/plate-solver"
+Changelog = "https://github.com/AnatoDu/plate-solver/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/AnatoDu/plate-solver/tree/main/docs"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+# Единый источник версии (F7.2) — plate_solver.__version__.
+version = { attr = "plate_solver.__version__" }
 
 [tool.setuptools.package-data]
 # Эталон Maple (аналитическое решение задачи со штампом) едет вместе с пакетом.

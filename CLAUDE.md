@@ -13,7 +13,7 @@
 - Тесты: `pytest -m "not big and not fem"` (быстрые); полный — `pytest`
 - Стиль: `ruff check .`
 - Пример: `python examples/circular_plate.py`
-- Золотой прогон: `python scripts/run_golden.py` (из корня; пишет в CWD)
+- Эталонный прогон: `python scripts/run_reference.py` (из корня)
 
 ## Правила для агента
 - IMPORTANT: НЕ ослаблять тест верификации 1D↔2D, чтобы он «прошёл».
@@ -41,9 +41,11 @@
 - cases/ci/ — только БЫСТРЫЕ случаи (Q ≤ 256, малые mor_iter): каждый
   файл автоматически становится CI-тестом (tests/test_ci_cases.py).
   Тяжёлые ступени — cases/ladder/ (маркер big в их тестах).
-- Golden под хеш-воротами: results/golden/golden_results.md заморожен
-  (SHA-256, tests/test_golden_hash.py), корневой golden_results.md обязан
-  совпадать с ним побайтово. Правка golden = красный тест, а не повод
-  поправить хеш. run_golden.py и golden_config.py не трогать.
+- Эталонный отчёт под хеш-воротами: results/reference/reference_v0.3.md
+  заморожен (SHA-256, tests/test_reference_hash.py). Правка отчёта =
+  красный тест, а не повод поправить хеш; обновление — ТОЛЬКО осознанным
+  коммитом (перегенерация scripts/run_reference.py) с обоснованием в
+  CHANGELOG и новой строкой хеша. golden_config.py (конфиг эталонной
+  серии) не трогать.
 - Журнал разработки — private/PROGRESS.md: калибровки допусков,
   fallback-решения, отступления от планов.

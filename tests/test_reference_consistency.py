@@ -1,7 +1,7 @@
-"""Согласованность реестра с golden: круг ↔ золотая таблица круга.
+"""Согласованность реестра с эталонным отчётом: круг ↔ таблица круга.
 
 p-свип круга через ДИСПЕТЧЕР обязан воспроизводить w_max таблицы 4.1
-golden_results.md до 12 значащих цифр: и case-слой, и golden-скрипты
+reference_v0.3.md до 12 значащих цифр: и case-слой, и reference-скрипты
 строят один и тот же PlateBending — арифметика совпадает бит-в-бит,
 таблица напечатана с 6 цифрами, поэтому сравниваем разбор текста
 с прогоном на rel ≤ 5e-7 (полуединица последней печатной цифры),
@@ -25,9 +25,10 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _golden_table_41() -> dict[int, float]:
-    """Разобрать строки | p | w_max | ... | таблицы 4.1 golden_results.md."""
-    text = (_ROOT / "golden_results.md").read_text(encoding="utf-8")
-    block = text.split("Таблица 4.1")[1].split("##")[0]
+    """Разобрать строки | p | w_max | ... | таблицы круга reference_v0.3.md."""
+    text = (_ROOT / "results" / "reference" / "reference_v0.3.md"
+            ).read_text(encoding="utf-8")
+    block = text.split("Верификация на круге")[1].split("###")[0]
     rows = {}
     for m in re.finditer(r"^\|\s*(\d+)\s*\|\s*([0-9.e+-]+)\s*\|", block, re.MULTILINE):
         rows[int(m.group(1))] = float(m.group(2))
@@ -39,14 +40,14 @@ def _problem(p: int) -> Problem:
         "geometry": {"kind": "circle", "a": 1.0},
         "bc": {"type": "soft_hinge"},
         "load": {"type": "uniform", "q0": 4.0},
-        "model": {"h": 1.0},                       # круг golden: h_circle = 1.0
+        "model": {"h": 1.0},                       # круг эталонной серии: h_circle = 1.0
         "discretization": {"p": p, "Q": 1024, "grid_n": 80},
     })
 
 
 @pytest.mark.big
 def test_gate_circle_sweep_matches_golden_table41():
-    """ВОРОТА: p-свип диспетчера ↔ таблица 4.1 (печать) и прямой API (12 цифр)."""
+    """ВОРОТА: p-свип диспетчера ↔ таблица круга reference и прямой API (12 цифр)."""
     table = _golden_table_41()
     assert sorted(table) == [2, 4, 6, 8, 10]
     dom = geometry.make_circle(1.0)
@@ -59,5 +60,5 @@ def test_gate_circle_sweep_matches_golden_table41():
         _, cw = pb.solve_uniform(4.0)
         w_api = float(pb.deflection(cw, 0.0, 0.0))
         assert abs(w0 - w_api) <= 1e-12 * abs(w_api), (p, w0, w_api)
-        # печать golden — 6 значащих цифр
+        # печать отчёта — 6 значащих цифр
         assert abs(w0 - w_printed) <= 5e-7 * abs(w_printed), (p, w0, w_printed)

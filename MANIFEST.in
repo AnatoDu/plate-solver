@@ -1,0 +1,15 @@
+# Состав sdist (F7.1): документация, реестры случаев, эталон Maple,
+# лицензия и цитирование едут вместе с исходником.
+include LICENSE CITATION.cff CHANGELOG.md README.md
+graft docs
+graft cases
+graft examples
+graft tests
+graft scripts
+graft notebooks
+recursive-include src/plate_solver/data *.txt *.md
+prune results
+recursive-include results/reference *.md *.csv
+prune figures
+prune private
+global-exclude *.py[cod] .DS_Store

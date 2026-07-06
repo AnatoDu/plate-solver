@@ -9,17 +9,11 @@
 ``plate_solver.plate``. Поправки уточнённой теории типа
 Кармана–Тимошенко–Нагди (поперечный сдвиг + обжатие) — ``plate_solver.ktn``.
 
-Модули лежат плоско:
-  * geometry, basis, quadrature, assembler — область (R-функции) и дискретизация;
-  * poisson, plate, clamped, radial        — решатели изгиба (Ритц);
-  * contact, ktn                           — контакт (МОР) и поправки КТН;
-  * mor1d, green1d, stamp, stamp_ritz      — 1D-задел (балка-полоса, штамп);
-  * analytic, ladder, penalty, verify_fem  — эталоны и верификация;
-  * rfunctions, problems                   — примитивы R0 и постановки задач;
-  * viz                                    — графика.
-
-Подмодули импортируются лениво (по требованию), чтобы ``import plate_solver``
-не тянул за собой sympy/matplotlib/scikit-fem раньше времени.
+Пакет ПЛОСКИЙ (обоснование — docs/ARCHITECTURE.md); «нелоскость» — этим
+фасадом: публичные точки входа сгруппированы секциями ниже и доступны
+как ``plate_solver.<имя>`` (ленивая подгрузка — ``import plate_solver``
+не тянет sympy/matplotlib/scikit-fem раньше времени). Полный справочник —
+docs/API.md.
 """
 
 from __future__ import annotations
@@ -29,9 +23,51 @@ from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 from .problem import CaseError, Problem
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
+
+#: фасад (F6.2): имя → модуль; секции — комментариями
+_FACADE: dict[str, str] = {
+    # -- постановка и диспетчер ------------------------------------------- #
+    "solve": "dispatch",
+    "Result": "dispatch",
+    "build_domain": "dispatch",
+    # -- геометрия (R-функции) -------------------------------------------- #
+    "Domain": "geometry",
+    "make_circle": "geometry",
+    "make_rectangle": "geometry",
+    "make_L": "geometry",
+    "make_annulus": "geometry",
+    "make_compose": "geometry",
+    # -- решатели изгиба --------------------------------------------------- #
+    "PlateBending": "plate",
+    "ClampedPlate": "clamped",
+    "MixedRectPlate": "clamped",
+    # -- контакт (МОР) ------------------------------------------------------ #
+    "solve_contact": "contact",
+    "ContactMOR": "contact",
+    "ContactResult": "contact",
+    "TwoPlateMOR": "contact",
+    "TwoPlateResult": "contact",
+    # -- верификация -------------------------------------------------------- #
+    "resolve_reference": "references",
+    "verify_result": "references",
+    # -- напряжения и лицевые поверхности ----------------------------------- #
+    "stresses_faces": "ktn",
+}
+
+
+def __getattr__(name: str):
+    """Ленивый фасад: plate_solver.solve → plate_solver.dispatch.solve."""
+    if name in _FACADE:
+        import importlib
+
+        mod = importlib.import_module(f".{_FACADE[name]}", __name__)
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
+    # ядро (импортируется сразу)
     "config",
     "Config",
     "KTNParams",
@@ -40,4 +76,6 @@ __all__ = [
     "CaseError",
     "Problem",
     "__version__",
+    # фасад (лениво)
+    *sorted(_FACADE),
 ]

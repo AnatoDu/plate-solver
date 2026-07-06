@@ -103,8 +103,9 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 ## Числа ↔ скрипты ↔ тесты
 
 Все эталонные числа получаются ОДНИМ прогоном
-`python scripts/run_golden.py` (из корня; результат — `golden_results.md`,
-фигуры — `figures/`) и защищены тест-воротами:
+`python scripts/run_reference.py` (из корня; результат —
+`results/reference/reference_v0.3.md` + csv, заморожен SHA-256:
+`tests/test_reference_hash.py`) и защищены тест-воротами:
 
 | Результат | Ключевые числа | Скрипт | Тест-ворота |
 |---|---|---|---|
@@ -116,6 +117,8 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 | Верификация 1D↔2D (круг) | 1D↔2D↔аналитика, 0.1 % | `run_circle_1d_2d.py` | `test_circle_1d_2d.py` |
 | Вклад R-функций (vs штраф) | 1 % при N=9 против N=25; лучше cond | `run_rvachev_vs_penalty.py` | `test_rvachev_vs_penalty.py` |
 | Лестница верификации изгиба | машинная точность → эталоны | `run_ladder_*.py` | `test_ladder.py` |
+| Лестница случаев (24 ladder-ступени: кольца, точечные силы, патчи, Леви, свободный край, контакты, пара пластин) | rel ≤ замороженных tol («факт × 3») | `run_reference.py` | `test_ci_cases.py`, big-тесты ступеней |
+| Замкнутый контакт круг+основание (фабрика) | w_max 3.9e-3; полная сила 3.1e-3 | — | `test_analytic_factory.py` |
 
 ## Запуск
 
@@ -123,7 +126,7 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 pytest -m "not big and not fem"     # быстрые ворота (~1 мин)
 pytest                              # все ворота (big: Q≥1024; fem: scikit-fem)
 python examples/circular_plate.py   # минимальный пример (аналитика)
-python scripts/run_golden.py        # золотой эталонный прогон (из корня)
+python scripts/run_reference.py     # единый эталонный прогон (из корня)
 ruff check .                        # стиль
 ```
 
@@ -145,7 +148,7 @@ src/plate_solver/    модули плоско:
   analytic, ladder, penalty, verify_fem    эталоны и верификация
   viz                                      графика
   data/                                    эталон Maple (см. data/README.md)
-scripts/             run_*.py — расчётные серии; golden_config.py — единый конфиг
+scripts/             run_*.py — расчётные серии; run_reference.py — эталонный отчёт
 tests/               тест-ворота (маркеры big и fem — см. pyproject)
 examples/            минимальные воспроизводимые примеры
 docs/NOTES.md        тонкости и подводные камни (журнал заметок)

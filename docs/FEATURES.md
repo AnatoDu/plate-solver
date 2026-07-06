@@ -120,7 +120,7 @@ tests/test_doc_matrix.py).
 | contact | `ContactMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | run_ktn.py, run_lshape_contact.py, test_contact.py |
 | contact | `ContactResult` | API.md, FEATURES.md | run_lshape_contact.py |
 | contact | `TwoPlateMOR` | API.md, ARCHITECTURE.md, FEATURES.md | test_two_plates.py |
-| contact | `TwoPlateResult` | API.md, FEATURES.md | contact.py, viz.py |
+| contact | `TwoPlateResult` | API.md, FEATURES.md | __init__.py, contact.py, viz.py |
 | contact | `solve_contact` | API.md, FEATURES.md, README.md | test_analytic_factory.py, test_face_deflection.py |
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, run_lshape_contact.py, run_stamp_1d.py |
 | dispatch | `build_domain` | API.md, FEATURES.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
@@ -183,7 +183,7 @@ tests/test_doc_matrix.py).
 | references | `Reference` | API.md, FEATURES.md | references.py |
 | references | `VerifyReport` | API.md, FEATURES.md | references.py |
 | references | `resolve_reference` | API.md, FEATURES.md | test_analytic_factory.py, test_mms_reference.py, test_references.py |
-| references | `verify_result` | API.md, FEATURES.md, dispatch_flow.md | 02_annulus_case.ipynb, test_analytic_factory.py, test_annulus_cases.py |
+| references | `verify_result` | API.md, FEATURES.md, dispatch_flow.md | 02_annulus_case.ipynb, run_reference.py, test_analytic_factory.py |
 | verify_fem | `FemComparison` | API.md, FEATURES.md | verify_fem.py |
 | verify_fem | `FemSolution` | API.md, FEATURES.md | verify_fem.py |
 | verify_fem | `annulus_mesh` | API.md, FEATURES.md | references.py |

@@ -15,6 +15,7 @@ v0.2: генератор шаблонов case-файлов::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -227,6 +228,9 @@ def _fmt(v) -> str:
 
 def _run_case(args, do_verify: bool) -> int:
     """Общий путь plate-solve/plate-verify: решить case (или свип) и отчитаться."""
+    # headless-дружественный бэкенд для фигур (уважает явный выбор пользователя)
+    os.environ.setdefault("MPLBACKEND", "Agg")
+
     from .dispatch import solve as _solve
 
     problem = Problem.from_toml(args.case)

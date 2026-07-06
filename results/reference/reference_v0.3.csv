@@ -1,0 +1,49 @@
+серия,величина,значение
+golden.circle,w_max(p=2),9.741923e-07
+golden.circle,w_max(p=4),9.739916e-07
+golden.circle,w_max(p=6),9.741060e-07
+golden.circle,w_max(p=8),9.740351e-07
+golden.circle,w_max(p=10),9.741128e-07
+golden.circle,model_gap_pct,26.42
+golden.lshape_verify,rfm_vs_marcus_pct,2.64
+golden.lshape_verify,rfm_vs_kirchhoff_pct,54.86
+golden.contact,r_max,1.126e+02
+golden.contact,n_contact,67
+golden.contact,comp_residual,8.59e-02
+golden.ktn,peak_ratio,0.095
+golden.ktn,wmax_corr_pct,+22.3
+stamp_1d,maple_l2_pct,2.44
+rvachev_vs_penalty,N_struct,9
+rvachev_vs_penalty,N_pen,25
+ladder.annulus_clamped,"rel[analytic (annulus, clamped)]",1.610e-03
+ladder.annulus_clamped,"rel[1D-Ритц по радиусу (annulus, clamped)]",1.610e-03
+ladder.annulus_soft,"rel[analytic (annulus, soft_hinge)]",1.140e-03
+ladder.annulus_soft,"rel[1D-Ритц по радиусу (annulus, soft_hinge)]",1.140e-03
+ladder.annulus_soft,"rel[истинный Кирхгоф (model_gap, вне допуска)]",9.703e-02
+ladder.annulus_soft_contact,w_max,8.445885e-05
+ladder.circle_clamped,"rel[analytic (circle, clamped)]",9.331e-04
+ladder.circle_clamped,"rel[1D-Ритц по радиусу (circle, clamped)]",9.331e-04
+ladder.circle_clamped_contact,w_max,7.500429e-04
+ladder.circle_point_clamped,"rel[analytic (circle, clamped)]",1.444e-02
+ladder.circle_point_soft,"rel[analytic (circle, soft_hinge)]",1.036e-02
+ladder.circle_soft,"rel[analytic (circle, soft_hinge)]",9.162e-04
+ladder.circle_soft,"rel[1D-Ритц по радиусу (circle, soft_hinge)]",9.162e-04
+ladder.circle_soft,"rel[истинный Кирхгоф (model_gap, вне допуска)]",2.648e-01
+ladder.lshape_clamped,"rel[FEM-Аргирис (L, clamped)]",4.696e-02
+ladder.lshape_contact,w_max,5.056290e-05
+ladder.lshape_soft,"rel[FEM-Marcus, P2 (L; та же модель)]",2.644e-02
+ladder.lshape_soft,"rel[FEM-Kirchhoff, Морли (парадокс Сапонджяна — вне допуска)]",5.295e-01
+ladder.lshape_stamp,w_max,5.094297e-05
+ladder.lshape_stamp_force,w_max,4.805454e-05
+ladder.mms_circle,"rel[mms (изготовленное решение, circle, clamped)]",3.566e-03
+ladder.mms_rect,"rel[mms (изготовленное решение, rectangle, clamped)]",4.897e-15
+ladder.rect_cfff,"rel[FEM-Кирхгоф, Морли (mixed CFFF)]",1.194e-03
+ladder.rect_clamped,"rel[mms (изготовленное решение, rectangle, clamped)]",4.897e-15
+ladder.rect_hinge,"rel[analytic (rectangle, soft_hinge)]",1.850e-06
+ladder.rect_levy_asym,"rel[analytic (rectangle, mixed)]",1.558e-08
+ladder.rect_navier_patch,"rel[analytic (rectangle, soft_hinge)]",7.528e-04
+ladder.rect_navier_point,"rel[analytic (rectangle, soft_hinge)]",1.073e-02
+ladder.rect_sfsf,"rel[analytic (rectangle, mixed)]",4.036e-10
+ladder.two_plates_equal,w_max,3.340310e-03
+ladder.two_plates_mixed_bc,w_max,1.050129e-03
+ladder.two_plates_ring,w_max,8.113369e-05

@@ -19,11 +19,11 @@ __pycache__/
 # (якорь на корень: данные пакета src/plate_solver/data/ — под контролем версий)
 /data/
 figures/
-# results/ — рабочие выгрузки не коммитим, НО results/golden/ — замороженный
-# снимок golden (хеш-ворота) — под контролем версий.
 /results/*
-!/results/golden
-!/results/golden/**
+# эталонный отчёт (хеш-ворота) — под контролем версий; провенанс прогона — нет
+!/results/reference
+!/results/reference/**
+/results/reference/provenance.json
 *.npz
 *.npy
 *.csv
@@ -38,3 +38,6 @@ CLAUDE.local.md
 .vscode/
 .idea/
 .DS_Store
+
+# unignore csv эталонного отчёта (глобальный *.csv выше)
+!/results/reference/reference_v0.3.csv

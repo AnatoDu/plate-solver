@@ -29,8 +29,8 @@ r"""stamp.py — 1D контактная задача со ШТАМПОМ фик
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -38,7 +38,7 @@ from .green1d import green_matrix
 from .mor1d import ContactStrip1D
 
 # Эталон Maple внутри пакета (копия исходного xy.txt).
-_DEFAULT_MAPLE = os.path.join(os.path.dirname(__file__), "data", "stamp_maple_xy.txt")
+_DEFAULT_MAPLE = str(Path(__file__).parent / "data" / "stamp_maple_xy.txt")
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +159,7 @@ def load_maple_reference(path: str | None = None) -> tuple[np.ndarray, np.ndarra
     ``ya[45] = (ya[44] + ya[46]) / 2`` (в исходнике там стоит «25»).
     """
     path = path or _DEFAULT_MAPLE
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
     xa = np.array([int(v) for v in lines[0].split(",")], dtype=float)
     ya = np.array([float(v) for v in lines[1].split(",")], dtype=float)

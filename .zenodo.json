@@ -1,0 +1,28 @@
+{
+  "title": "plate-solver: изгиб и односторонний контакт упругих пластин произвольного очертания",
+  "description": "Комплекс программ: R-функции (Рвачёв) для геометрии, метод Ритца для изгиба, метод обобщённой реакции для одностороннего контакта со свободной границей, поправки уточнённой теории типа Кармана–Тимошенко–Нагди. Bending and unilateral contact of thin elastic plates of arbitrary planform (R-functions + Ritz + generalized reaction method + refined-theory corrections).",
+  "creators": [
+    {
+      "name": "Дуркин, А. А."
+    }
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "language": "rus",
+  "keywords": [
+    "plates",
+    "bending",
+    "contact problem",
+    "R-functions",
+    "generalized reaction method",
+    "biharmonic",
+    "computational mechanics"
+  ],
+  "related_identifiers": [
+    {
+      "relation": "isSupplementTo",
+      "identifier": "https://github.com/AnatoDu/plate-solver",
+      "resource_type": "software"
+    }
+  ]
+}

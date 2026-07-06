@@ -27,3 +27,24 @@ jobs:
         run: ruff check .
       - name: Тесты (без big и fem)
         run: pytest -m "not big and not fem" -q
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Сборка sdist + wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+      - name: Установка из sdist + смок
+        run: |
+          pip install dist/*.tar.gz
+          python -c "import plate_solver; print(plate_solver.__version__)"
+          plate-solve --version
+          plate-solve --new circle && test -f circle.toml
+          plate-solve circle.toml --check

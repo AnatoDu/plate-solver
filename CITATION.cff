@@ -5,12 +5,16 @@ abstract: >-
   Комплекс программ для математического моделирования изгиба и одностороннего
   контакта упругих пластин произвольного очертания по уточнённой теории типа
   Кармана–Тимошенко–Нагди с заданием границы R-функциями и решением контактных
-  задач методом обобщённой реакции.
+  задач методом обобщённой реакции. / plate-solver computes bending and
+  unilateral (Signorini) contact of thin elastic plates of arbitrary planform:
+  R-functions describe the geometry, a spectral Ritz method solves the bending,
+  the generalized reaction method resolves contact with a free boundary, with
+  refined-theory (Karman-Timoshenko-Naghdi type) corrections.
 authors:
   - family-names: "Дуркин"
     given-names: "А. А."
-version: 0.1.0
-date-released: 2026-07-05
+version: 0.3.0
+date-released: 2026-07-06
 repository-code: "https://github.com/AnatoDu/plate-solver"
 license: MIT
 keywords:
