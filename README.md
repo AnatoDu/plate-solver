@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AnatoDu/plate-solver/actions/workflows/ci.yml/badge.svg)](https://github.com/AnatoDu/plate-solver/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DOI](https://img.shields.io/badge/DOI-pending-lightgrey.svg)](CITATION.cff)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21218627.svg)](https://doi.org/10.5281/zenodo.21218627)
 
 *plate-solver computes bending and unilateral (Signorini) contact of thin
 elastic plates of arbitrary planform: R-functions (Rvachev) describe the
@@ -155,6 +155,18 @@ examples/            минимальные воспроизводимые пр�
 docs/NOTES.md        тонкости и подводные камни (журнал заметок)
 ```
 
-## Лицензия и цитирование
+## Цитирование
 
-MIT (см. `LICENSE`). Для ссылок — `CITATION.cff`.
+При использовании комплекса просьба ссылаться на архивную запись
+Zenodo. Для ссылки на проект в целом используйте concept DOI
+(всегда указывает на последнюю версию):
+**https://doi.org/10.5281/zenodo.21218627**
+
+Для ссылки на конкретную версию (0.3.1):
+https://doi.org/10.5281/zenodo.21218628
+
+Полные метаданные цитирования — в `CITATION.cff`.
+
+## Лицензия
+
+MIT (см. `LICENSE`).

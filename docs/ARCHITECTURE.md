@@ -1,5 +1,9 @@
 # Архитектура
 
+Обнародованный результат: [github.com/AnatoDu/plate-solver](https://github.com/AnatoDu/plate-solver),
+архивная запись Zenodo (постоянный идентификатор проекта, concept DOI):
+[10.5281/zenodo.21218627](https://doi.org/10.5281/zenodo.21218627).
+
 ## Слои (направление зависимостей — сверху вниз)
 
 1. **Постановка и CLI** — `problem` (валидатор case-файлов, `CaseError`),
