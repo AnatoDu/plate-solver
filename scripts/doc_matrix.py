@@ -95,7 +95,10 @@ def _read_all(paths) -> dict:
 
 
 def build_matrix() -> tuple[str, int]:
-    docs = _read_all(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md"])
+    # FEATURES.md исключён из пула «где описано»: само-ссылка делала
+    # генерацию неидемпотентной (результат зависел от прошлого файла)
+    docs = _read_all([q for q in (ROOT / "docs").glob("*.md")
+                      if q.name != "FEATURES.md"] + [ROOT / "README.md"])
     cases = _read_all(list((ROOT / "cases").rglob("*.toml")))
     usage = _read_all(list((ROOT / "examples").glob("*.py"))
                       + list((ROOT / "notebooks").glob("*.ipynb"))
