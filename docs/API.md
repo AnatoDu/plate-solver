@@ -33,7 +33,11 @@ print(res.w_max)
 - `Result` — скаляры (`w_max`, `scalars()`), поля на сетке (`w_grid`,
   `moments_on_grid()`, `faces_on_grid()` — w_top/w_bot/dh по NOTES §21),
   контакт (`contact`), выгрузка `save(dir)` (result.json + fields.npz
-  + фигуры), `save_fields(path)`.
+  + фигуры), `save_fields(path)`; `regrid(N)` — мгновенное уплотнение
+  сетки вывода без пересчёта (МОР не перезапускается).
+- Сетка вывода: `solve(problem, grid_n=…)` и
+  `Problem.with_discretization(p=…, Q=…, grid_n=…)` — программные
+  override'ы; CLI — флаг `--grid N`. На числа решения не влияют.
 - `build_domain(spec)` — GeometrySpec → `Domain` (реестр геометрий).
 
 ### config — численные параметры
@@ -82,6 +86,9 @@ print(res.w_max)
   комплементарность.
 - `contact.TwoPlateMOR` / `contact.TwoPlateResult` — контакт двух пластин
   (узлы — квадратура первой; пара ±r; без межсеточного переноса).
+- `contact.sample_fields_on_grid` / `contact.sample_pair_fields_on_grid` —
+  единая точка истины сэмплинга вывода на фоновую сетку (используется
+  и решателем, и `Result.regrid`).
 
 ```python
 from plate_solver import Config, viz

@@ -12,7 +12,7 @@ tests/test_doc_matrix.py).
 | bc.type | CASE_SCHEMA.md, FEATURES.md, README.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.bc | CASE_SCHEMA.md, FEATURES.md, THEORY.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.contact | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
-| case.discretization | CASE_SCHEMA.md, FEATURES.md, dispatch_flow.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
+| case.discretization | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.geometry | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.load | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.model | CASE_SCHEMA.md, FEATURES.md, dispatch_flow.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
@@ -46,7 +46,7 @@ tests/test_doc_matrix.py).
 | output.dir | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | output.figures | CASE_SCHEMA.md, FEATURES.md, README.md | golden_config.py, run_circle_1d_2d.py, run_clamped_circle.py |
 | plate2.bc | CASE_SCHEMA.md, FEATURES.md, THEORY.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
-| plate2.discretization | CASE_SCHEMA.md, FEATURES.md, dispatch_flow.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
+| plate2.discretization | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | plate2.geometry | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | plate2.load | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | plate2.model | CASE_SCHEMA.md, FEATURES.md, dispatch_flow.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
@@ -64,6 +64,7 @@ tests/test_doc_matrix.py).
 | plate-solve | `--check` | CASE_SCHEMA.md, FEATURES.md, README.md | doc_matrix.py, test_cli.py |
 | plate-solve | `--fig-format` | CASE_SCHEMA.md, FEATURES.md, README.md | test_stresses.py |
 | plate-solve | `--figures` | CASE_SCHEMA.md, FEATURES.md, README.md | test_stresses.py |
+| plate-solve | `--grid` | API.md, CASE_SCHEMA.md, README.md | test_regrid.py |
 | plate-solve | `--help` | FEATURES.md | FEATURES.md |
 | plate-solve | `--new` | CASE_SCHEMA.md, FEATURES.md, README.md | doc_matrix.py, test_cli.py |
 | plate-solve | `--out` | CASE_SCHEMA.md, FEATURES.md | doc_matrix.py, test_ci_cases.py, test_cli.py |
@@ -73,6 +74,7 @@ tests/test_doc_matrix.py).
 | plate-solve | `--version` | FEATURES.md, README.md | doc_matrix.py |
 | plate-verify | `--fig-format` | CASE_SCHEMA.md, FEATURES.md, README.md | test_stresses.py |
 | plate-verify | `--figures` | CASE_SCHEMA.md, FEATURES.md, README.md | test_stresses.py |
+| plate-verify | `--grid` | API.md, CASE_SCHEMA.md, README.md | test_regrid.py |
 | plate-verify | `--help` | FEATURES.md | FEATURES.md |
 | plate-verify | `--out` | CASE_SCHEMA.md, FEATURES.md | doc_matrix.py, test_ci_cases.py, test_cli.py |
 | plate-verify | `--surface` | CASE_SCHEMA.md, FEATURES.md, README.md | CASE_SCHEMA.md, FEATURES.md, README.md |
@@ -121,6 +123,8 @@ tests/test_doc_matrix.py).
 | contact | `ContactResult` | API.md, FEATURES.md | run_lshape_contact.py |
 | contact | `TwoPlateMOR` | API.md, ARCHITECTURE.md, FEATURES.md | test_two_plates.py |
 | contact | `TwoPlateResult` | API.md, FEATURES.md | __init__.py, contact.py, viz.py |
+| contact | `sample_fields_on_grid` | API.md | contact.py, dispatch.py |
+| contact | `sample_pair_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `solve_contact` | API.md, FEATURES.md, README.md | test_analytic_factory.py, test_face_deflection.py |
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, run_lshape_contact.py, run_stamp_1d.py |
 | dispatch | `build_domain` | API.md, FEATURES.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
