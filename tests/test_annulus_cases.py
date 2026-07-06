@@ -1,4 +1,4 @@
-"""Ступень «кольцо, изгиб» (фаза 2, P3.4): cases annulus_soft / annulus_clamped.
+"""Ступень «кольцо, изгиб»: cases annulus_soft / annulus_clamped.
 
 Допуск в case-файлах откалиброван протоколом «потолок 1e-2 → факт × 3»
 (TODO_PHASE2, автономный режим п. 1); факты калибровки — в PROGRESS.md.

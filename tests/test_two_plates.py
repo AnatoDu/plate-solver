@@ -1,9 +1,9 @@
-"""Контакт двух пластин (фаза 3, A4): тождества, смешанные закрепления, планформы.
+"""Контакт двух пластин: тождества, смешанные закрепления, планформы.
 
-Порядок ворот = порядок подзадач TODO: (a) равные планформы/soft/Δ=0;
+Порядок ворот: (a) равные планформы/soft/Δ=0;
 (b) clamped+soft и вырождение «жёсткая вторая»; (c) круг над кольцом.
 
-Отступление (журнал PROGRESS): при полном контакте УЗЛОВАЯ реакция
+Замечание: при полном контакте УЗЛОВАЯ реакция
 неединственна (стационарность фиксирует лишь проекцию ψᵀW(q₁−q₂−2r)=0,
 узлов M ≫ N базисных функций), поэтому континуальные потолки (a)
 проверяются на НЕПОДВИЖНОЙ ТОЧКЕ схемы: точное решение r ≡ (q₁−q₂)/2,
@@ -53,7 +53,7 @@ def test_plate2_schema():
     p = Problem.from_dict(d)
     assert p.contact.target == "plate2" and p.plate2.bc.type == "clamped"
     assert p.contact.gap == 0.0                       # Δ=0 — касание, допустимо
-    # [plate2] без target — ошибка; target без секции — ошибка; force — фаза 5
+    # [plate2] без target — ошибка; target без секции — ошибка; force — отложен
     bad = copy.deepcopy(d)
     bad["contact"]["target"] = "foundation"
     with pytest.raises(CaseError, match="plate2"):
@@ -65,7 +65,7 @@ def test_plate2_schema():
     bad3 = copy.deepcopy(d)
     bad3["contact"]["force"] = 0.5
     del bad3["contact"]["gap"]
-    with pytest.raises(CaseError, match="фаза 5"):
+    with pytest.raises(CaseError, match="направление развития"):
         Problem.from_dict(bad3)
 
 

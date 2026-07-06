@@ -1,4 +1,4 @@
-"""Контакт на кольце (фаза 2, P3.7): предельное тождество, инварианты, регресс.
+"""Контакт на кольце: предельное тождество, инварианты, регресс.
 
 Ворота, не требующие эталона: (а) gap_factor=2 ⇒ контакт не возникает —
 математическое тождество МОР; (б) инварианты с замороженными допусками
@@ -83,6 +83,6 @@ def test_gate_regression_baseline(contact_run):
     assert int((c.r_nodes > 0).sum()) == b["n_contact"]
     assert contact_run.w_max == pytest.approx(b["w_max"], rel=1e-9)
     assert contact_run.delta == pytest.approx(b["delta"], rel=1e-9)
-    # топологию зоны фиксируем (материал главы 4), порогом не гейтим
+    # топологию зоны фиксируем (наблюдение), порогом не гейтим
     n_comp = int(ndimage.label(c.contact_zone)[1])
     assert n_comp >= 1                                   # смысловой минимум

@@ -1,4 +1,4 @@
-"""Валидатор case-файлов (фаза 2, P0): валидные/невалидные случаи, тексты ошибок.
+"""Валидатор case-файлов: валидные/невалидные случаи, тексты ошибок.
 
 Каждая ошибка обязана быть человекочитаемой: «ключ: получено X, ожидалось Y,
 см. docs/CASE_SCHEMA.md#секция». Round-trip: TOML → Problem → to_config.
@@ -166,7 +166,7 @@ def test_contact_checks():
                   "ровно одно")
     _expect_error(_case(contact={"enabled": True, "gap": 1e-4, "stop": "energy"}),
                   "contact.stop", "dr | comp")
-    # контакт + защемление разрешён с фазы 3 (A3.3)
+    # контакт + защемление разрешён (A3.3)
     p = Problem.from_dict(_case(bc={"type": "clamped"},
                                 contact={"enabled": True, "gap_factor": 0.5}))
     assert p.contact.enabled and p.bc.type == "clamped"

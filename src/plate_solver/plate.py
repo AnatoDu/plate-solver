@@ -91,7 +91,7 @@ class PlateBending:
         Phi = self.basis.values(X, Y)
         return self.domain.omega(X, Y) * Phi
 
-    # -- протокол контакта (общий с ClampedPlate; фаза 3, A3.3) ------------ #
+    # -- протокол контакта (общий с ClampedPlate) -------------------------- #
     def w_at_quad(self, state) -> np.ndarray:
         """Прогиб в узлах квадратуры; state = (cM, cw) из :meth:`solve`."""
         return self.poisson.evaluate_at_quad(state[1])

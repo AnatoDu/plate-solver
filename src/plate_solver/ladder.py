@@ -306,7 +306,7 @@ def _basis_xy(basis, X, Y):
 
 
 def bending_moments_full(domain, basis, c, p_struct: int, D: float, nu: float, X, Y):
-    r"""Полный набор моментов ``(M_x, M_y, M_xy)`` RFM-решения (трек B, B1).
+    r"""Полный набор моментов ``(M_x, M_y, M_xy)`` RFM-решения.
 
     ``M_xy = −D(1−ν)·w_xy``; смешанная производная структуры ``w = ω^p·v``:
 

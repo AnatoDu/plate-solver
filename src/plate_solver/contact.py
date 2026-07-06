@@ -124,7 +124,7 @@ class ContactMOR:
             )
         self.stop = cfg.stop
         # Зазор: скаляр (путь v0.2, арифметика прежняя) ИЛИ поле Δ(x, y)
-        # значениями в узлах квадратуры (фаза 3, A1: неплоский штамп,
+        # значениями в узлах квадратуры (неплоский штамп,
         # криволинейное основание, ступени). Нормировка gain не меняется.
         gap_raw = cfg.Delta if gap is None else gap
         if np.ndim(gap_raw) == 0:
@@ -319,7 +319,7 @@ def solve_contact(
 
 
 # --------------------------------------------------------------------------- #
-#  Контакт двух пластин (фаза 3, A4)
+#  Контакт двух пластин
 # --------------------------------------------------------------------------- #
 @dataclass
 class TwoPlateResult:
@@ -349,7 +349,7 @@ class TwoPlateResult:
     cw2: np.ndarray                     # коэффициенты прогиба второй
     comp_residual: float = float("nan")
     gap_overshoot: float = float("nan")
-    w_ktn_nodes: np.ndarray | None = None   # КТН для пары отложен (фаза 5)
+    w_ktn_nodes: np.ndarray | None = None   # КТН для пары — направление развития
 
 
 class TwoPlateMOR:

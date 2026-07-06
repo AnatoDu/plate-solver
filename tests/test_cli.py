@@ -1,4 +1,4 @@
-"""Генератор шаблонов case-файлов (фаза 2, P0.4): plate-solve --new <kind>."""
+"""Генератор шаблонов case-файлов: plate-solve --new <kind>."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def test_main_new_and_exit_codes(tmp_path, capsys, monkeypatch):
 
 
 def test_cli_solve_verify_sweep_end_to_end(tmp_path, monkeypatch, capsys):
-    """P4.1+P4.2: решение case, verify (exit 0/1), свип с артефактами."""
+    """Решение case, verify (exit 0/1), свип с артефактами."""
     from plate_solver.cli import main_verify
 
     monkeypatch.chdir(tmp_path)

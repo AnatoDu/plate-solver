@@ -1,4 +1,4 @@
-"""Резолвер эталонов (фаза 2, P3.1): модельная согласованность, cross_1d, model_gap."""
+"""Резолвер эталонов: модельная согласованность, cross_1d, model_gap."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def test_circle_clamped_no_model_gap_row():
 
 
 def test_annulus_soft_references_small():
-    """Кольцо (малый Q): резолвер собирает analytic+1D+model_gap; сами ворота — P3.4."""
+    """Кольцо (малый Q): резолвер собирает analytic+1D+model_gap; сами ворота — в тестах кольца."""
     p = _problem(geometry={"kind": "annulus", "a": 1.0, "b": 0.4},
                  discretization={"p": 10, "Q": 256, "grid_n": 24},
                  verify={"reference": "analytic", "cross_1d": True, "tol": 5.0e-2,
@@ -59,7 +59,7 @@ def test_annulus_soft_references_small():
 
 
 def test_resolver_errors():
-    # с трека C прямоугольник/soft_hinge гейтится Навье — эталон существует
+    # прямоугольник/soft_hinge гейтится Навье — эталон существует
     refs = resolve_reference(_problem(geometry={"kind": "rectangle", "x1": 0.0,
                                                 "x2": 1.0, "y1": 0.0, "y2": 1.0},
                                       verify={"reference": "analytic",
@@ -84,7 +84,7 @@ def test_resolver_errors():
                                          "x0": 0.3, "y0": 0.0},
                                    verify={"reference": "analytic",
                                            "cross_1d": False}))
-    # сила в центре круга — эталон существует (P3.5)
+    # сила в центре круга — эталон существует
     refs = resolve_reference(_problem(load={"type": "point", "P": 1.0,
                                             "x0": 0.0, "y0": 0.0},
                                       verify={"reference": "analytic",
@@ -93,7 +93,7 @@ def test_resolver_errors():
 
 
 def test_fem_incompatibility_reported_before_skfem_requirement(monkeypatch):
-    """P0.2 фазы 3: несовместимость постановки объясняется ДО требования skfem.
+    """Несовместимость постановки объясняется ДО требования skfem.
 
     Имитация CI без extra fem (скрываем импорт skfem): несовместимый случай
     fem+compose обязан падать сообщением про compose, а совместимый

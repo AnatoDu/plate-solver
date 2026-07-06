@@ -29,7 +29,8 @@ from .config import Config
 
 _SCHEMA_DOC = "docs/CASE_SCHEMA.md"
 
-# Ограда compose-языка v0.2 (не расширять в этой фазе — TODO_PHASE2, п. 2).
+# Ограда compose-языка (зафиксирована в v0.2; расширение — только вместе
+# с пересмотром реестра ворот).
 COMPOSE_OPS = ("union", "intersect", "difference")
 COMPOSE_PRIMITIVES = ("circle", "rectangle")
 COMPOSE_MAX_DEPTH = 3
@@ -43,7 +44,7 @@ REFERENCES = ("analytic", "mms", "fem", "none")
 STOP_CRITERIA = ("dr", "comp")
 
 # Минимум узлов квадратуры в зоне (нагрузки или контакта) — защита от
-# «зоны без узлов»: интеграл по маске теряет смысл (P0.1/P0.2).
+# «зоны без узлов»: интеграл по маске теряет смысл.
 MIN_ZONE_NODES = 20
 
 
@@ -114,12 +115,12 @@ class GeometrySpec:
     y2: float | None = None
     side: float | None = None       # L: сторона
     cut: float | None = None        # L: вырез (0 < cut < side)
-    tree: dict | None = None        # compose: дерево операций (P1.2)
+    tree: dict | None = None        # compose: дерево операций
 
 
 @dataclass(frozen=True)
 class BCSpec:
-    """Закрепление края: один тип на всю границу или mixed (v0.3, трек C).
+    """Закрепление края: один тип на всю границу или mixed (v0.3).
 
     ``mixed`` (только kind=rectangle): ``sides`` — кортеж пар
     (сторона, тип), все четыре стороны x1|x2|y1|y2 со значениями
@@ -168,7 +169,7 @@ GAP_KINDS = ("const", "plane", "paraboloid", "steps")
 
 @dataclass(frozen=True)
 class GapSpec:
-    r"""Поле зазора Δ(x, y) (фаза 3, A1): секция ``[contact.gap]``.
+    r"""Поле зазора Δ(x, y): секция ``[contact.gap]``.
 
     * ``const``: Δ = value (алиас прежнего скалярного ``gap``);
     * ``plane``: Δ = a·x + b·y + c (наклонное основание);
@@ -538,7 +539,7 @@ def _parse_model(data) -> ModelSpec:
 
 
 def _parse_gap_field(data: dict) -> GapSpec:
-    """Секция ``[contact.gap]`` — поле зазора Δ(x, y) (фаза 3, A1.2)."""
+    """Секция ``[contact.gap]`` — поле зазора Δ(x, y)."""
     sec = "contact.gap"
     kind = data.get("kind")
     if kind not in GAP_KINDS:
@@ -695,11 +696,11 @@ def _validate_cross(p: Problem) -> None:
         if p.geometry.kind != "rectangle":
             _fail("bc.type", "mixed",
                   "kind = rectangle (смешанные КУ на произвольных R-областях — "
-                  "фаза 5)", "bc")
+                  "направление развития)", "bc")
         if p.contact.enabled:
             _fail("contact.enabled", True,
                   "false при bc.type = mixed (контакт при смешанных КУ — "
-                  "фаза 5)", "bc")
+                  "направление развития)", "bc")
         if p.model.theory == "ktn":
             _fail("model.theory", "ktn", "classic при bc.type = mixed (v0.3)", "bc")
     c = p.contact
@@ -711,12 +712,12 @@ def _validate_cross(p: Problem) -> None:
         if c.force is not None:
             _fail("contact.force", c.force,
                   "отсутствие force — силовое управление парой пластин "
-                  "отложено (фаза 5)", "plate2")
+                  "отложено (направление развития)", "plate2")
         theories = {p.model.theory,
                     p.plate2.model.theory if p.plate2.model is not None else "classic"}
         if theories != {"classic"}:
             _fail("model.theory", sorted(theories),
-                  "classic — КТН для пары пластин отложен (фаза 5)", "plate2")
+                  "classic — КТН для пары пластин отложен (направление развития)", "plate2")
         if c.gap is not None and c.gap < 0:
             _fail("contact.gap", c.gap, "число ≥ 0 (Δ=0 — касание пластин)",
                   "plate2")

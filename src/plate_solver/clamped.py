@@ -26,7 +26,7 @@ r"""clamped.py — изгиб ЖЁСТКО ЗАЩЕМЛЁННОЙ пластин
 
 где ``ψ_k = ω²·T_k``. Эйлер–Лагранж этой задачи — ИСТИННЫЙ бигармонический
 оператор ``D Δ²w = q`` с защемлением (без модельного упрощения шарнира). Ключевое
-следствие для доклада: на криволинейной границе (круг) и во входящем угле
+следствие: на криволинейной границе (круг) и во входящем угле
 (L-форма) расщепление КОРРЕКТНО — парадокс Сапонджяна–Бабушки есть свойство
 ШАРНИРНОГО опирания, при защемлении его НЕТ (NOTES.md §§8, 9).
 
@@ -81,7 +81,7 @@ class _OmegaHessian:
                 self._ev(self._wxx, X, Y), self._ev(self._wyy, X, Y))
 
     def fields_full(self, X, Y):
-        """-> (ω, ω_x, ω_y, ω_xx, ω_yy, ω_xy) — с СМЕШАННОЙ производной (трек B)."""
+        """-> (ω, ω_x, ω_y, ω_xx, ω_yy, ω_xy) — с СМЕШАННОЙ производной."""
         return (*self.fields(X, Y), self._ev(self._wxy, X, Y))
 
 
@@ -138,7 +138,7 @@ def _structure_laplacian(domain, basis, quad):
 def _structure_second_derivs(domain, basis, quad):
     r"""Все вторые производные структуры ψ = ω²T: (ψ, ψ_xx, ψ_yy, ψ_xy, W).
 
-    Нужны полной билинейной форме (трек C): ψ_ab = [ω²]_ab T + [ω²]_a T_b
+    Нужны полной билинейной форме: ψ_ab = [ω²]_ab T + [ω²]_a T_b
     + [ω²]_b T_a + ω² T_ab, где [ω²]_a = 2ωω_a, [ω²]_ab = 2(ω_aω_b + ωω_ab).
     """
     from .ladder import _basis_xy
@@ -170,7 +170,7 @@ def _structure_second_derivs(domain, basis, quad):
 
 
 def assemble_biharmonic_full(domain, basis, quad, nu: float):
-    r"""Полная билинейная форма изгиба (трек C, NOTES §20):
+    r"""Полная билинейная форма изгиба (NOTES §20):
 
     .. math:: a(w, v) = D\iint \big[\Delta w\,\Delta v - (1-\nu)
               (w_{xx} v_{yy} + w_{yy} v_{xx} - 2 w_{xy} v_{xy})\big]\, d\Omega
@@ -416,7 +416,7 @@ __all__ = [
 ]
 
 class MixedRectPlate:
-    r"""Смешанные КУ на прямоугольнике (трек C, v0.3): w = (∏ω_c²)(∏ω_h)·Φ.
+    r"""Смешанные КУ на прямоугольнике (v0.3): w = (∏ω_c²)(∏ω_h)·Φ.
 
     Стороны ``sides = {"x1": ..., "x2": ..., "y1": ..., "y2": ...}`` со
     значениями ``clamped`` (множитель ω² — зануляет w и ∂w/∂n) или ``hinge``
@@ -552,7 +552,7 @@ class MixedRectPlate:
         return float(np.max(np.abs(self.deflection(c, Xg[inside], Yg[inside]))))
 
     def moments_at(self, c, X, Y):
-        """(Mx, My, Mxy) mixed-структуры g·Φ в точках (Лейбниц по g; трек B/C)."""
+        """(Mx, My, Mxy) mixed-структуры g·Φ в точках (Лейбниц по g)."""
         from .ladder import _basis_xy
 
         c = np.asarray(c, float)

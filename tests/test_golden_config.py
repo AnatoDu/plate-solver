@@ -1,4 +1,4 @@
-"""Мост GoldenConfig → Config (P1.4): соответствие имён сведено в одном месте.
+"""Мост GoldenConfig → Config: соответствие имён сведено в одном месте.
 
 Проверяем, что to_config() воспроизводит лабораторный конфиг L-серии
 (бывший run_lshape_contact.lshape_lab_config) и что переименования
@@ -34,7 +34,7 @@ def test_to_config_circle_overrides():
 
 
 def test_gate_count_is_automatic():
-    """P1.5: число ворот в подписи golden считается pytest'ом, а не хардкодом."""
+    """Число ворот в подписи golden считается pytest'ом, а не хардкодом."""
     from run_golden import _count_gates
 
     n = _count_gates()

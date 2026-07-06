@@ -20,7 +20,7 @@ __pycache__/
 /data/
 figures/
 # results/ — рабочие выгрузки не коммитим, НО results/golden/ — замороженный
-# снимок golden (хеш-ворота фазы 2) — под контролем версий.
+# снимок golden (хеш-ворота) — под контролем версий.
 /results/*
 !/results/golden
 !/results/golden/**

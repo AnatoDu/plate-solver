@@ -1,6 +1,6 @@
 """cli.py — командная строка комплекса.
 
-v0.2, P0.4: генератор шаблонов case-файлов::
+v0.2: генератор шаблонов case-файлов::
 
     plate-solve --new circle|rectangle|L|annulus [--out путь.toml]
 
@@ -135,7 +135,7 @@ def _parse_for_selfcheck(text: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-#  Свип по дискретизации (P4.2): --sweep p=2:12:2 [--sweep Q=64:256:64]
+#  Свип по дискретизации: --sweep p=2:12:2 [--sweep Q=64:256:64]
 # --------------------------------------------------------------------------- #
 def _parse_sweep(spec: str) -> tuple[str, list[int]]:
     """Разобрать ``p=A:B:S`` / ``Q=A:B:S`` в (ключ, список значений)."""
@@ -186,7 +186,7 @@ def _sweep_rows(problem: Problem, sweeps: list[tuple[str, list[int]]],
 
 def _write_sweep_outputs(rows: list[dict], keys: list[str], out_dir: Path,
                          do_verify: bool) -> None:
-    """md + csv + png (semilogy rel против параметра) — формат под статью."""
+    """md + csv + png (semilogy rel против параметра) — публикационный формат."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cols = list(rows[0].keys())
     md = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
