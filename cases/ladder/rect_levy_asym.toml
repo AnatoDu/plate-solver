@@ -1,0 +1,50 @@
+# Ступень: прямоугольник, НЕСИММЕТРИЧНАЯ пара Леви — x-края шарнир,
+# y1 защемлён, y2 шарнир (S–C/S–H). Эталон: ряд Леви с полным набором
+# констант 4×4 на моду (фабрика, F4; экспоненциально нормированный базис).
+# Сравнение в центре. verify.tol заморожен «факт × 3»:
+#   факт p=12, Q=160: rel = 1.558e-8 → tol = 5.0e-8.
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "mixed"
+
+[[bc.sides]]
+side = "x1"
+type = "hinge"
+
+[[bc.sides]]
+side = "x2"
+type = "hinge"
+
+[[bc.sides]]
+side = "y1"
+type = "clamped"
+
+[[bc.sides]]
+side = "y2"
+type = "hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+h = 0.06
+
+[discretization]
+p = 12
+Q = 160
+grid_n = 48
+
+[verify]
+reference = "analytic"
+tol = 5.0e-8
+
+[output]
+dir = "results/ladder/rect_levy_asym"

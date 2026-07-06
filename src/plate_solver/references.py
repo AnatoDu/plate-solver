@@ -98,16 +98,26 @@ def _fail(key: str, got, expected: str, anchor: str = "verify") -> None:
 def _analytic_wmax(problem: Problem, cfg) -> float:
     g, bc, load = problem.geometry, problem.bc.type, problem.load
     if load.type == "point":
+        if g.kind == "rectangle":                     # фабрика: Навье-point (F4)
+            return _navier_factory_ref(problem, cfg)
         if g.kind != "circle" or (load.x0, load.y0) != (0.0, 0.0):
             _fail("verify.reference", "analytic",
-                  "point-эталон только для силы в ЦЕНТРЕ круга "
-                  "(x0 = y0 = 0); иначе — mms | fem | none")
+                  "point-эталон: сила в ЦЕНТРЕ круга (x0 = y0 = 0) или "
+                  "произвольная точка ПРЯМОУГОЛЬНИКА (ряд Навье); "
+                  "иначе — mms | fem | none")
         if bc == "clamped":
             return analytic.circle_point_clamped_wmax(g.a, load.P, cfg.D)
         return analytic.circle_point_soft_wmax(g.a, load.P, cfg.D)
+    if load.type == "patch":
+        if g.kind == "rectangle":                     # фабрика: Навье-patch (F4)
+            return _navier_factory_ref(problem, cfg)
+        _fail("verify.reference", "analytic",
+              "patch-эталон: только прямоугольник с прямоугольной зоной "
+              "(ряд Навье); иначе — mms | fem | none")
     if load.type != "uniform":
         _fail("verify.reference", "analytic",
-              "uniform | point в центре круга; для patch — mms | fem | none")
+              "uniform | patch/point на прямоугольнике | point в центре "
+              "круга; иначе — mms | fem | none")
     if g.kind == "circle":
         if bc == "clamped":
             return float(analytic.clamped_uniform_wmax(g.a, cfg.q0, cfg.D))
@@ -154,9 +164,56 @@ def _rect_analytic_wmax(problem: Problem, cfg) -> float:
             w = analytic.levy_rect_uniform(yc, xc, g.y1, g.y2, g.x1, g.x2,
                                            cfg.q0, cfg.D)
         return abs(float(w)), (xc, yc)
+    # фабрика (F4): НЕСИММЕТРИЧНЫЕ Леви-пары — hinge-пара по одной оси,
+    # кромки другой оси любые из {hinge, clamped} (симметричные — ручные)
+    from .analytic_auto import levy_solution
+
+    if (sides["x1"] == sides["x2"] == "hinge"
+            and {sides["y1"], sides["y2"]} <= {"hinge", "clamped"}):
+        sol = levy_solution(x1=g.x1, x2=g.x2, y1=g.y1, y2=g.y2, D=cfg.D,
+                            q0=cfg.q0, bc_y1=sides["y1"], bc_y2=sides["y2"])
+        return abs(float(sol.w(xc, yc))), (xc, yc)
+    if (sides["y1"] == sides["y2"] == "hinge"
+            and {sides["x1"], sides["x2"]} <= {"hinge", "clamped"}):
+        sol = levy_solution(x1=g.y1, x2=g.y2, y1=g.x1, y2=g.x2, D=cfg.D,
+                            q0=cfg.q0, bc_y1=sides["x1"], bc_y2=sides["x2"])
+        return abs(float(sol.w(yc, xc))), (xc, yc)
     _fail("verify.reference", "analytic",
-          "mixed: все hinge (Навье) или пары hinge/clamped по осям (Леви); "
+          "mixed: все hinge (Навье), пары hinge/clamped по осям (Леви) или "
+          "hinge-пара по одной оси + hinge/clamped кромки (Леви, фабрика); "
           "иначе — none | fem")
+
+
+def _navier_factory_ref(problem: Problem, cfg):
+    """Эталон фабрики: ряд Навье для patch | point на SSSS-прямоугольнике.
+
+    Требование КУ: soft_hinge (прямые края ≡ истинный шарнир, NOTES §8)
+    или mixed со всеми hinge. Сравнение — В ТОЧКЕ: центр зоны патча /
+    точка приложения силы (там прогиб максимален или близок к нему).
+    """
+    from .analytic_auto import navier_solution
+
+    g, bc, load = problem.geometry, problem.bc, problem.load
+    all_hinge = (bc.type == "mixed"
+                 and set(dict(bc.sides).values()) == {"hinge"})
+    if not (bc.type == "soft_hinge" or all_hinge):
+        _fail("verify.reference", "analytic",
+              "patch/point-эталон Навье: КУ soft_hinge или mixed все hinge")
+    if load.type == "patch":
+        z = load.zone
+        if z.kind != "rectangle":
+            _fail("verify.reference", "analytic",
+                  "patch-эталон Навье: только прямоугольная зона")
+        ld = {"type": "patch", "q0": cfg.q0, "zone": (z.x1, z.x2, z.y1, z.y2)}
+        pt = (0.5 * (z.x1 + z.x2), 0.5 * (z.y1 + z.y2))
+        tol = 1e-12
+    else:
+        ld = {"type": "point", "P": load.P, "x0": load.x0, "y0": load.y0}
+        pt = (load.x0, load.y0)
+        tol = 1e-6            # остаток ряда ~1/N²; много точнее базиса 2D
+    sol = navier_solution(x1=g.x1, x2=g.x2, y1=g.y1, y2=g.y2, D=cfg.D,
+                          load=ld, tol=tol)
+    return abs(float(sol.w(*pt))), pt
 
 
 def _model_gap_wmax(problem: Problem, cfg) -> float | None:
