@@ -42,7 +42,7 @@ tests/test_doc_matrix.py).
 | model.E | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_soft.toml, annulus_soft_contact.toml |
 | model.h | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | model.nu | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
-| model.theory | CASE_SCHEMA.md, FEATURES.md, README.md | test_dispatch.py, test_face_deflection.py, test_problem.py |
+| model.theory | CASE_SCHEMA.md, FEATURES.md, NOTES.md | test_dispatch.py, test_face_deflection.py, test_problem.py |
 | output.dir | API.md, CASE_SCHEMA.md, FEATURES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | output.figures | CASE_SCHEMA.md, FEATURES.md, README.md | golden_config.py, run_circle_1d_2d.py, run_clamped_circle.py |
 | plate2.bc | CASE_SCHEMA.md, FEATURES.md, THEORY.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |

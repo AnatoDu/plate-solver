@@ -200,23 +200,26 @@ class Result:
     def faces_on_grid(self):
         """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей (F3.7).
 
-        theory = ktn: по формулам NOTES §21 п. 1 (классическое прямое
-        интегрирование обжатия, согласованное с каноном §19):
-        w_bot = w + h_*²·Δw − h(3q⁺ + 13q⁻)/(32E), w_top = w + h_*²·Δw +
-        h(13q⁺ + 3q⁻)/(32E); Δw = −(Mx + My)/(D(1+ν)). theory = classic:
-        обжатие — атрибут уточнённой теории, обе лицевые ≡ срединной.
+        theory = ktn — КАНОН 21.1 (кинематика КТН, формулы кода, NOTES §21):
+        w_bot = u_c = ktn.contact_displacement(w, Δw, q⁺, q⁻) — прогиб
+        контактирующей (нижней) лицевой; Δw = −(Mx + My)/(D(1+ν)). Канон
+        выделяет формулой только контактирующую лицевую: w_top ≡ w
+        (срединная, без смешения канонов), dh = w_bot − w — каноническое
+        смещение контактирующей лицевой (в зоне контакта dh < 0).
+        theory = classic: обе лицевые ≡ срединной, dh ≡ 0. Классическое
+        3D-восстановление — независимая диагностика (NOTES §21.2).
         """
         if self.problem.model is None or self.problem.model.theory != "ktn":
             return self.w_grid.copy(), self.w_grid.copy(), \
                 np.zeros_like(self.w_grid)
+        from .ktn import KTNParams
+
         Mx, My, _ = self.moments_on_grid()
         q_top, q_bot = self._q_faces_on_grid()
-        h_, E_, nu_ = self.config.h, self.config.E, self.config.nu
-        lap = -(Mx + My) / (self.config.D * (1.0 + nu_))
-        hst2 = nu_ * h_**2 / (8.0 * (1.0 - nu_))
-        w_top = self.w_grid + hst2 * lap + h_ * (13 * q_top + 3 * q_bot) / (32 * E_)
-        w_bot = self.w_grid + hst2 * lap - h_ * (3 * q_top + 13 * q_bot) / (32 * E_)
-        return w_top, w_bot, w_bot - w_top
+        lap = -(Mx + My) / (self.config.D * (1.0 + self.config.nu))
+        kp = KTNParams.from_config(self.config)
+        w_bot = kp.contact_displacement(self.w_grid, lap, q_top, q_bot)
+        return self.w_grid.copy(), w_bot, w_bot - self.w_grid
 
     def save_fields(self, path) -> None:
         """fields.npz (версия схемы полей = 2): w, моменты, σ-шестёрка, контакт.
