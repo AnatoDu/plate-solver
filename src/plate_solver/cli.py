@@ -107,7 +107,9 @@ theory = "classic"       # classic | ktn (поправки Кармана–Ти
 [discretization]
 p = 10                   # степень Чебышёва по оси (N = (p+1)²)
 Q = 256                  # узлов квадратуры по оси (точность маски ~1/Q)
-# grid_n = 80            # фоновая сетка вывода
+grid_n = 80              # сетка вывода полей и графиков; на ТОЧНОСТЬ решения
+                         # НЕ влияет; увеличивайте для гладких картин
+                         # (кольцо: >= 96); на лету: --grid N или Result.regrid(N)
 
 {_VERIFY[kind]}
 
@@ -234,6 +236,8 @@ def _run_case(args, do_verify: bool) -> int:
     from .dispatch import solve as _solve
 
     problem = Problem.from_toml(args.case)
+    if getattr(args, "grid", None) is not None:
+        problem = problem.with_discretization(grid_n=args.grid)
     out_dir = Path(args.out) if args.out else Path(problem.output.dir)
 
     if args.sweep:
@@ -350,6 +354,9 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
                         help="форсировать output.figures = true (png 300 dpi + pdf)")
     parser.add_argument("--fig-format", metavar="png,pdf", default="png,pdf",
                         help="форматы фигур через запятую (по умолчанию png,pdf)")
+    parser.add_argument("--grid", type=int, metavar="N", default=None,
+                        help="сетка ВЫВОДА grid_n (полей и фигур); на числа "
+                             "решения не влияет; целое ≥ 2")
     parser.add_argument("--surface", choices=("mid", "top", "bottom"),
                         default="mid",
                         help="поверхность на w-фигуре: срединная (mid) или "

@@ -221,6 +221,71 @@ class Result:
         w_bot = kp.contact_displacement(self.w_grid, lap, q_top, q_bot)
         return self.w_grid.copy(), w_bot, w_bot - self.w_grid
 
+    def regrid(self, grid_n: int) -> Result:
+        """Мгновенное уплотнение сетки ВЫВОДА без пересчёта решения.
+
+        Все поля (w, моменты/σ через moments_on_grid, поверхности §21,
+        r_grid и зона) пере-оцениваются на новой сетке из удержанных в
+        памяти коэффициентов и узловой реакции; МОР НЕ перезапускается
+        (contact.iters и residual_history остаются исходными). Числа
+        решения (w_max, r_max, комплементарность) от grid_n не зависят —
+        grid-зависима только диагностика топологии зоны. Держатель
+        коэффициентов в result.json/fields.npz не пишется: у результата,
+        восстановленного из файла, перегридовка недоступна — пере-решите
+        постановку (`solve(problem, grid_n=…)`).
+        """
+        import copy as _copy
+        import dataclasses as _dc
+
+        if int(grid_n) < 2:
+            raise CaseError(f"regrid: получено grid_n = {grid_n}, "
+                            f"ожидалось целое ≥ 2, см. {_SCHEMA_DOC}#discretization")
+        grid_n = int(grid_n)
+        try:
+            solver = self._plate
+            c = self._c
+        except AttributeError:
+            raise RuntimeError(
+                "regrid недоступен: результат без держателя коэффициентов "
+                "(например, восстановлен из файла) — пере-решите постановку: "
+                "solve(problem, grid_n=…)") from None
+        cfg2 = _copy.copy(self.config)
+        cfg2.grid_n = grid_n
+        if self.contact is None:
+            Xg, Yg, W = _grid_fields(
+                solver.domain, cfg2,
+                lambda X, Y: solver.deflection(c, X, Y))
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=W)
+        elif hasattr(self.contact, "w2_grid"):            # пара пластин
+            from .contact import sample_pair_fields_on_grid
+
+            cres = self.contact
+            Xg, Yg, w1, w2, rg, zone = sample_pair_fields_on_grid(
+                cres.plate, cres.plate2, cres.cw, cres.cw2,
+                cres.r_nodes, grid_n)
+            new_c = _dc.replace(cres, Xg=Xg, Yg=Yg, w_grid=w1, w2_grid=w2,
+                                r_grid=rg, contact_zone=zone)
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=w1,
+                              contact=new_c)
+        else:
+            from .contact import sample_fields_on_grid
+
+            cres = self.contact
+            Xg, Yg, W, rg, zone = sample_fields_on_grid(
+                cres.plate, cres.cw, cres.r_nodes, grid_n)
+            new_c = _dc.replace(cres, Xg=Xg, Yg=Yg, w_grid=W, r_grid=rg,
+                                contact_zone=zone)
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=W,
+                              contact=new_c)
+        for ref in ("_plate_ref", "_c_ref", "_plate2_ref", "_cfg2_ref",
+                    "_force_calls", "_force_iters_total"):
+            try:
+                object.__setattr__(new, ref,
+                                   object.__getattribute__(self, ref))
+            except AttributeError:
+                pass
+        return new
+
     def save_fields(self, path) -> None:
         """fields.npz (версия схемы полей = 2): w, моменты, σ-шестёрка, контакт.
 
@@ -427,8 +492,15 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
 # --------------------------------------------------------------------------- #
 #  Диспетчер
 # --------------------------------------------------------------------------- #
-def solve(problem: Problem) -> Result:
-    """Решить постановку: маршрутизация по bc/contact/theory (см. докстринг модуля)."""
+def solve(problem: Problem, grid_n: int | None = None) -> Result:
+    """Решить постановку: маршрутизация по bc/contact/theory (см. докстринг модуля).
+
+    ``grid_n`` — программный override сетки ВЫВОДА (эквивалент
+    ``problem.with_discretization(grid_n=…)``): на числа решения не
+    влияет, меняет только фоновую сетку полей и фигур.
+    """
+    if grid_n is not None:
+        problem = problem.with_discretization(grid_n=grid_n)
     warnings: list[str] = []
     t0 = time.perf_counter()
     cfg = problem.to_config()
