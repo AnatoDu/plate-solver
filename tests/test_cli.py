@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from plate_solver.cli import _TEMPLATE_KINDS, main, template, write_template
 from plate_solver.problem import CaseError, Problem
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("kind", _TEMPLATE_KINDS)
@@ -95,3 +99,31 @@ def test_cli_ladder(tmp_path, monkeypatch, capsys):
     # сломанный case валит лестницу кодом 1, но сводка пишется
     (folder / "bad.toml").write_text("[geometry]\nkind = 'x'\n", encoding="utf-8")
     assert main_ladder([str(folder)]) == 1
+
+
+def test_check_only_validates(tmp_path, capsys):
+    """F2.9: --check валидирует и не считает (мгновенно, exit 0/1)."""
+    from plate_solver.cli import main
+
+    case = _ROOT / "cases" / "ci" / "circle_soft.toml"
+    assert main([str(case), "--check"]) == 0
+    bad = tmp_path / "bad.toml"
+    bad.write_text('[geometry]\nkind = "hexagon"\n', encoding="utf-8")
+    assert main([str(bad), "--check"]) == 1
+    err = capsys.readouterr().err
+    assert "ошибка" in err and "CASE_SCHEMA" in err   # диагностика валидатора
+
+
+def test_report_smoke(tmp_path):
+    """F2.10: --report — одностраничный md с постановкой/числами/verify."""
+    from plate_solver.cli import main
+
+    case = _ROOT / "cases" / "ci" / "rect_mms.toml"
+    out = tmp_path / "rep"
+    assert main([str(case), "--out", str(out), "--report"]) == 0
+    rp = out / "report.md"
+    assert rp.is_file()
+    txt = rp.read_text(encoding="utf-8")
+    assert "## Постановка" in txt and "## Сводные числа" in txt
+    assert "## Верификация" in txt and "PASS" in txt
+    assert "w_max" in txt

@@ -225,6 +225,9 @@ __all__ = [
     "plot_convergence",
     "plot_contact_summary",
     "plot_pair_summary",
+    "replot",
+    "surface3d",
+    "stress_maps",
 ]
 
 # --------------------------------------------------------------------------- #

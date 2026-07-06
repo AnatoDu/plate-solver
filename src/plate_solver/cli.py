@@ -273,15 +273,70 @@ def _run_case(args, do_verify: bool) -> int:
               f"r_max = {s['r_max']:.4e}, комплементарность {s['comp_residual']:.2e}")
     for w in res.warnings:
         print(f"предупреждение: {w}")
+    if getattr(args, "report", False):
+        rp = _write_report(args.case, res, out_dir)
+        print(f"отчёт: {rp}")
     print(f"результат: {path}")
     return 0
+
+
+def _write_report(case_path: str, res, out_dir: Path) -> Path:
+    """Одностраничный md-отчёт по кейсу (F2.10): «нажал — получил документ».
+
+    Состав: постановка листингом (исходный TOML), сводные числа
+    (Result.scalars), verify-таблица при наличии эталона, фигуры
+    относительными ссылками (если сохранены рядом).
+    """
+    lines = [f"# Отчёт: {Path(case_path).name}", ""]
+    lines += ["## Постановка", "", "```toml",
+              Path(case_path).read_text(encoding="utf-8").rstrip(), "```", ""]
+    lines += ["## Сводные числа", "", "| величина | значение |", "|---|---|"]
+    for k, v in res.scalars().items():
+        if v is None:
+            continue
+        val = f"{v:.6e}" if isinstance(v, float) else str(v)
+        lines.append(f"| {k} | {val} |")
+    lines.append("")
+    if res.problem.verify.reference != "none":
+        from .references import verify_result
+
+        rep = verify_result(res)
+        verdict = "PASS" if rep.ok else "FAIL"
+        lines += ["## Верификация", "", "```", rep.table(),
+                  f"допуск tol = {rep.tol:g}; вердикт: {verdict}", "```", ""]
+    figs = sorted(q.name for q in out_dir.glob("*.png"))
+    if figs:
+        lines += ["## Фигуры", ""]
+        lines += [f"![{f}]({f})" for f in figs]
+        lines.append("")
+    for w in res.warnings:
+        lines.append(f"> предупреждение: {w}")
+    out = out_dir / "report.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
 
 
 # --------------------------------------------------------------------------- #
 #  Точки входа
 # --------------------------------------------------------------------------- #
+_EXAMPLES = {
+    "plate-solve": """примеры:
+  plate-solve --new annulus            шаблон case-файла annulus.toml
+  plate-solve case.toml                решить: result.json + fields.npz
+  plate-solve case.toml --figures --report --out results/run1
+  plate-solve case.toml --check        только валидация (exit 0/1)
+  plate-solve case.toml --surface bottom --figures   прогиб нижней лицевой""",
+    "plate-verify": """примеры:
+  plate-verify case.toml               таблица эталонов, exit 0/1 по tol
+  plate-verify case.toml --sweep p=2:12:2      сходимость по p (md+csv+png)
+  plate-verify case.toml --sweep p=4:12:4 --sweep Q=64:256:64""",
+}
+
+
 def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description=descr)
+    parser = argparse.ArgumentParser(
+        prog=prog, description=descr, epilog=_EXAMPLES.get(prog),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("case", nargs="?", help="case-файл TOML (docs/CASE_SCHEMA.md)")
     parser.add_argument("--sweep", action="append", metavar="p=2:12:2",
                         help="свип по p или Q (можно оба — декартово произведение)")
@@ -295,6 +350,10 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
                         default="mid",
                         help="поверхность на w-фигуре: срединная (mid) или "
                              "лицевые top/bottom (theory=ktn, NOTES §21)")
+    from . import __version__
+
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__}")
     return parser
 
 
@@ -304,6 +363,14 @@ def main(argv: list[str] | None = None) -> int:
                                          "(геометрия+КУ+нагрузка -> Result).")
     parser.add_argument("--new", dest="new_kind", metavar="KIND",
                         help=f"создать шаблон case-файла: {' | '.join(_TEMPLATE_KINDS)}")
+    parser.add_argument("--check", action="store_true",
+                        help="только валидация постановки (схема + статические "
+                             "несовместимости), НИЧЕГО не считает; exit 0/1 — "
+                             "для пользовательских CI")
+    parser.add_argument("--report", action="store_true",
+                        help="одностраничный md-отчёт по кейсу (постановка, "
+                             "сводные числа, verify-таблица, фигуры) в каталог "
+                             "результата")
     args = parser.parse_args(argv)
     try:
         if args.new_kind is not None:
@@ -312,6 +379,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.case is None:
             parser.print_help()
+            return 0
+        if args.check:
+            Problem.from_toml(args.case)             # вся статика — валидатор
+            print(f"{args.case}: постановка валидна (схема v0.3)")
             return 0
         return _run_case(args, do_verify=False)
     except CaseError as e:
@@ -339,10 +410,16 @@ def main_ladder(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="plate-ladder",
         description="Прогнать каталог case-файлов (лестница верификации) и "
-                    "собрать сводный markdown-отчёт.")
+                    "собрать сводный markdown-отчёт.",
+        epilog="пример:\n  plate-ladder cases/ci --out ladder.md",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("directory", help="каталог с *.toml")
     parser.add_argument("--out", metavar="FILE", default=None,
                         help="файл отчёта (по умолчанию <каталог>/ladder_summary.md)")
+    from . import __version__
+
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
     folder = Path(args.directory)
     cases = sorted(folder.glob("*.toml"))
