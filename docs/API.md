@@ -33,7 +33,11 @@ print(res.w_max)
 - `Result` — скаляры (`w_max`, `scalars()`), поля на сетке (`w_grid`,
   `moments_on_grid()`, `faces_on_grid()` — w_top/w_bot/dh по NOTES §21),
   контакт (`contact`), выгрузка `save(dir)` (result.json + fields.npz
-  + фигуры), `save_fields(path)`.
+  + фигуры), `save_fields(path)`; `regrid(N)` — мгновенное уплотнение
+  сетки вывода без пересчёта (МОР не перезапускается).
+- Сетка вывода: `solve(problem, grid_n=…)` и
+  `Problem.with_discretization(p=…, Q=…, grid_n=…)` — программные
+  override'ы; CLI — флаг `--grid N`. На числа решения не влияют.
 - `build_domain(spec)` — GeometrySpec → `Domain` (реестр геометрий).
 
 ### config — численные параметры
@@ -82,6 +86,9 @@ print(res.w_max)
   комплементарность.
 - `contact.TwoPlateMOR` / `contact.TwoPlateResult` — контакт двух пластин
   (узлы — квадратура первой; пара ±r; без межсеточного переноса).
+- `contact.sample_fields_on_grid` / `contact.sample_pair_fields_on_grid` —
+  единая точка истины сэмплинга вывода на фоновую сетку (используется
+  и решателем, и `Result.regrid`).
 
 ```python
 from plate_solver import Config, viz
@@ -124,6 +131,47 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   (hinge|clamped|free кромки), `strip_solution` (1D-полоса),
   `axisym_contact_solution` (замкнутый контакт круг+основание),
   `CertifiedSolution`, `FactoryError`.
+  Копируемые примеры (исполняются тестом `tests/test_api_examples.py`,
+  протухнуть молча не могут):
+
+```python
+# кольцо: разные КУ на кромках, полиномиальная нагрузка q(r) = q0 + q2·r²
+import numpy as np
+from plate_solver.analytic_auto import axisym_solution
+
+sol = axisym_solution(a=1.0, b=0.4, bc_outer="clamped", bc_inner="soft",
+                      D=100.0, nu=0.3, q_coeffs=(4.0, 0.0, 1.5))
+print("w(r=0.7):", float(sol.w(0.7, 0.0)))
+print("сертификат:", max(abs(v) for v in sol.certificate.values()) < 1e-10)
+
+# круг с СИЛОЙ в центре (q_coeffs опускаем, задаём P)
+sol_p = axisym_solution(a=1.0, bc_outer="clamped", D=100.0, nu=0.3, P=5.0)
+print("w(0) при силе:", float(sol_p.w(0.0, 0.0)))
+```
+
+```python
+# ряд Леви: x-края шарнир; y-кромки любые из hinge|clamped|free
+# (nu обязателен при free — естественные условия зависят от ν)
+from plate_solver.analytic_auto import levy_solution
+
+sfsf = levy_solution(x1=0.0, x2=1.0, y1=0.0, y2=1.0, D=100.0, q0=4.0,
+                     bc_y1="free", bc_y2="free", nu=0.3)
+print("w в центре:", float(sfsf.w(0.5, 0.5)))
+print("w на свободной кромке:", float(sfsf.w(0.5, 0.0)))
+```
+
+```python
+# замкнутый контакт: круг (мягкий шарнир) над плоским основанием с зазором
+from plate_solver.analytic_auto import axisym_contact_solution
+
+D = 100.0
+w_free0 = 3 * 4.0 * 1.0**4 / (64 * D)          # прогиб центра без контакта
+ref = axisym_contact_solution(a=1.0, D=D, q0=4.0, gap=0.5 * w_free0)
+print("радиус зоны c:", ref.meta["c"])
+print("кольцевая реакция P_ring:", ref.meta["P_ring"])
+print("сертификат пройден:", all(abs(v) <= 1e-8
+                                 for v in ref.certificate.values()))
+```
 - `ladder` — верификационная лестница: 1D-полоса (`strip_hinge_exact`,
   `strip_hinge_wmax`, `strip_clamped_exact`, `strip_clamped_wmax`,
   `Strip1DResult`, `solve_strip_1d`), синус-нагрузка (`rect_sin_load`,

@@ -23,9 +23,9 @@ from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 from .problem import CaseError, Problem
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
-#: фасад (F6.2): имя → модуль; секции — комментариями
+#: фасад: имя → модуль; секции — комментариями
 _FACADE: dict[str, str] = {
     # -- постановка и диспетчер ------------------------------------------- #
     "solve": "dispatch",

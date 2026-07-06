@@ -324,6 +324,27 @@ class Problem:
         return problem
 
     # -- мост к лабораторному Config -------------------------------------- #
+    def with_discretization(self, p: int | None = None, Q: int | None = None,
+                            grid_n: int | None = None) -> Problem:
+        """Копия постановки с заменой параметров дискретизации.
+
+        Удобство циклов подбора (ноутбуки) и override сетки вывода:
+        незаданные аргументы наследуются от текущей постановки; значения
+        проходят тот же валидатор, что и секция [discretization]
+        case-файла (p ≥ 1, Q ≥ 8, grid_n ≥ 2). Сетка вывода grid_n на
+        числа решения не влияет.
+        """
+        from dataclasses import replace as _replace
+
+        d = self.discretization
+        raw: dict = {}
+        for key, cur, new in (("p", d.p, p), ("Q", d.Q, Q),
+                              ("grid_n", d.grid_n, grid_n)):
+            val = cur if new is None else new
+            if val is not None:
+                raw[key] = val
+        return _replace(self, discretization=_parse_discretization(raw))
+
     def to_config(self) -> Config:
         """Построить Config; None-поля Problem наследуют дефолты Config.
 
@@ -491,7 +512,7 @@ def _parse_bc(data) -> BCSpec:
         sides[side] = st
     if set(sides) != {"x1", "x2", "y1", "y2"}:
         _fail("bc.sides", sorted(sides), "все четыре стороны x1, x2, y1, y2", "bc")
-    # Правило жёстких смещений (F10.1): кинематические условия обязаны
+    # Правило жёстких смещений: кинематические условия обязаны
     # уничтожать ядро {1, x, y}. Достаточно ≥ 1 clamped (линейная функция,
     # зануляющаяся на прямой ВМЕСТЕ с нормальной производной, ≡ 0) ЛИБО
     # ≥ 2 hinge (линейная функция, зануляющаяся на двух РАЗЛИЧНЫХ прямых —

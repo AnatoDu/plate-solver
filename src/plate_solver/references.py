@@ -98,7 +98,7 @@ def _fail(key: str, got, expected: str, anchor: str = "verify") -> None:
 def _analytic_wmax(problem: Problem, cfg) -> float:
     g, bc, load = problem.geometry, problem.bc.type, problem.load
     if load.type == "point":
-        if g.kind == "rectangle":                     # фабрика: Навье-point (F4)
+        if g.kind == "rectangle":                     # фабрика: Навье-point
             return _navier_factory_ref(problem, cfg)
         if g.kind != "circle" or (load.x0, load.y0) != (0.0, 0.0):
             _fail("verify.reference", "analytic",
@@ -109,7 +109,7 @@ def _analytic_wmax(problem: Problem, cfg) -> float:
             return analytic.circle_point_clamped_wmax(g.a, load.P, cfg.D)
         return analytic.circle_point_soft_wmax(g.a, load.P, cfg.D)
     if load.type == "patch":
-        if g.kind == "rectangle":                     # фабрика: Навье-patch (F4)
+        if g.kind == "rectangle":                     # фабрика: Навье-patch
             return _navier_factory_ref(problem, cfg)
         _fail("verify.reference", "analytic",
               "patch-эталон: только прямоугольник с прямоугольной зоной "
@@ -164,7 +164,7 @@ def _rect_analytic_wmax(problem: Problem, cfg) -> float:
             w = analytic.levy_rect_uniform(yc, xc, g.y1, g.y2, g.x1, g.x2,
                                            cfg.q0, cfg.D)
         return abs(float(w)), (xc, yc)
-    # фабрика (F4): НЕСИММЕТРИЧНЫЕ Леви-пары — hinge-пара по одной оси,
+    # фабрика: НЕСИММЕТРИЧНЫЕ Леви-пары — hinge-пара по одной оси,
     # кромки другой оси любые из {hinge, clamped} (симметричные — ручные)
     from .analytic_auto import levy_solution
 
@@ -352,7 +352,7 @@ def _fem_references(problem: Problem, cfg) -> list[Reference]:
     if bc == "clamped" and g.kind not in ("circle", "rectangle", "L", "annulus"):
         _fail("verify.reference", "fem",
               "circle | rectangle | L | annulus (для compose — mms | none)")
-    # mixed (в т.ч. free-стороны, F10.4): прямоугольник гарантирован
+    # mixed (в т.ч. free-стороны): прямоугольник гарантирован
     # валидатором; Кирхгоф (Морли) со сторонами по типам
     try:
         import skfem  # noqa: F401

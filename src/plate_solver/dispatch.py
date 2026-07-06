@@ -127,7 +127,7 @@ class Result:
         """Записать result.json, fields.npz (+ фигуры при output.figures).
 
         ``surface`` — какую поверхность рисовать на w-фигуре:
-        ``mid`` | ``top`` | ``bottom`` (лицевые — NOTES §21, F3.7).
+        ``mid`` | ``top`` | ``bottom`` (лицевые — NOTES §21).
         """
         out = Path(out_dir if out_dir is not None else self.problem.output.dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -139,7 +139,7 @@ class Result:
             "timings": self.timings,
             "provenance": _provenance(),
         }
-        # Строгий JSON (F0.3): NaN не входит в стандарт — метрики, не
+        # Строгий JSON: NaN не входит в стандарт — метрики, не
         # определённые на пустой зоне (gap_overshoot и т.п.), пишутся null.
         (out / "result.json").write_text(
             json.dumps(_sanitize_nan(payload), ensure_ascii=False, indent=2,
@@ -198,7 +198,7 @@ class Result:
         return q_top, q_bot
 
     def faces_on_grid(self):
-        """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей (F3.7).
+        """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей.
 
         theory = ktn — КАНОН 21.1 (кинематика КТН, формулы кода, NOTES §21):
         w_bot = u_c = ktn.contact_displacement(w, Δw, q⁺, q⁻) — прогиб
@@ -220,6 +220,71 @@ class Result:
         kp = KTNParams.from_config(self.config)
         w_bot = kp.contact_displacement(self.w_grid, lap, q_top, q_bot)
         return self.w_grid.copy(), w_bot, w_bot - self.w_grid
+
+    def regrid(self, grid_n: int) -> Result:
+        """Мгновенное уплотнение сетки ВЫВОДА без пересчёта решения.
+
+        Все поля (w, моменты/σ через moments_on_grid, поверхности §21,
+        r_grid и зона) пере-оцениваются на новой сетке из удержанных в
+        памяти коэффициентов и узловой реакции; МОР НЕ перезапускается
+        (contact.iters и residual_history остаются исходными). Числа
+        решения (w_max, r_max, комплементарность) от grid_n не зависят —
+        grid-зависима только диагностика топологии зоны. Держатель
+        коэффициентов в result.json/fields.npz не пишется: у результата,
+        восстановленного из файла, перегридовка недоступна — пере-решите
+        постановку (`solve(problem, grid_n=…)`).
+        """
+        import copy as _copy
+        import dataclasses as _dc
+
+        if int(grid_n) < 2:
+            raise CaseError(f"regrid: получено grid_n = {grid_n}, "
+                            f"ожидалось целое ≥ 2, см. {_SCHEMA_DOC}#discretization")
+        grid_n = int(grid_n)
+        try:
+            solver = self._plate
+            c = self._c
+        except AttributeError:
+            raise RuntimeError(
+                "regrid недоступен: результат без держателя коэффициентов "
+                "(например, восстановлен из файла) — пере-решите постановку: "
+                "solve(problem, grid_n=…)") from None
+        cfg2 = _copy.copy(self.config)
+        cfg2.grid_n = grid_n
+        if self.contact is None:
+            Xg, Yg, W = _grid_fields(
+                solver.domain, cfg2,
+                lambda X, Y: solver.deflection(c, X, Y))
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=W)
+        elif hasattr(self.contact, "w2_grid"):            # пара пластин
+            from .contact import sample_pair_fields_on_grid
+
+            cres = self.contact
+            Xg, Yg, w1, w2, rg, zone = sample_pair_fields_on_grid(
+                cres.plate, cres.plate2, cres.cw, cres.cw2,
+                cres.r_nodes, grid_n)
+            new_c = _dc.replace(cres, Xg=Xg, Yg=Yg, w_grid=w1, w2_grid=w2,
+                                r_grid=rg, contact_zone=zone)
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=w1,
+                              contact=new_c)
+        else:
+            from .contact import sample_fields_on_grid
+
+            cres = self.contact
+            Xg, Yg, W, rg, zone = sample_fields_on_grid(
+                cres.plate, cres.cw, cres.r_nodes, grid_n)
+            new_c = _dc.replace(cres, Xg=Xg, Yg=Yg, w_grid=W, r_grid=rg,
+                                contact_zone=zone)
+            new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=W,
+                              contact=new_c)
+        for ref in ("_plate_ref", "_c_ref", "_plate2_ref", "_cfg2_ref",
+                    "_force_calls", "_force_iters_total"):
+            try:
+                object.__setattr__(new, ref,
+                                   object.__getattribute__(self, ref))
+            except AttributeError:
+                pass
+        return new
 
     def save_fields(self, path) -> None:
         """fields.npz (версия схемы полей = 2): w, моменты, σ-шестёрка, контакт.
@@ -257,7 +322,7 @@ class Result:
         np.savez_compressed(path, **payload)
 
     def _second_plate_fields(self) -> dict:
-        """Моменты и σ-шестёрка НИЖНЕЙ пластины пары (F3.5б, канон §19).
+        """Моменты и σ-шестёрка НИЖНЕЙ пластины пары (канон §19).
 
         Реакция взаимодействия r приходит на ВЕРХНЮЮ лицевую нижней
         пластины: q⁺₂ = r, q⁻₂ = 0 (основания под второй нет).
@@ -301,7 +366,7 @@ class Result:
                 old.replace(new)
         if self.contact is not None:
             dest = str(out / f"{stem}_contact_summary.png")
-            if hasattr(self.contact, "w2_grid"):        # пара пластин (F0.2)
+            if hasattr(self.contact, "w2_grid"):        # пара пластин
                 viz.plot_pair_summary(self.contact, save=dest)
             else:
                 viz.plot_contact_summary(self.config, self.contact, save=dest)
@@ -427,8 +492,15 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
 # --------------------------------------------------------------------------- #
 #  Диспетчер
 # --------------------------------------------------------------------------- #
-def solve(problem: Problem) -> Result:
-    """Решить постановку: маршрутизация по bc/contact/theory (см. докстринг модуля)."""
+def solve(problem: Problem, grid_n: int | None = None) -> Result:
+    """Решить постановку: маршрутизация по bc/contact/theory (см. докстринг модуля).
+
+    ``grid_n`` — программный override сетки ВЫВОДА (эквивалент
+    ``problem.with_discretization(grid_n=…)``): на числа решения не
+    влияет, меняет только фоновую сетку полей и фигур.
+    """
+    if grid_n is not None:
+        problem = problem.with_discretization(grid_n=grid_n)
     warnings: list[str] = []
     t0 = time.perf_counter()
     cfg = problem.to_config()

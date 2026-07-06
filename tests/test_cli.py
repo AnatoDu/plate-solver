@@ -102,7 +102,7 @@ def test_cli_ladder(tmp_path, monkeypatch, capsys):
 
 
 def test_check_only_validates(tmp_path, capsys):
-    """F2.9: --check валидирует и не считает (мгновенно, exit 0/1)."""
+    """--check валидирует и не считает (мгновенно, exit 0/1)."""
     from plate_solver.cli import main
 
     case = _ROOT / "cases" / "ci" / "circle_soft.toml"
@@ -115,7 +115,7 @@ def test_check_only_validates(tmp_path, capsys):
 
 
 def test_report_smoke(tmp_path):
-    """F2.10: --report — одностраничный md с постановкой/числами/verify."""
+    """--report — одностраничный md с постановкой/числами/verify."""
     from plate_solver.cli import main
 
     case = _ROOT / "cases" / "ci" / "rect_mms.toml"

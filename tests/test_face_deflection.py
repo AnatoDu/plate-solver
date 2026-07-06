@@ -1,6 +1,6 @@
 """Прогиб лицевых поверхностей (NOTES §21): вывод, сверка канонов, тождества.
 
-РЕШЕНИЕ F3.2 (канон пакета): контактная кинематика — КТН (NOTES §21.1,
+РЕШЕНИЕ АВТОРА (канон пакета): контактная кинематика — КТН (NOTES §21.1,
 формулы кода); 3D-восстановление (§21.2) — независимая диагностика.
 т1–т5 — символика восстановления (sympy): профиль σ_z, коэффициенты,
 тождество кривизны с кинематикой КТН (подтверждает поверхность и знаки
@@ -95,7 +95,7 @@ def test_t6_freeze_divergence_with_ktn_kinematics():
     """т6: разности q,r-членов восстановления (§21.2) и канона КТН (§21.1).
 
     Точные символьные Δb_q, Δb_r — ПОСТОЯННЫЕ ворота на оба вывода
-    (решение F3.2: канон — КТН; восстановление — диагностика в пределах
+    (решение автора: канон — КТН; восстановление — диагностика в пределах
     O(h²)-точности теории). Изменение ЛЮБОЙ из сторон роняет тест.
     """
     mu_ = E / (2 * (1 + nu))
@@ -115,7 +115,7 @@ def test_t6_freeze_divergence_with_ktn_kinematics():
 
 
 def test_t7_solver_path_identity_and_classic():
-    """т7 (F3.3): ручной пересчёт u_c по первоисточнику ≡ ktn.py (1e-12);
+    """т7: ручной пересчёт u_c по первоисточнику ≡ ktn.py (1e-12);
     классика — смещение контакта ≡ w (ContactMOR._contact_disp)."""
     from plate_solver import geometry
     from plate_solver.config import Config
@@ -157,7 +157,7 @@ def test_t7_solver_path_identity_and_classic():
 
 
 def test_t7b_alias_w_face_bottom():
-    """F3.3: имя w_face_bottom — документированный синоним contact_displacement."""
+    """Имя w_face_bottom — документированный синоним contact_displacement."""
     from plate_solver.ktn import KTNParams
 
     kp = KTNParams(E=100.0, nu=0.3, h=0.1)
@@ -169,7 +169,7 @@ def test_t7b_alias_w_face_bottom():
 
 
 def test_pair_ktn_rejected_with_meaning(tmp_path):
-    """F3.5(а): ktn + plate2 отклоняется с пояснением про срединные плоскости."""
+    """ktn + plate2 отклоняется с пояснением про срединные плоскости."""
     from plate_solver.problem import CaseError, Problem
 
     d = {
@@ -188,7 +188,7 @@ def test_pair_ktn_rejected_with_meaning(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#  Поля поверхностей (F3.7) и σ второй пластины (F3.5б)
+#  Поля поверхностей и σ второй пластины
 # --------------------------------------------------------------------------- #
 from pathlib import Path  # noqa: E402
 
@@ -212,7 +212,7 @@ def _ktn_stamp_problem():
 
 
 def test_t8_classic_faces_identical(tmp_path):
-    """F3.7-ворота: classic ⇒ w_top ≡ w_mid ≡ w_bot (1e-14) и dh ≡ 0."""
+    """Ворота полей поверхностей: classic ⇒ w_top ≡ w_mid ≡ w_bot (1e-14) и dh ≡ 0."""
     from plate_solver.dispatch import solve
     from plate_solver.problem import Problem
 
@@ -226,7 +226,7 @@ def test_t8_classic_faces_identical(tmp_path):
 
 
 def test_t9_ktn_dh_sign_and_profile_regression():
-    """F3.7-ворота (ktn, L-серия; КАНОН 21.1): dh = u_c − w < 0 в зоне
+    """Ворота полей поверхностей (ktn, L-серия; КАНОН 21.1): dh = u_c − w < 0 в зоне
     (контактирующая лицевая идёт к основанию); пик |dh| — в зоне;
     профиль dh через зону — регресс в baselines."""
     import json
@@ -266,7 +266,7 @@ def test_t9_ktn_dh_sign_and_profile_regression():
 
 
 def test_pair_fields_second_plate_canon(tmp_path):
-    """F3.5(б): npz пары — обе шестёрки σ; канон §19 у второй: q⁺₂ = r, q⁻₂ = 0."""
+    """npz пары — обе шестёрки σ; канон §19 у второй: q⁺₂ = r, q⁻₂ = 0."""
     from plate_solver.dispatch import solve
     from plate_solver.problem import Problem
 

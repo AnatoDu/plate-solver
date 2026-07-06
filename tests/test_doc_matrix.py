@@ -1,4 +1,4 @@
-"""Ворота матрицы возможностей (F2.1) и смок API-сирот.
+"""Ворота матрицы возможностей и смок API-сирот.
 
 FEATURES.md обязан быть актуален (перегенерация не меняет файл) и БЕЗ
 пустых клеток: каждая возможность описана и покрыта. Смоки ниже дают
@@ -70,7 +70,7 @@ def test_rect_sin_exact_consistency():
 
 
 def test_every_schema_key_documented_in_case_schema():
-    """F2.2-ворота: каждый ключ problem.py упомянут в docs/CASE_SCHEMA.md."""
+    """Ворота полноты схемы: каждый ключ problem.py упомянут в docs/CASE_SCHEMA.md."""
     from doc_matrix import schema_keys
 
     schema = (_ROOT / "docs" / "CASE_SCHEMA.md").read_text(encoding="utf-8")

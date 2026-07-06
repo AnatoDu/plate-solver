@@ -196,7 +196,7 @@ def test_result_save_json(tmp_path):
 
 
 def test_no_touch_contact_block_present_and_strict_json(tmp_path):
-    """F0.3: касания нет (Δ ≫ w_free) — contact-блок ЕСТЬ, JSON строгий.
+    """Касания нет (Δ ≫ w_free) — contact-блок ЕСТЬ, JSON строгий.
 
     Пустая зона: r ≡ 0, converged, n_contact = 0; неопределённые на пустой
     зоне метрики (gap_overshoot) сериализуются null, не NaN (json строгий:

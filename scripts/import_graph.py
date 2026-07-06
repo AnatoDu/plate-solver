@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""import_graph.py — mermaid-граф внутренних импортов пакета (F2.4).
+"""import_graph.py — mermaid-граф внутренних импортов пакета.
 
 Печатает блок ``flowchart TD`` по фактическим ``from .X import`` /
 ``import plate_solver.X`` в src/plate_solver/*.py. Используется для

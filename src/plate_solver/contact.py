@@ -47,6 +47,9 @@ class ContactResult:
     ----------
     Xg, Yg : координаты фоновой сетки grid_n × grid_n (meshgrid).
     w_grid, r_grid : прогиб и реакция на сетке (NaN вне Ω) — для вывода.
+        Сетка (grid_n) влияет ТОЛЬКО на вывод; grid-зависима лишь
+        диагностика топологии зоны (число связных компонент считается по
+        сетке): при сравнении топологий фиксируйте grid_n.
     contact_zone : булева маска сетки, где реакция активна (r > 0 внутри Ω).
     r_nodes, w_nodes : реакция и прогиб в узлах квадратуры (источник истины).
     iters : число выполненных итераций МОР.
@@ -280,21 +283,8 @@ class ContactMOR:
     # -- вывод на сетку ------------------------------------------------- #
     def _package(self, r, w, cw, iters, converged, hist, peak_xy, w_ktn=None,
                  comp_residual=float("nan"), gap_overshoot=float("nan")) -> ContactResult:
-        from scipy.interpolate import griddata
-
-        cfg, dom, q = self.cfg, self.plate.domain, self.plate.quad
-        x0, x1, y0, y1 = dom.bbox
-        gx = np.linspace(x0, x1, cfg.grid_n)
-        gy = np.linspace(y0, y1, cfg.grid_n)
-        Xg, Yg = np.meshgrid(gx, gy)
-        inside = dom.omega(Xg, Yg) > 0.0
-
-        w_grid = np.full(Xg.shape, np.nan)
-        w_grid[inside] = self.plate.deflection(cw, Xg[inside], Yg[inside])
-        # Реакция известна в узлах квадратуры → интерполируем на сетку (только вывод).
-        r_grid = griddata((q.x, q.y), r, (Xg, Yg), method="linear", fill_value=0.0)
-        r_grid[~inside] = np.nan
-        contact_zone = inside & (np.nan_to_num(r_grid) > 0.0)
+        Xg, Yg, w_grid, r_grid, contact_zone = sample_fields_on_grid(
+            self.plate, cw, r, self.cfg.grid_n)
 
         return ContactResult(
             Xg=Xg, Yg=Yg, w_grid=w_grid, r_grid=r_grid, contact_zone=contact_zone,
@@ -302,6 +292,55 @@ class ContactMOR:
             residual_history=hist, peak_xy=peak_xy, plate=self.plate, cw=cw,
             w_ktn_nodes=w_ktn, comp_residual=comp_residual, gap_overshoot=gap_overshoot,
         )
+
+
+
+def sample_fields_on_grid(plate, cw, r_nodes, grid_n: int):
+    """(Xg, Yg, w_grid, r_grid, zone) — сэмплинг ВЫВОДА на фоновую сетку.
+
+    Единственная точка истины для solve и Result.regrid: одна и та же
+    последовательность операций даёт побайтово воспроизводимые поля.
+    Реакция известна в узлах квадратуры — на сетку интерполируется
+    ТОЛЬКО для вывода (числа решения от grid_n не зависят).
+    """
+    from scipy.interpolate import griddata
+
+    dom, q = plate.domain, plate.quad
+    x0, x1, y0, y1 = dom.bbox
+    gx = np.linspace(x0, x1, grid_n)
+    gy = np.linspace(y0, y1, grid_n)
+    Xg, Yg = np.meshgrid(gx, gy)
+    inside = dom.omega(Xg, Yg) > 0.0
+    w_grid = np.full(Xg.shape, np.nan)
+    w_grid[inside] = plate.deflection(cw, Xg[inside], Yg[inside])
+    r_grid = griddata((q.x, q.y), r_nodes, (Xg, Yg), method="linear",
+                      fill_value=0.0)
+    r_grid[~inside] = np.nan
+    contact_zone = inside & (np.nan_to_num(r_grid) > 0.0)
+    return Xg, Yg, w_grid, r_grid, contact_zone
+
+
+def sample_pair_fields_on_grid(plate1, plate2, cw1, cw2, r_nodes, grid_n: int):
+    """(Xg, Yg, w1, w2, r, zone) — сэмплинг вывода ПАРЫ пластин (см. выше)."""
+    from scipy.interpolate import griddata
+
+    q1 = plate1.quad
+    dom1, dom2 = plate1.domain, plate2.domain
+    x0, x1, y0, y1 = dom1.bbox
+    gx = np.linspace(x0, x1, grid_n)
+    gy = np.linspace(y0, y1, grid_n)
+    Xg, Yg = np.meshgrid(gx, gy)
+    in1 = dom1.omega(Xg, Yg) > 0.0
+    in2 = dom2.omega(Xg, Yg) > 0.0
+    w_grid = np.full(Xg.shape, np.nan)
+    w_grid[in1] = plate1.deflection(cw1, Xg[in1], Yg[in1])
+    w2_grid = np.full(Xg.shape, np.nan)
+    w2_grid[in2] = plate2.deflection(cw2, Xg[in2], Yg[in2])
+    r_grid = griddata((q1.x, q1.y), r_nodes, (Xg, Yg), method="linear",
+                      fill_value=0.0)
+    r_grid[~(in1 & in2)] = np.nan
+    zone = in1 & in2 & (np.nan_to_num(r_grid) > 0.0)
+    return Xg, Yg, w_grid, w2_grid, r_grid, zone
 
 
 def solve_contact(
@@ -503,24 +542,9 @@ class TwoPlateMOR:
 
     def _package(self, r, w1, cw2, cw1, iters, converged, hist, peak_xy,
                  comp, over) -> TwoPlateResult:
-        from scipy.interpolate import griddata
-
-        cfg = self.cfg
         q1 = self.plate1.quad
-        dom1, dom2 = self.plate1.domain, self.plate2.domain
-        x0, x1, y0, y1 = dom1.bbox
-        gx = np.linspace(x0, x1, cfg.grid_n)
-        gy = np.linspace(y0, y1, cfg.grid_n)
-        Xg, Yg = np.meshgrid(gx, gy)
-        in1 = dom1.omega(Xg, Yg) > 0.0
-        in2 = dom2.omega(Xg, Yg) > 0.0
-        w_grid = np.full(Xg.shape, np.nan)
-        w_grid[in1] = self.plate1.deflection(cw1, Xg[in1], Yg[in1])
-        w2_grid = np.full(Xg.shape, np.nan)
-        w2_grid[in2] = self.plate2.deflection(cw2, Xg[in2], Yg[in2])
-        r_grid = griddata((q1.x, q1.y), r, (Xg, Yg), method="linear", fill_value=0.0)
-        r_grid[~(in1 & in2)] = np.nan
-        zone = in1 & in2 & (np.nan_to_num(r_grid) > 0.0)
+        Xg, Yg, w_grid, w2_grid, r_grid, zone = sample_pair_fields_on_grid(
+            self.plate1, self.plate2, cw1, cw2, r, self.cfg.grid_n)
         w2_nodes = np.full(q1.x.size, np.nan)
         w2_nodes[self.mask] = np.tensordot(np.asarray(cw2, float),
                                            self.psi2_c, axes=(0, 0))
@@ -534,4 +558,5 @@ class TwoPlateMOR:
 
 
 __all__ = ["ContactResult", "ContactMOR", "TwoPlateResult", "TwoPlateMOR",
-           "solve_contact"]
+           "solve_contact", "sample_fields_on_grid",
+           "sample_pair_fields_on_grid"]

@@ -1,4 +1,4 @@
-# Состав sdist (F7.1): документация, реестры случаев, эталон Maple,
+# Состав sdist: документация, реестры случаев, эталон Maple,
 # лицензия и цитирование едут вместе с исходником.
 include LICENSE CITATION.cff CHANGELOG.md README.md
 graft docs
