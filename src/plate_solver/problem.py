@@ -717,7 +717,10 @@ def _validate_cross(p: Problem) -> None:
                     p.plate2.model.theory if p.plate2.model is not None else "classic"}
         if theories != {"classic"}:
             _fail("model.theory", sorted(theories),
-                  "classic — КТН для пары пластин отложен (направление развития)", "plate2")
+                  "classic — контактное условие пары в v0.3 классическое "
+                  "(срединные плоскости; геометрически контактируют нижняя "
+                  "лицевая верхней и верхняя лицевая нижней пластины), КТН "
+                  "для пары — направление развития", "plate2")
         if c.gap is not None and c.gap < 0:
             _fail("contact.gap", c.gap, "число ≥ 0 (Δ=0 — касание пластин)",
                   "plate2")

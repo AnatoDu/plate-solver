@@ -264,7 +264,8 @@ def _run_case(args, do_verify: bool) -> int:
         return 0 if rep.ok else 1
     formats = tuple(f.strip() for f in getattr(args, "fig_format", "png,pdf")
                     .split(",") if f.strip())
-    path = res.save(out_dir, fig_formats=formats)
+    path = res.save(out_dir, fig_formats=formats,
+                    surface=getattr(args, "surface", "mid"))
     s = res.scalars()
     print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
     if res.contact is not None:
@@ -290,6 +291,10 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
                         help="форсировать output.figures = true (png 300 dpi + pdf)")
     parser.add_argument("--fig-format", metavar="png,pdf", default="png,pdf",
                         help="форматы фигур через запятую (по умолчанию png,pdf)")
+    parser.add_argument("--surface", choices=("mid", "top", "bottom"),
+                        default="mid",
+                        help="поверхность на w-фигуре: срединная (mid) или "
+                             "лицевые top/bottom (theory=ktn, NOTES §21)")
     return parser
 
 

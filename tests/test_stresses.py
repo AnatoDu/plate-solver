@@ -172,9 +172,10 @@ def test_b2_fields_npz_and_replot(tmp_path):
     res.save(tmp_path)
     data = np.load(tmp_path / "fields.npz")
     need = {"fields_schema", "x", "y", "w", "Mx", "My", "Mxy", "sx_top", "sx_bot",
-            "sy_top", "sy_bot", "txy_top", "txy_bot", "r", "zone", "problem_json"}
+            "sy_top", "sy_bot", "txy_top", "txy_bot", "r", "zone", "problem_json",
+            "w_top", "w_bot", "dh"}                     # схема 2 (NOTES §21, F3.7)
     assert need <= set(data.files)
-    assert int(data["fields_schema"]) == 1
+    assert int(data["fields_schema"]) == 2
     paths = viz.replot(tmp_path, formats=("png", "pdf"))
     names = {p.name for p in paths}
     assert {"w_surface.png", "stress_faces.png", "reaction.png"} <= names

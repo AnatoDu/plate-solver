@@ -123,8 +123,12 @@ class Result:
         return out
 
     def save(self, out_dir: str | Path | None = None,
-             fig_formats: tuple = ("png", "pdf")) -> Path:
-        """Записать result.json, fields.npz (+ фигуры при output.figures)."""
+             fig_formats: tuple = ("png", "pdf"), surface: str = "mid") -> Path:
+        """Записать result.json, fields.npz (+ фигуры при output.figures).
+
+        ``surface`` — какую поверхность рисовать на w-фигуре:
+        ``mid`` | ``top`` | ``bottom`` (лицевые — NOTES §21, F3.7).
+        """
         out = Path(out_dir if out_dir is not None else self.problem.output.dir)
         out.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -142,7 +146,7 @@ class Result:
                        allow_nan=False), encoding="utf-8")
         self.save_fields(out / "fields.npz")
         if self.problem.output.figures:
-            self._save_figures(out, formats=fig_formats)
+            self._save_figures(out, formats=fig_formats, surface=surface)
         return out / "result.json"
 
     def moments_on_grid(self):
@@ -193,10 +197,34 @@ class Result:
             q_bot = np.nan_to_num(self.contact.r_grid, nan=0.0)
         return q_top, q_bot
 
-    def save_fields(self, path) -> None:
-        """fields.npz (версия схемы полей = 1): w, моменты, σ-шестёрка, контакт.
+    def faces_on_grid(self):
+        """(w_top, w_bot, dh) на сетке — прогибы лицевых поверхностей (F3.7).
 
-        Всё необходимое для перерисовки фигур БЕЗ пересчёта —
+        theory = ktn: по формулам NOTES §21 п. 1 (классическое прямое
+        интегрирование обжатия, согласованное с каноном §19):
+        w_bot = w + h_*²·Δw − h(3q⁺ + 13q⁻)/(32E), w_top = w + h_*²·Δw +
+        h(13q⁺ + 3q⁻)/(32E); Δw = −(Mx + My)/(D(1+ν)). theory = classic:
+        обжатие — атрибут уточнённой теории, обе лицевые ≡ срединной.
+        """
+        if self.problem.model is None or self.problem.model.theory != "ktn":
+            return self.w_grid.copy(), self.w_grid.copy(), \
+                np.zeros_like(self.w_grid)
+        Mx, My, _ = self.moments_on_grid()
+        q_top, q_bot = self._q_faces_on_grid()
+        h_, E_, nu_ = self.config.h, self.config.E, self.config.nu
+        lap = -(Mx + My) / (self.config.D * (1.0 + nu_))
+        hst2 = nu_ * h_**2 / (8.0 * (1.0 - nu_))
+        w_top = self.w_grid + hst2 * lap + h_ * (13 * q_top + 3 * q_bot) / (32 * E_)
+        w_bot = self.w_grid + hst2 * lap - h_ * (3 * q_top + 13 * q_bot) / (32 * E_)
+        return w_top, w_bot, w_bot - w_top
+
+    def save_fields(self, path) -> None:
+        """fields.npz (версия схемы полей = 2): w, моменты, σ-шестёрка, контакт.
+
+        Схема 2 = схема 1 + прогибы лицевых поверхностей (w_top, w_bot,
+        dh — NOTES §21) + для пары пластин моменты и σ-шестёрка ВТОРОЙ
+        пластины (суффикс «2»; канон §19: у верхней q⁻ = r, у нижней
+        q⁺ = r). Всё необходимое для перерисовки фигур БЕЗ пересчёта —
         :func:`plate_solver.viz.replot`.
         """
         from .ktn import stresses_faces
@@ -205,10 +233,12 @@ class Result:
         q_top, q_bot = self._q_faces_on_grid()
         s = stresses_faces(Mx, My, Mxy, h=self.config.h, nu=self.config.nu,
                            q_top=q_top, q_bottom=q_bot)
+        w_top, w_bot, dh = self.faces_on_grid()
         payload = {
-            "fields_schema": np.int64(1),
+            "fields_schema": np.int64(2),
             "x": self.Xg[0, :], "y": self.Yg[:, 0],
             "w": self.w_grid, "Mx": Mx, "My": My, "Mxy": Mxy,
+            "w_top": w_top, "w_bot": w_bot, "dh": dh,
             "problem_json": np.str_(json.dumps(asdict(self.problem),
                                                ensure_ascii=False)),
             "h": np.float64(self.config.h), "nu": np.float64(self.config.nu),
@@ -220,9 +250,40 @@ class Result:
             w2 = getattr(self.contact, "w2_grid", None)
             if w2 is not None:
                 payload["w2"] = w2
+                payload.update(self._second_plate_fields())
         np.savez_compressed(path, **payload)
 
-    def _save_figures(self, out: Path, formats: tuple = ("png", "pdf")) -> None:
+    def _second_plate_fields(self) -> dict:
+        """Моменты и σ-шестёрка НИЖНЕЙ пластины пары (F3.5б, канон §19).
+
+        Реакция взаимодействия r приходит на ВЕРХНЮЮ лицевую нижней
+        пластины: q⁺₂ = r, q⁻₂ = 0 (основания под второй нет).
+        """
+        from .ktn import stresses_faces
+        from .ladder import bending_moments_full
+
+        solver2, cfg2 = self._plate2, self._cfg2
+        if solver2 is None or cfg2 is None:
+            return {}
+        inside2 = np.isfinite(self.contact.w2_grid)
+        p2 = 2 if hasattr(solver2, "S") else 1
+        Mx2 = np.full(self.Xg.shape, np.nan)
+        My2 = np.full(self.Xg.shape, np.nan)
+        Mxy2 = np.full(self.Xg.shape, np.nan)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mx, my, mxy = bending_moments_full(
+                solver2.domain, solver2.basis, self.contact.cw2, p2,
+                cfg2.D, cfg2.nu, self.Xg[inside2], self.Yg[inside2])
+        Mx2[inside2], My2[inside2], Mxy2[inside2] = mx, my, mxy
+        r_fld = np.nan_to_num(self.contact.r_grid, nan=0.0)
+        s2 = stresses_faces(Mx2, My2, Mxy2, h=cfg2.h, nu=cfg2.nu,
+                            q_top=r_fld, q_bottom=0.0)
+        out = {"Mx2": Mx2, "My2": My2, "Mxy2": Mxy2}
+        out.update({k + "2": v for k, v in s2.items()})
+        return out
+
+    def _save_figures(self, out: Path, formats: tuple = ("png", "pdf"),
+                      surface: str = "mid") -> None:
         """Фигуры публикационного качества (D1/D2): из fields.npz, png+pdf.
 
         Имена файлов получают префикс по имени case-файла (title кейса).
@@ -230,7 +291,7 @@ class Result:
         from . import viz
 
         stem = Path(self.problem.source).stem
-        paths = viz.replot(out, formats=formats)
+        paths = viz.replot(out, formats=formats, surface=surface)
         if stem and stem != "<dict>":
             for old in paths:
                 new = old.with_name(f"{stem}_{old.name}")
@@ -250,6 +311,20 @@ class Result:
     @property
     def _c(self):
         return object.__getattribute__(self, "_c_ref")
+
+    @property
+    def _plate2(self):
+        try:
+            return object.__getattribute__(self, "_plate2_ref")
+        except AttributeError:
+            return None
+
+    @property
+    def _cfg2(self):
+        try:
+            return object.__getattribute__(self, "_cfg2_ref")
+        except AttributeError:
+            return None
 
 
 def _sanitize_nan(obj):
@@ -603,6 +678,7 @@ def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
     object.__setattr__(res, "_plate2_ref", solver2)
+    object.__setattr__(res, "_cfg2_ref", cfg2)
     return res
 
 

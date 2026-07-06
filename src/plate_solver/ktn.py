@@ -103,7 +103,14 @@ class KTNParams:
 
     # -- поля -------------------------------------------------------------- #
     def contact_displacement(self, w, lap_w, q0, r) -> np.ndarray:
-        """Смещение контактной поверхности u_c (вход в условие контакта)."""
+        """Прогиб контактирующей (НИЖНЕЙ) лицевой поверхности u_c по КТН.
+
+        Этой величиной проверяется зазор в контактном условии (обновление r).
+        Формула — первоисточник (1D-скрипты школы); статус сверки с
+        классическим прямым интегрированием по толщине — NOTES §21, п. 3
+        (кривизна согласована структурно, q,r-члены различаются; сшивка —
+        за автором). Синоним: :meth:`w_face_bottom`.
+        """
         r = np.asarray(r, float)
         return (
             np.asarray(w, float)
@@ -111,6 +118,10 @@ class KTNParams:
             + self.cq_contact * q0
             + self.cr_contact * self.D * r
         )
+
+    def w_face_bottom(self, w, lap_w, q0, r) -> np.ndarray:
+        """Прогиб нижней лицевой (синоним :meth:`contact_displacement`)."""
+        return self.contact_displacement(w, lap_w, q0, r)
 
     def corrected_deflection(self, w, lap_w, q0, r) -> np.ndarray:
         """КТН-поправленный прогиб срединной поверхности (для w_max)."""

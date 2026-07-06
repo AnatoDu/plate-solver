@@ -230,21 +230,30 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 #  Перерисовка из fields.npz: фигуры без пересчёта
 # --------------------------------------------------------------------------- #
-def replot(result_dir, formats=("png",), dpi: int = 300) -> list:
-    """Перерисовать фигуры из ``<dir>/fields.npz`` (версия схемы полей = 1).
+def replot(result_dir, formats=("png",), dpi: int = 300,
+           surface: str = "mid") -> list:
+    """Перерисовать фигуры из ``<dir>/fields.npz`` (схема полей 1 или 2).
 
     Пересчёт не выполняется: всё берётся из снимка полей. Создаются
-    w-поверхность, карты лицевых напряжений (σx±, σy±, τxy±) и — при
-    наличии контакта — карта реакции с зоной. Возвращает список путей.
+    w-поверхность (``surface`` = ``mid`` | ``top`` | ``bottom`` — срединная
+    или лицевые, NOTES §21; лицевые доступны со схемы 2), карты лицевых
+    напряжений (σx±, σy±, τxy±) и — при наличии контакта — карта реакции
+    с зоной. Возвращает список путей.
     """
+    import json as _json
+
     import matplotlib.pyplot as plt
 
     result_dir = Path(result_dir)
     data = np.load(result_dir / "fields.npz", allow_pickle=False)
-    if int(data["fields_schema"]) != 1:
+    if int(data["fields_schema"]) not in (1, 2):
         raise ValueError(f"Неизвестная версия схемы полей: {int(data['fields_schema'])}")
     X, Y = np.meshgrid(data["x"], data["y"])
     out: list = []
+    try:
+        theory = _json.loads(str(data["problem_json"]))["model"]["theory"]
+    except (KeyError, ValueError, TypeError):
+        theory = "classic"
 
     def _save(fig, name):
         for fmt in formats:
@@ -253,14 +262,21 @@ def replot(result_dir, formats=("png",), dpi: int = 300) -> list:
             out.append(path)
         plt.close(fig)
 
-    # 1) поверхность прогиба
+    # 1) поверхность прогиба (выбор поверхности — F3.7)
+    key, label = {"mid": ("w", "w"), "top": ("w_top", "w (верхняя лицевая)"),
+                  "bottom": ("w_bot", "w (нижняя лицевая)")}.get(surface, (None, None))
+    if key is None:
+        raise ValueError(f"surface: получено {surface!r}, "
+                         "ожидалось mid | top | bottom")
+    if key not in data.files:                     # схема 1 — только срединная
+        key, label = "w", "w"
     fig = plt.figure(figsize=(7, 5))
     ax = fig.add_subplot(111, projection="3d")
-    ax.plot_surface(X, Y, data["w"], cmap="viridis", linewidth=0, antialiased=True)
+    ax.plot_surface(X, Y, data[key], cmap="viridis", linewidth=0, antialiased=True)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("w")
-    ax.set_title("Прогиб w(x, y) (из fields.npz)")
+    ax.set_title(f"Прогиб {label}(x, y) (из fields.npz)")
     _save(fig, "w_surface")
 
     # 2) карты лицевых напряжений: диверг. палитра, симметричная норма
@@ -293,7 +309,11 @@ def replot(result_dir, formats=("png",), dpi: int = 300) -> list:
         yline = float(data["y"][j])
         ax.axhline(yline, color="w", ls="--", lw=0.8)
         ax.set_aspect("equal")
-        ax.set_title("Реакция r(x, y) и зона контакта")
+        # при КТН зона контакта определяется прогибом НИЖНЕЙ лицевой (§21)
+        ttl = "Реакция r(x, y) и зона контакта"
+        if theory == "ktn":
+            ttl += " (зона — по нижней лицевой)"
+        ax.set_title(ttl)
         fig.colorbar(pcm, ax=ax, label="r")
         prof = data["sy_bot"][j, :]
         keep = np.isfinite(prof)
