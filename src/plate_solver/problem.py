@@ -39,7 +39,7 @@ COMPOSE_MAX_NODES = 7
 
 GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "compose")
 BC_TYPES = ("soft_hinge", "clamped")
-LOAD_TYPES = ("uniform", "patch", "point")
+LOAD_TYPES = ("uniform", "patch", "point", "gaussian")
 # Лестница моделей одним ключом [model] theory (v0.5.0, ЯВНЫЕ имена — §4):
 #   classic    — линейный Кирхгоф;
 #   karman     — геометрически-НЕЛИНЕЙНОЕ решение Фёппля–Кармана (L(Φ, w));
@@ -155,19 +155,24 @@ class BCSpec:
 
 @dataclass(frozen=True)
 class LoadSpec:
-    """Нагрузка: равномерная, зонная (patch) или точечная (point).
+    """Нагрузка: равномерная, зонная (patch), точечная (point) или гауссова.
 
     Точечная сила — регуляризованный patch: круговое пятно радиуса ``eps``,
     ``q = P / (π·eps²)``. Истинная δ-нагрузка в схему сознательно не вводится
     (обоснование — docs/NOTES.md, раздел «Точечная сила и уточнённая теория»).
+    ``gaussian`` — гладкая локализованная нагрузка
+    ``q = q0·exp(−r²/(2σ²))`` (центр ``x0, y0``, ширина ``sigma``): у неё Δq
+    аналитична, поэтому проявляется член КТН ``−h_*²Δq`` (§7) — под НЕравномерной
+    нагрузкой уже и СРЕДИННЫЙ прогиб КТН отличается от классики.
     """
 
     type: str
-    q0: float | None = None         # uniform | patch
+    q0: float | None = None         # uniform | patch | gaussian (амплитуда)
     P: float | None = None          # point: результирующая сила
-    x0: float | None = None         # point: точка приложения
+    x0: float | None = None         # point/gaussian: центр
     y0: float | None = None
     eps: float | None = None        # point: радиус пятна (None ⇒ 0.05·min(ширина, высота bbox))
+    sigma: float | None = None      # gaussian: ширина (СКО)
     zone: GeometrySpec | None = None  # patch: зона нагрузки
 
 
@@ -584,6 +589,15 @@ def _parse_load(data) -> LoadSpec:
             _fail("load.zone", None, "геометрия зоны нагрузки (обязательна для patch)", "load")
         zone = _parse_geometry("load.zone", data["zone"])
         return LoadSpec(type=t, q0=q0, zone=zone)
+
+    if t == "gaussian":
+        # гладкая локализованная: q = q0·exp(−r²/(2σ²)); Δq аналитична (§7)
+        _require_keys("load", data, {"type", "q0", "x0", "y0", "sigma"}, "load")
+        q0 = _number("load", data, "q0", "load", required=True)
+        x0 = _number("load", data, "x0", "load", required=True)
+        y0 = _number("load", data, "y0", "load", required=True)
+        sigma = _number("load", data, "sigma", "load", required=True, positive=True)
+        return LoadSpec(type=t, q0=q0, x0=x0, y0=y0, sigma=sigma)
 
     # point: регуляризованный patch, q = P/(π·eps²)
     _require_keys("load", data, {"type", "P", "x0", "y0", "eps"}, "load")

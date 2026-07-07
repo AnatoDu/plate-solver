@@ -144,3 +144,53 @@ def test_ktn_full_soft_hinge_not_implemented():
     with pytest.raises(NotImplementedError, match="ЗАЩЕМЛЕНИИ"):
         KTNPlate.from_config(_DOM, _cfg(0.1, 1.0), bc_type="soft_hinge",
                              inplane_bc="immovable")
+
+
+# --------------------------------------------------------------------------- #
+#  Неравномерная нагрузка и член КТН (A) −h_*²Δq (§7, N3)
+# --------------------------------------------------------------------------- #
+def _solve_circle(theory, load, *, h=0.2, q=2.0e-5, p=12, Q=160):
+    from plate_solver.dispatch import solve
+    from plate_solver.problem import Problem
+
+    ld = dict(load, q0=q)
+    model = {"theory": theory, "E": 1.0, "nu": 0.3, "h": h}
+    if theory in ("karman", "ktn_full"):
+        model["n_load_steps"] = 1
+    return solve(Problem.from_dict({
+        "geometry": {"kind": "circle", "a": 1.0}, "bc": {"type": "clamped"},
+        "load": ld, "model": model,
+        "discretization": {"p": p, "Q": Q, "grid_n": 40},
+    }))
+
+
+def test_gaussian_load_works_for_all_theories():
+    """Гауссова нагрузка q0·exp(−r²/2σ²) решается любой теорией (§7)."""
+    gl = {"type": "gaussian", "x0": 0.0, "y0": 0.0, "sigma": 0.3}
+    for theory in ("classic", "karman", "ktn_full"):
+        res = _solve_circle(theory, gl)
+        assert np.isfinite(res.w_max) and res.w_max > 0.0
+
+
+def test_ktn_term_a_signature_uniform_vs_gaussian():
+    """Подпись КТН (§9): под равномерной срединный w ≈ классика (Δq=0), под гауссовой — нет."""
+    # малая нагрузка ⇒ мембрана пренебрежима, виден чистый член (A)
+    ru_kt = _solve_circle("ktn_full", {"type": "uniform"})
+    ru_cl = _solve_circle("classic", {"type": "uniform"})
+    rg_kt = _solve_circle("ktn_full", {"type": "gaussian", "x0": 0.0, "y0": 0.0, "sigma": 0.25})
+    rg_cl = _solve_circle("classic", {"type": "gaussian", "x0": 0.0, "y0": 0.0, "sigma": 0.25})
+    dev_uniform = abs(ru_kt.w_max - ru_cl.w_max) / ru_cl.w_max
+    dev_gaussian = abs(rg_kt.w_max - rg_cl.w_max) / rg_cl.w_max
+    assert dev_uniform < 1e-3                         # Δq = 0: срединный ≈ классика
+    assert dev_gaussian > 1e-2                        # Δq ≠ 0: член (A) смещает срединный
+    assert dev_gaussian > 10 * dev_uniform
+
+
+def test_ktn_term_a_grows_with_localization():
+    """Член (A) ∝ Δq ∝ 1/σ²: эффект РАСТЁТ с сужением гауссовой нагрузки (§9)."""
+    devs = []
+    for sigma in (0.4, 0.25, 0.15):
+        kt = _solve_circle("ktn_full", {"type": "gaussian", "x0": 0.0, "y0": 0.0, "sigma": sigma})
+        cl = _solve_circle("classic", {"type": "gaussian", "x0": 0.0, "y0": 0.0, "sigma": sigma})
+        devs.append(abs(kt.w_max - cl.w_max) / cl.w_max)
+    assert devs[0] < devs[1] < devs[2]                # уже гаусс — больше эффект

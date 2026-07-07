@@ -35,6 +35,7 @@ tests/test_doc_matrix.py).
 | load.P | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_soft.toml, annulus_soft_contact.toml |
 | load.eps | API.md, CASE_SCHEMA.md, NOTES.md | circle_point.toml, circle_point_clamped.toml, circle_point_soft.toml |
 | load.q0 | API.md, CASE_SCHEMA.md, NOTES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
+| load.sigma | CASE_SCHEMA.md | ktn_full_circle_clamped_gaussian.toml |
 | load.type | API.md, CASE_SCHEMA.md, README.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | load.x0 | CASE_SCHEMA.md, README.md, dispatch_flow.md | circle_point.toml, circle_point_clamped.toml, circle_point_soft.toml |
 | load.y0 | CASE_SCHEMA.md, README.md, dispatch_flow.md | circle_point.toml, circle_point_clamped.toml, circle_point_soft.toml |

@@ -472,6 +472,24 @@ def _load_values(problem: Problem, dom, quad, warnings: list[str]):
     return _load_values_spec(problem.load, dom, quad, warnings)
 
 
+def _load_laplacian(load, quad) -> np.ndarray | None:
+    """Лапласиан нагрузки Δq в узлах квадратуры для члена КТН (A) ``−h_*²Δq`` (§7).
+
+    Аналитична для гладкой нагрузки: у гауссовой ``q = q0·exp(−r²/(2σ²))``
+    ``Δq = q·(r²−2σ²)/σ⁴``. Для равномерной ``Δq ≡ 0`` (член A исчезает).
+    Разрывные нагрузки (patch/point) не дают гладкой Δq ⇒ ``None`` (член A
+    опущен, отражено пометкой).
+    """
+    if load.type == "gaussian":
+        s2 = load.sigma**2
+        d2 = (quad.x - load.x0) ** 2 + (quad.y - load.y0) ** 2
+        q = float(load.q0) * np.exp(-d2 / (2.0 * s2))
+        return q * (d2 - 2.0 * s2) / s2**2
+    if load.type == "uniform":
+        return np.zeros(quad.x.size)
+    return None
+
+
 def _load_values_spec(load, dom, quad, warnings: list[str]):
     """То же по произвольной LoadSpec (вторая пластина, A4)."""
     if load.type == "uniform":
@@ -481,6 +499,12 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
         mask = _zone_mask(load.zone, quad, key="load.zone",
                           advice="увеличьте Q или зону нагрузки")
         return float(load.q0) * mask.astype(float), float(load.q0), None
+
+    if load.type == "gaussian":
+        # гладкая локализованная q = q0·exp(−r²/(2σ²)) (§7); q0_eff — амплитуда
+        d2 = (quad.x - load.x0) ** 2 + (quad.y - load.y0) ** 2
+        f = float(load.q0) * np.exp(-d2 / (2.0 * load.sigma**2))
+        return f, float(load.q0), None
 
     # point: регуляризованный patch, круговое пятно радиуса eps_eff
     x0, x1, y0, y1 = dom.bbox
@@ -662,9 +686,15 @@ def _solve_ktn_full(problem, cfg, dom, solver, f, warnings) -> Result:
     величины — ``faces_on_grid``/``save_fields`` (§6). Несошедшаяся итерация —
     предупреждение (не ошибка).
     """
+    warn = list(warnings)
+    lap_q = _load_laplacian(problem.load, solver.quad)   # член (A): −h_*²Δq (§7)
+    solver.set_load_laplacian(lap_q)
+    if problem.load.type not in ("uniform", "gaussian"):
+        warn.append(
+            f"ktn_full: член −h_*²Δq опущен для load.type = '{problem.load.type}' "
+            "(Δq не гладкая); проявляется при uniform (Δq=0) и gaussian")
     kr = solver.solve(f)
     c = kr.cw
-    warn = list(warnings)
     if not kr.converged:
         last = kr.history[-1][2] if kr.history else float("nan")
         warn.append(
