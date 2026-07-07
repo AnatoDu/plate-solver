@@ -47,6 +47,9 @@ _FACADE: dict[str, str] = {
     "KarmanResult": "membrane",
     # -- полная нелинейная КТН --------------------------------------------- #
     "KTNPlate": "ktn_full",
+    # -- единая параметрическая модель теорий (v0.6.0) --------------------- #
+    "TheoryParams": "theory",
+    "KTNSolver": "ktn_solver",
     # -- контакт (МОР) ------------------------------------------------------ #
     "solve_contact": "contact",
     "ContactMOR": "contact",
