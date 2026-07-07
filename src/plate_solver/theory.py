@@ -71,6 +71,16 @@ class TheoryParams:
         """Активны ли КТН-члены (A), (B) в РЕШЕНИИ (только нелинейный режим)."""
         return self.membrane and self.refined
 
+    @property
+    def face_curv_coeff(self) -> float:
+        r"""Коэффициент при Δw в лицевом прогибе ``u_c = w + (h_c²−h_*²)Δw`` (§4.1).
+
+        Масштабируется теорией: для ``classic``/``karman`` (уточнение выкл) —
+        ноль ⇒ контакт «щупает» СРЕДИННУЮ поверхность (``u_c = w``); для полной
+        КТН — физическая лицевая кривизна (подпись КТН в контакте).
+        """
+        return self.h_c_sq - self.h_star_sq
+
     def with_refinement_scale(self, alpha: float) -> TheoryParams:
         r"""Непрерывный морфинг (§3.5): ``h_ψ²→α h_ψ²``, ``h_*²→α h_*²``, α∈[0,1].
 

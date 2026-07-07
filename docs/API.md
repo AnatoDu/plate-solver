@@ -112,6 +112,17 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   напряжений лицевых поверхностей (канон NOTES §19).
 - `ktn.PlateMaterial`, `ktn.flexural_rigidity` — классика.
 
+## Нелинейный контакт МОР+КТН (`contact_nl.py`, v0.6.0)
+
+- `contact_nl.NonlinearContactMOR(solver, cfg, gap, foundation_mask, scheme)` —
+  метод обобщённой реакции вокруг полного нелинейного `KTNSolver` (§4). Лицевое
+  условие Синьорини `u_c = w + (h_c²−h_*²)Δw ≤ z` (кривизна масштабируется
+  теорией: 0 для classic/karman ⇒ контакт по срединной; физическая для ktn_full).
+  `scheme="nested"` — эталон (внешний МОР × полный решатель); `"merged"` — задел
+  N4. `solve()` → `NonlinearContactResult`.
+- `contact_nl.NonlinearContactResult` — реакция `r`, прогибы `w`/`u_c`, маска и
+  топология зоны контакта, пиковая реакция, история МОР.
+
 ## Единая параметрическая модель теорий (`theory.py`, `ktn_solver.py`, v0.6.0)
 
 Все четыре теории — пресеты параметров ОДНОГО решателя; редукции точны ПО

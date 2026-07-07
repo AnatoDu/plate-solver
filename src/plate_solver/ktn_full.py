@@ -132,18 +132,19 @@ class KTNPlate(KarmanPlate):
         LN = self._pxx * Nx + 2.0 * self._pxy * Nxy + self._pyy * Ny
         return (self._lap_psi * W) @ LN.T
 
-    def solve(self, f_values):
+    def solve(self, f_values, c0=None):
         r"""Итерация Пикара с КТН-членами (§5.3). ``ktn_method='newton'`` — задел.
 
         Ньютон (касательный оператор с учётом КТН-членов, §5.4) — опциональный
         ускоритель, в v0.5.0 не реализован (по §14 — первый под сокращение);
         метод по умолчанию — Пикар с ускорением Андерсона (унаследован).
+        ``c0`` — тёплый старт (внешний цикл МОР, `contact_nl.py`).
         """
         if getattr(self.cfg, "ktn_method", "picard") != "picard":
             raise NotImplementedError(
                 "ktn_method = 'newton' — опциональный ускоритель КТН (§5.4), в "
                 "v0.5.0 не реализован; метод по умолчанию — 'picard'")
-        return super().solve(f_values)
+        return super().solve(f_values, c0=c0)
 
     def _picard_map(self, c, b_level, theta):
         r"""Шаг Пикара с КТН-членом (B). При выключенных членах — тождественно Карман."""

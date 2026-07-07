@@ -340,7 +340,7 @@ class KarmanPlate:
         return g, (a, b, Nx, Ny, Nxy)
 
     # -- основной цикл ------------------------------------------------------ #
-    def solve(self, f_values) -> KarmanResult:
+    def solve(self, f_values, c0=None) -> KarmanResult:
         r"""Итерация Пикара (ускорение Андерсона) с шагами по нагрузке (§5.1–5.2).
 
         ``f_values`` — интенсивность нагрузки в узлах квадратуры (равномерная
@@ -351,6 +351,11 @@ class KarmanPlate:
         отображение, но сходимость из линейной становится сверхлинейной, что
         делает достижимым мембранный предел Gate M (``w/h ~ 6``). При
         ``m=0`` — чистый Пикар. Останов ``‖Δw‖_{L2}/‖w‖ < karman_tol``.
+
+        ``c0`` — тёплый старт коэффициентов прогиба (например, решение с
+        предыдущего шага внешнего цикла МОР, `contact_nl.py`): при заданном
+        нагрузка НЕ дробится (один уровень на полной нагрузке), т.к. старт уже
+        близок к решению — резко экономит итерации.
         """
         cfg = self.cfg
         if getattr(cfg, "karman_method", "picard") != "picard":
@@ -365,7 +370,11 @@ class KarmanPlate:
         n_steps = max(1, int(cfg.n_load_steps))
         m_win = int(getattr(cfg, "karman_anderson", 6))      # окно ускорения Андерсона
         W = self._W
-        c = np.zeros(self.basis.N)                           # тёплый старт по уровням
+        if c0 is None:
+            c = np.zeros(self.basis.N)                       # тёплый старт по уровням
+        else:
+            c = np.asarray(c0, float).copy()                 # тёплый старт извне (МОР)
+            n_steps = 1                                      # старт близок ⇒ полная нагрузка
         history: list = []
         total_iter = 0
         converged = False
