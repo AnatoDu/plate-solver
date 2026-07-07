@@ -236,4 +236,176 @@ class NonlinearContactMOR:
             residual_history=np.array(hist), n_inner=n_inner, scheme=self.scheme)
 
 
-__all__ = ["NonlinearContactMOR", "NonlinearContactResult"]
+@dataclass
+class NonlinearTwoPlateResult:
+    r"""Результат взаимного контакта ДВУХ пластин КТН (§9.2).
+
+    Реакция ``r ≥ 0`` — общая для пары (3-й закон Ньютона): пластина 1 несёт
+    нагрузку ``f₁ − r``, пластина 2 — ``f₂ + r``. Зазор проверяется РАЗНОСТЬЮ
+    лицевых прогибов ``u_c1 − u_c2 ≤ z``. Поля — в общих узлах квадратуры.
+    """
+
+    r_nodes: np.ndarray
+    w1_nodes: np.ndarray
+    w2_nodes: np.ndarray
+    u_c1_nodes: np.ndarray
+    u_c2_nodes: np.ndarray
+    cw1: np.ndarray
+    cw2: np.ndarray
+    w1_max: float
+    w2_max: float
+    contact_mask: np.ndarray
+    r_max: float
+    peak_xy: tuple
+    n_contact: int
+    n_components: int
+    iters: int
+    converged: bool
+    residual_history: np.ndarray
+
+
+class NonlinearTwoPlateMOR:
+    r"""Взаимный контакт ДВУХ деформируемых пластин КТН (§9.2, N7).
+
+    Обобщение линейной :class:`~plate_solver.contact.TwoPlateMOR` на полную
+    нелинейную КТН: реакция ``r`` определяется СОВМЕСТНО двумя связанными
+    решателями. Условие непроникания — на ЛИЦЕВЫХ прогибах (условие Синьорини
+    на грани, масштаб кривизны от теории каждой пластины):
+
+    .. math:: u_{c1} - u_{c2} \le z,\qquad r\ge 0,\qquad f_1 - r,\ \ f_2 + r,
+
+    где ``z`` — начальный зазор (скаляр или поле). Итерация (совмещённая схема,
+    как в :meth:`NonlinearContactMOR._solve_merged`): один шаг Пикара на каждую
+    пластину + один шаг МОР по общей реакции, недорелаксация общая. Усиление
+    суммарного оператора ``G = G₁ + G₂`` ⇒ ``β_eff = β/(gain₁+gain₂)`` (теорема 4).
+
+    Редукция (гейт): жёсткая вторая пластина (``u_c2 → 0``) ⇒ односторонний
+    контакт одной пластины :class:`NonlinearContactMOR` с плоским зазором ``z``.
+
+    Пластины должны быть построены на ОБЩЕЙ квадратуре (одна область, один ``Q``):
+    реакция ``r`` определена поузельно на интерфейсе (межсеточного переноса нет).
+
+    Parameters
+    ----------
+    solver1, solver2 : решатели КТН пары (общая квадратура).
+    cfg : параметры (``q0``, ``beta``, ``max_iter``, ``tol``, ``karman_relax``).
+    gap : начальный зазор ``z`` — скаляр или поле по узлам.
+    f1, f2 : нагрузки пластин (скаляр/поле); по умолчанию ``cfg.q0`` и ``q2``/0.
+    q2 : скалярная нагрузка второй пластины (если ``f2`` не задан).
+    foundation_mask : предикат зоны возможного контакта; ``None`` ⇒ вся Ω.
+    """
+
+    def __init__(self, solver1: KTNSolver, solver2: KTNSolver, cfg: Config, *,
+                 gap=0.0, f1=None, f2=None, q2=None, foundation_mask=None):
+        q = solver1.quad
+        if not (np.array_equal(q.x, solver2.quad.x) and np.array_equal(q.y, solver2.quad.y)):
+            raise ValueError("две пластины КТН: требуется ОБЩАЯ квадратура "
+                             "(одна область, один Q) — реакция определена поузельно")
+        self.s1, self.s2, self.cfg = solver1, solver2, cfg
+        n = q.x.size
+        # зона основания
+        if foundation_mask is None:
+            self.fmask = np.ones(n, dtype=bool)
+        else:
+            self.fmask = np.asarray(foundation_mask(q.x, q.y), dtype=bool)
+        # зазор: скаляр или поле
+        if np.ndim(gap) == 0:
+            self._gap_f = float(gap)
+        else:
+            g = np.asarray(gap, dtype=float)
+            if g.shape != (n,):
+                raise ValueError("Поле зазора: ожидается массив длины числа узлов квадратуры.")
+            self._gap_f = g[self.fmask]
+        # нагрузки пластин
+        self.f1 = np.full(n, float(cfg.q0)) if f1 is None else self._as_field(f1, n)
+        if f2 is not None:
+            self.f2 = self._as_field(f2, n)
+        else:
+            self.f2 = np.full(n, float(q2) if q2 is not None else 0.0)
+        # тёплый старт — свободные решения под собственными нагрузками
+        self._free1 = solver1.solve(self.f1)
+        self._free2 = solver2.solve(self.f2)
+        # усиление СУММАРНОГО оператора G = G₁ + G₂ (теорема 4): секущая
+        # податливость КАЖДОЙ пластины при ОПОРНОЙ нагрузке. Важно брать не
+        # свободное решение под f_i (вторая пластина может быть без нагрузки,
+        # но откликается на реакцию — её податливость ненулевая), а отклик на
+        # общий масштаб — иначе β_eff завышен и итерация расходится.
+        ref = max(float(np.max(np.abs(self.f1))),
+                  float(np.max(np.abs(self.f2))), float(cfg.q0))
+        gain1 = solver1.solve(np.full(n, ref)).w_max / ref
+        gain2 = solver2.solve(np.full(n, ref)).w_max / ref
+        gain = gain1 + gain2
+        self.beta_eff = cfg.beta / gain if gain > 0.0 else cfg.beta
+        self.max_iter = int(cfg.max_iter)
+        self.tol = float(cfg.tol)
+        self._c1 = solver1.params.face_curv_coeff
+        self._c2 = solver2.params.face_curv_coeff
+
+    @staticmethod
+    def _as_field(f, n) -> np.ndarray:
+        arr = np.asarray(f, dtype=float)
+        return np.full(n, float(arr)) if arr.ndim == 0 else arr
+
+    def _face(self, solver, cw, c_curv) -> np.ndarray:
+        """Лицевой прогиб пластины ``u_c = w + c_curv·Δw`` в узлах."""
+        w = cw @ solver._psi
+        if c_curv == 0.0:
+            return w
+        return w + c_curv * (cw @ solver._lap_psi)
+
+    def solve(self) -> NonlinearTwoPlateResult:
+        """Совмещённый МОР для пары пластин (§9.2): по одному шагу Пикара на пластину."""
+        q = self.s1.quad
+        theta = float(self.cfg.karman_relax)
+        c1, c2 = self._free1.cw.copy(), self._free2.cw.copy()
+        r = np.zeros(q.x.size)
+        hist: list[float] = []
+        converged = False
+        it = 0
+        for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
+            w1_old, w2_old = c1 @ self.s1._psi, c2 @ self.s2._psi
+            b1 = self.s1._load_vector(self.f1 - r)          # пластина 1: f₁ − r
+            b2 = self.s2._load_vector(self.f2 + r)          # пластина 2: f₂ + r
+            c1, _ = self.s1._picard_map(c1, b1, theta)      # по шагу Пикара на пластину
+            c2, _ = self.s2._picard_map(c2, b2, theta)
+            u1 = self._face(self.s1, c1, self._c1)
+            u2 = self._face(self.s2, c2, self._c2)
+            u = u1 - u2                                     # сближение лицевых
+            r_new = r.copy()
+            r_new[self.fmask] = r[self.fmask] + self.beta_eff * (u[self.fmask] - self._gap_f)
+            np.maximum(r_new, 0.0, out=r_new)               # проекция r ≥ 0
+            r_new[~self.fmask] = 0.0
+            # совместная сходимость: реакция И оба прогиба стабилизировались
+            res = max(_rel_change(q.w, r_new, r),
+                      _rel_change(q.w, c1 @ self.s1._psi, w1_old),
+                      _rel_change(q.w, c2 @ self.s2._psi, w2_old))
+            hist.append(res)
+            r = r_new
+            if res < self.tol:
+                converged = True
+                break
+        w1, w2 = c1 @ self.s1._psi, c2 @ self.s2._psi
+        u1 = self._face(self.s1, c1, self._c1)
+        u2 = self._face(self.s2, c2, self._c2)
+        contact = r > 0.0
+        peak = int(np.argmax(r)) if r.size else 0
+        return NonlinearTwoPlateResult(
+            r_nodes=r, w1_nodes=w1, w2_nodes=w2, u_c1_nodes=u1, u_c2_nodes=u2,
+            cw1=c1, cw2=c2, w1_max=float(np.max(np.abs(w1))),
+            w2_max=float(np.max(np.abs(w2))), contact_mask=contact,
+            r_max=float(r.max()) if r.size else 0.0,
+            peak_xy=(float(q.x[peak]), float(q.y[peak])),
+            n_contact=int(contact.sum()),
+            n_components=contact_components(q.x, q.y, contact),
+            iters=it, converged=converged, residual_history=np.array(hist))
+
+
+def _rel_change(w, new, old) -> float:
+    """Относительное изменение поля в норме L2 по квадратуре (‖new−old‖/‖new‖)."""
+    scale = float(np.sqrt(np.sum(w * new ** 2)))
+    d = float(np.sqrt(np.sum(w * (new - old) ** 2)))
+    return d / scale if scale > 0.0 else d
+
+
+__all__ = ["NonlinearContactMOR", "NonlinearContactResult",
+           "NonlinearTwoPlateMOR", "NonlinearTwoPlateResult"]
