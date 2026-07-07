@@ -314,6 +314,10 @@ def _run_case(args, do_verify: bool) -> int:
                     surface=getattr(args, "surface", "mid"))
     s = res.scalars()
     print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
+    if problem.model.theory in ("karman", "ktn_linear", "ktn_full"):
+        tp = res.thickness_params()          # интроспекция §6.3
+        print(f"толщина (КТН): h_ψ² = {tp['h_psi_sq']:.4e}, h_*² = {tp['h_star_sq']:.4e}, "
+              f"h_c² = {tp['h_c_sq']:.4e}, h/L = {tp.get('h_over_L', float('nan')):.3f}")
     if res.contact is not None:
         print(f"контакт: итераций {s['iters']}, узлов {s['n_contact']}/{s['n_quad']}, "
               f"r_max = {s['r_max']:.4e}, комплементарность {s['comp_residual']:.2e}")

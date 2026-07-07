@@ -212,14 +212,28 @@ class Result:
         if self.problem.model is None or self.problem.model.theory != "ktn_linear":
             return self.w_grid.copy(), self.w_grid.copy(), \
                 np.zeros_like(self.w_grid)
-        from .ktn import KTNParams
+        from .faces import FaceParams
 
         Mx, My, _ = self.moments_on_grid()
         q_top, q_bot = self._q_faces_on_grid()
         lap = -(Mx + My) / (self.config.D * (1.0 + self.config.nu))
-        kp = KTNParams.from_config(self.config)
-        w_bot = kp.contact_displacement(self.w_grid, lap, q_top, q_bot)
+        fp = FaceParams.from_config(self.config)
+        w_bot = fp.face_deflection(self.w_grid, lap, q_top, q_bot, surface="bottom")
         return self.w_grid.copy(), w_bot, w_bot - self.w_grid
+
+    def thickness_params(self) -> dict:
+        """Интроспекция параметров толщины уточнённой теории (§6.3): h_ψ², h_*², h_c², h/L.
+
+        Первоклассный вывод (faces.py) для ЛЮБОЙ теории: видна зависимость КТН-
+        поправки от толщины. Характерный размер ``L`` — полуразмер bbox из сетки
+        вывода; ``h/L`` и порядок ``(h/L)²`` показывают, как эффект гаснет при
+        утоньшении (Gate R4).
+        """
+        from .faces import FaceParams
+
+        gx, gy = self.Xg[0, :], self.Yg[:, 0]
+        length = 0.5 * min(float(gx[-1] - gx[0]), float(gy[-1] - gy[0]))
+        return FaceParams.from_config(self.config).introspection(length=length)
 
     def regrid(self, grid_n: int) -> Result:
         """Мгновенное уплотнение сетки ВЫВОДА без пересчёта решения.
