@@ -56,8 +56,8 @@ def _expect_error(data: dict, *fragments: str) -> str:
 
 
 def test_theories_ladder():
-    """Лестница моделей: classic | karman | ktn (обратная совместимость сохранена)."""
-    assert THEORIES == ("classic", "karman", "ktn")
+    """Лестница моделей (v0.5): classic | karman | ktn_linear | ktn_full."""
+    assert THEORIES == ("classic", "karman", "ktn_linear", "ktn_full")
 
 
 def test_karman_accepted_with_defaults():
@@ -81,9 +81,9 @@ def test_inplane_bc_invalid_value():
 
 
 def test_inplane_bc_rejected_for_classic():
-    """inplane_bc осмыслен только при karman: при classic — отвергается (§4)."""
+    """inplane_bc осмыслен только для нелинейных теорий: при classic — отвергается (§4)."""
     _expect_error(_case(model={"theory": "classic", "inplane_bc": "movable"}),
-                  "model.inplane_bc", "только при theory = 'karman'")
+                  "model.inplane_bc", "нелинейных теорий")
 
 
 def test_karman_iteration_params_to_config():
@@ -101,10 +101,10 @@ def test_karman_iteration_params_to_config():
     assert cfg.karman_method == "picard"
 
 
-def test_karman_params_rejected_for_ktn():
-    """Параметры итерации осмысленны только при karman (§4)."""
-    _expect_error(_case(model={"theory": "ktn", "h": 0.1, "n_load_steps": 4}),
-                  "model.n_load_steps", "только при theory = 'karman'")
+def test_karman_params_rejected_for_linear():
+    """Параметры итерации осмысленны только для нелинейных теорий (§4)."""
+    _expect_error(_case(model={"theory": "ktn_linear", "h": 0.1, "n_load_steps": 4}),
+                  "model.n_load_steps", "нелинейных теорий")
 
 
 def test_karman_relax_upper_bound():
@@ -118,11 +118,29 @@ def test_karman_method_invalid():
                   "model.karman_method", "picard | newton")
 
 
-def test_ktn_full_reserved_not_implemented():
-    """Полная нелинейная КТН — задел v0.5.0: при обращении NotImplementedError (§1.1)."""
-    with pytest.raises(NotImplementedError) as e:
-        Problem.from_dict(_case(model={"theory": "ktn_full"}))
-    assert "v0.5.0" in str(e.value)
+def test_ktn_full_accepted_as_theory():
+    """theory = ktn_full — валидная теория (v0.5); ktn_method — только для неё."""
+    p = Problem.from_dict(_case(model={"theory": "ktn_full", "ktn_method": "picard"}))
+    assert p.model.theory == "ktn_full"
+    assert p.to_config().ktn_method == "picard"
+
+
+def test_ktn_alias_deprecated():
+    """Устаревший 'ktn' → 'ktn_linear' с DeprecationWarning (§4), поведение сохранено."""
+    with pytest.warns(DeprecationWarning, match="ktn_linear"):
+        p = Problem.from_dict({
+            "geometry": {"kind": "circle", "a": 1.0},
+            "bc": {"type": "clamped"},
+            "load": {"type": "uniform", "q0": 4.0},
+            "model": {"theory": "ktn", "h": 0.1},
+        })
+    assert p.model.theory == "ktn_linear"          # алиас разрешён в канон
+
+
+def test_ktn_method_rejected_for_karman():
+    """ktn_method осмыслен только для ktn_full (у karman — karman_method)."""
+    _expect_error(_case(model={"theory": "karman", "ktn_method": "newton"}),
+                  "model.ktn_method", "ktn_full")
 
 
 def test_karman_geometry_fence():

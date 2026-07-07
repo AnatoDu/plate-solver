@@ -84,7 +84,7 @@ def test_gate_t3_surfaces_consistent_after_regrid():
     assert float(np.max(np.abs(dh[inside]))) == 0.0
     d = tomllib.loads((_ROOT / "cases" / "ci" / "lshape_stamp.toml")
                       .read_text(encoding="utf-8"))
-    d["model"] = {"theory": "ktn", "h": 0.1}
+    d["model"] = {"theory": "ktn_linear", "h": 0.1}
     d.pop("output", None)
     rk = solve(Problem.from_dict(d)).regrid(32)
     _, _, dhk = rk.faces_on_grid()

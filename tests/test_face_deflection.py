@@ -176,7 +176,7 @@ def test_pair_ktn_rejected_with_meaning(tmp_path):
         "geometry": {"kind": "circle", "a": 1.0},
         "bc": {"type": "soft_hinge"},
         "load": {"type": "uniform", "q0": 4.0},
-        "model": {"theory": "ktn", "h": 0.06},
+        "model": {"theory": "ktn_linear", "h": 0.06},
         "contact": {"enabled": True, "target": "plate2", "gap": 0.0},
         "plate2": {"geometry": {"kind": "circle", "a": 1.0},
                    "bc": {"type": "soft_hinge"},
@@ -206,7 +206,7 @@ def _ktn_stamp_problem():
 
     d = tomllib.loads((_ROOT / "cases" / "ci" / "lshape_stamp.toml")
                       .read_text(encoding="utf-8"))
-    d["model"] = {"theory": "ktn", "h": 0.1}
+    d["model"] = {"theory": "ktn_linear", "h": 0.1}
     d.pop("output", None)
     return Problem.from_dict(d)
 

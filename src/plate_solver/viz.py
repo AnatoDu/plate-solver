@@ -314,7 +314,7 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
         ax.set_aspect("equal")
         # при КТН зона контакта определяется прогибом НИЖНЕЙ лицевой (§21)
         ttl = "Реакция r(x, y) и зона контакта"
-        if theory == "ktn":
+        if theory in ("ktn", "ktn_linear", "ktn_full"):
             ttl += " (зона — по нижней лицевой)"
         ax.set_title(ttl)
         fig.colorbar(pcm, ax=ax, label="r")

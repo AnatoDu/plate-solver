@@ -209,7 +209,7 @@ class Result:
         theory = classic: обе лицевые ≡ срединной, dh ≡ 0. Классическое
         3D-восстановление — независимая диагностика (NOTES §21.2).
         """
-        if self.problem.model is None or self.problem.model.theory != "ktn":
+        if self.problem.model is None or self.problem.model.theory != "ktn_linear":
             return self.w_grid.copy(), self.w_grid.copy(), \
                 np.zeros_like(self.w_grid)
         from .ktn import KTNParams
@@ -506,7 +506,9 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
 
-    if problem.model.theory == "karman":                  # геометрическая нелинейность (v0.4)
+    if problem.model.theory in ("karman", "ktn_full"):    # нелинейные теории
+        # ktn_full строит собственный решатель в N2; на вехе N0 — KarmanPlate
+        # как носитель quad/структуры, а _solve_bending отвергает ktn_full.
         from .membrane import KarmanPlate
 
         solver = KarmanPlate.from_config(dom, cfg, bc_type=problem.bc.type,
@@ -558,6 +560,8 @@ def _grid_fields(dom, cfg: Config, evaluate) -> tuple[np.ndarray, np.ndarray, np
 
 def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     f = _uniform(cfg, solver.quad) if f_values is None else f_values
+    if problem.model.theory == "ktn_full":
+        return _solve_ktn_full(problem, cfg, dom, solver, f, warnings)
     if problem.model.theory == "karman":
         return _solve_karman(problem, cfg, dom, solver, f, warnings)
     q = solver.quad
@@ -567,8 +571,8 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
         evaluate = lambda X, Y: solver.deflection(c, X, Y)      # noqa: E731
         cond = float(solver.cond)
         w_ktn = None
-        if problem.model.theory == "ktn":
-            # КТН при защемлении: кривизна из кэша Δ(ω²Φ) (A3.3)
+        if problem.model.theory == "ktn_linear":
+            # ktn_linear при защемлении: кривизна из кэша Δ(ω²Φ) (A3.3)
             lap_w = solver.laplacian_at_quad(c)
             kp = KTNParams.from_config(cfg)
             w_ktn = kp.corrected_deflection(w_nodes, lap_w, cfg.q0,
@@ -580,7 +584,7 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
         c = cw
         cond = float(solver.poisson.cond)
         w_ktn = None
-        if problem.model.theory == "ktn":
+        if problem.model.theory == "ktn_linear":
             # изгиб без контакта: corrected_deflection при r = 0
             lap_w = -solver.poisson.evaluate_at_quad(cM) / solver.D
             kp = KTNParams.from_config(cfg)
@@ -627,6 +631,18 @@ def _solve_karman(problem, cfg, dom, solver, f, warnings) -> Result:
     object.__setattr__(res, "_c_ref", c)
     object.__setattr__(res, "_karman_ref", kr)
     return res
+
+
+def _solve_ktn_full(problem, cfg, dom, solver, f, warnings) -> Result:
+    """Полная нелинейная КТН (§3, §5). Веха N2.
+
+    ЗАГЛУШКА N0: таксономия и маршрутизация заведены; решатель
+    :class:`~plate_solver.ktn_full.KTNPlate` (члены (A), (B) поверх KarmanPlate
+    + лицевая постобработка) реализуется на вехе N2 в ``ktn_full.py``.
+    """
+    raise NotImplementedError(
+        "theory = 'ktn_full': полный нелинейный решатель КТН (KTNPlate) — "
+        "веха N2 (src/plate_solver/ktn_full.py)")
 
 
 def _gap_field_values(spec, quad):
@@ -698,7 +714,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
                 f"см. {_SCHEMA_DOC}#contact")
         delta = gmin                                     # скаляр для отчёта: min Δ
 
-    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn" else None
+    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn_linear" else None
     mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=delta_val, ktn=ktn,
                      load_values=f_values)
     cres = mor.solve()
@@ -831,7 +847,7 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
     min_shape = float(np.min(shape_fm)) if np.ndim(shape) else shape
     level_lo = 1e-8 * scale - min_shape
 
-    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn" else None
+    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn_linear" else None
     state = {"r": None, "res": None, "iters": 0, "calls": 0}
 
     def F(level: float) -> float:
