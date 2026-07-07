@@ -162,6 +162,29 @@ def make_annulus(a: float = 1.0, b: float = 0.4) -> Domain:
     return Domain(r_diff(circle_expr(a), circle_expr(b)), (-a, a, -a, a))
 
 
+def make_plate_with_hole(x1: float, x2: float, y1: float, y2: float, *,
+                         hole_a: float, hole_cx: float = 0.0,
+                         hole_cy: float = 0.0) -> Domain:
+    r"""МНОГОСВЯЗНАЯ область: прямоугольник [x1,x2]×[y1,y2] с КРУГЛЫМ отверстием
+    радиуса ``hole_a`` в центре ``(hole_cx, hole_cy)`` (библиотека областей §5.3).
+
+    R-разность (прил. B): ``ω = ω_rect ∧ (−ω_hole)`` — на обоих контурах
+    (внешний прямоугольник и граница отверстия) ``ω = 0``, поэтому структура
+    ``ω^s φ`` автоматически удовлетворяет тому же типу КУ на обеих границах.
+    Производные ``ω`` — символьно из SymPy. У углов прямоугольника и вблизи
+    выреза возможны старшие особенности (NOTES §10/§24).
+    """
+    if not (x1 < x2 and y1 < y2):
+        raise ValueError("Требуется x1 < x2 и y1 < y2.")
+    if hole_a <= 0:
+        raise ValueError("Радиус отверстия hole_a должен быть положительным.")
+    if not (x1 < hole_cx - hole_a and hole_cx + hole_a < x2
+            and y1 < hole_cy - hole_a and hole_cy + hole_a < y2):
+        raise ValueError("Отверстие должно целиком лежать внутри прямоугольника.")
+    omega = r_diff(rectangle_expr(x1, x2, y1, y2), circle_expr(hole_a, hole_cx, hole_cy))
+    return Domain(omega, (x1, x2, y1, y2))
+
+
 def make_L(side: float = 1.0, cut: float = 0.5) -> Domain:
     """L-образная область: квадрат [0,side]² без вырезанного угла [cut,side]².
 
@@ -251,5 +274,6 @@ __all__ = [
     "make_rectangle",
     "make_L",
     "make_annulus",
+    "make_plate_with_hole",
     "make_compose",
 ]

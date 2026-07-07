@@ -842,23 +842,21 @@ def _validate_cross(p: Problem) -> None:
         if p.model.theory == "ktn_linear":
             _fail("model.theory", "ktn_linear", "classic при bc.type = mixed (v0.3)", "bc")
     if p.model.theory in NONLINEAR_THEORIES:
-        # Рамки нелинейных теорий (§1): канонические области (круг,
-        # прямоугольник/квадрат), изгибные КУ clamped|soft_hinge, БЕЗ контакта.
-        # Нелинейный контакт (МОР поверх Кармана/КТН) — задел v0.6.0.
+        # Рамки нелинейных теорий (v0.6.0): любые области, включая неканонические
+        # и МНОГОСВЯЗНЫЕ (L-форма, кольцо, compose с вырезом — R-операции над ω,
+        # §5). Изгибные КУ clamped|soft_hinge. Контакт — только v0.6.0-тракт (§4).
         th = p.model.theory
-        if p.geometry.kind not in ("circle", "rectangle"):
-            _fail("model.theory", th,
-                  "geometry.kind = circle | rectangle (нелинейные теории — на "
-                  "канонических областях; L-форма/кольцо/compose — направление "
-                  "развития)", "model")
         if p.bc.type not in ("clamped", "soft_hinge"):
             _fail("bc.type", p.bc.type,
                   f"clamped | soft_hinge при theory = {th} (мембранная связь на "
                   "смешанных КУ — направление развития)", "bc")
         if p.contact.enabled:
+            # нелинейный контакт МОР+КТН — веха N3 (contact_nl.py); линейный
+            # ContactMOR к нелинейной теории неприменим.
             _fail("contact.enabled", True,
                   f"false при theory = {th} (нелинейный контакт — МОР поверх "
-                  "Кармана/КТН — направление развития v0.6.0)", "model")
+                  "КТН — направление развития, веха N3 v0.6.0, contact_nl.py)",
+                  "model")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):

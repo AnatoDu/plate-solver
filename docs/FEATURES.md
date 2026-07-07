@@ -165,9 +165,10 @@ tests/test_doc_matrix.py).
 | geometry | `Domain` | API.md | run_ladder_mms.py, test_stresses.py |
 | geometry | `circle_expr` | API.md | test_geometry_registry.py |
 | geometry | `make_L` | API.md, README.md | run_clamped_lshape.py, run_ktn.py, run_lshape_contact.py |
-| geometry | `make_annulus` | API.md | test_geometry_registry.py |
+| geometry | `make_annulus` | API.md | test_geometry_registry.py, test_multiply_connected.py |
 | geometry | `make_circle` | API.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_circle.py |
 | geometry | `make_compose` | API.md | test_geometry_registry.py |
+| geometry | `make_plate_with_hole` | API.md | test_multiply_connected.py |
 | geometry | `make_rectangle` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_clamped.py |
 | geometry | `r_and` | API.md, NOTES.md | test_contact.py, test_geometry.py, test_geometry_registry.py |
 | geometry | `r_diff` | API.md | test_geometry_registry.py |
@@ -181,7 +182,7 @@ tests/test_doc_matrix.py).
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
 | ktn_full | `KTNPlate` | ALGORITHMS.md, API.md, MIGRATION.md | 06_theory_comparison.ipynb, test_ktn_full.py, test_unified_theory.py |
-| ktn_solver | `KTNSolver` | API.md | test_unified_theory.py |
+| ktn_solver | `KTNSolver` | API.md | test_multiply_connected.py, test_unified_theory.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |

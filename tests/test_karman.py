@@ -143,10 +143,13 @@ def test_ktn_method_rejected_for_karman():
                   "model.ktn_method", "ktn_full")
 
 
-def test_karman_geometry_fence():
-    """Карман в v0.4.0 — только круг/прямоугольник (§1); кольцо/L отвергаются."""
-    _expect_error(_case(geometry={"kind": "annulus", "a": 1.0, "b": 0.4}),
-                  "model.theory", "circle | rectangle")
+def test_karman_multiply_connected_and_noncanonical_allowed():
+    """v0.6.0: нелинейные теории допускают многосвязные/неканонические формы (§5)."""
+    # кольцо (многосвязное) и L-форма (неканоническая) теперь ВАЛИДНЫ для karman
+    p = Problem.from_dict(_case(geometry={"kind": "annulus", "a": 1.0, "b": 0.4}))
+    assert p.geometry.kind == "annulus" and p.model.theory == "karman"
+    p = Problem.from_dict(_case(geometry={"kind": "L", "side": 1.0, "cut": 0.5}))
+    assert p.geometry.kind == "L"
 
 
 def test_karman_rejects_contact():
