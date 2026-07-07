@@ -26,9 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "plate_solver"
 
 #: модули с публичным API (плоский пакет, фасад — __init__)
-API_MODULES = ("analytic", "analytic_auto", "clamped", "cli", "config",
-               "contact", "dispatch", "geometry", "ktn", "ladder", "plate",
-               "poisson", "problem", "references", "verify_fem", "viz")
+API_MODULES = ("analytic", "analytic_auto", "benchmarks", "clamped", "cli",
+               "config", "contact", "dispatch", "geometry", "ktn", "ladder",
+               "membrane", "plate", "poisson", "problem", "references",
+               "verify_fem", "viz")
 
 
 # --------------------------------------------------------------------------- #

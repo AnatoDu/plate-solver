@@ -23,7 +23,7 @@ from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 from .problem import CaseError, Problem
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 #: фасад: имя → модуль; секции — комментариями
 _FACADE: dict[str, str] = {
@@ -42,6 +42,9 @@ _FACADE: dict[str, str] = {
     "PlateBending": "plate",
     "ClampedPlate": "clamped",
     "MixedRectPlate": "clamped",
+    # -- геометрическая нелинейность (теория Кармана) ---------------------- #
+    "KarmanPlate": "membrane",
+    "KarmanResult": "membrane",
     # -- контакт (МОР) ------------------------------------------------------ #
     "solve_contact": "contact",
     "ContactMOR": "contact",

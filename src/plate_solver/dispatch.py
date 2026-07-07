@@ -506,7 +506,12 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
 
-    if problem.bc.type == "clamped":
+    if problem.model.theory == "karman":                  # геометрическая нелинейность (v0.4)
+        from .membrane import KarmanPlate
+
+        solver = KarmanPlate.from_config(dom, cfg, bc_type=problem.bc.type,
+                                         inplane_bc=problem.model.inplane_bc)
+    elif problem.bc.type == "clamped":
         solver = ClampedPlate.from_config(dom, cfg)
     elif problem.bc.type == "mixed":                       # mixed (v0.3)
         from .clamped import MixedRectPlate
@@ -553,6 +558,8 @@ def _grid_fields(dom, cfg: Config, evaluate) -> tuple[np.ndarray, np.ndarray, np
 
 def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     f = _uniform(cfg, solver.quad) if f_values is None else f_values
+    if problem.model.theory == "karman":
+        return _solve_karman(problem, cfg, dom, solver, f, warnings)
     q = solver.quad
     if problem.bc.type in ("clamped", "mixed"):
         c = solver.solve(f)
@@ -588,6 +595,37 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
                  w_max_classic=w_max_classic if w_ktn is not None else None)
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", c)
+    return res
+
+
+def _solve_karman(problem, cfg, dom, solver, f, warnings) -> Result:
+    r"""Геометрически-нелинейный тракт (теория Кармана, §5).
+
+    :class:`~plate_solver.membrane.KarmanPlate` решает систему Фёппля–Кармана
+    итерацией Пикара с шагами по нагрузке; ``Result`` несёт нелинейный
+    ``w_max``, линейный ``w_max_classic`` (как для ``ktn``) и полный
+    :class:`~plate_solver.membrane.KarmanResult` (история сходимости,
+    мембранные усилия) в поле ``_karman_ref`` — для ноутбука и анализа.
+    Несошедшаяся итерация — предупреждение в ``result.json`` (не ошибка).
+    """
+    kr = solver.solve(f)
+    c = kr.cw
+    w_nodes = kr.w_nodes
+    warn = list(warnings)
+    if not kr.converged:
+        last = kr.history[-1][2] if kr.history else float("nan")
+        warn.append(
+            f"karman: итерация Пикара не достигла karman_tol за karman_max_iter "
+            f"(последняя относительная невязка {last:.2e}); увеличьте "
+            f"karman_max_iter или n_load_steps")
+    Xg, Yg, W = _grid_fields(dom, cfg, lambda X, Y: solver.deflection(c, X, Y))
+    res = Result(problem=problem, config=cfg, w_max=kr.w_max,
+                 cond=float(solver.cond), Xg=Xg, Yg=Yg, w_grid=W,
+                 warnings=tuple(warn), w_nodes=w_nodes,
+                 w_max_classic=kr.w_max_classic)
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", c)
+    object.__setattr__(res, "_karman_ref", kr)
     return res
 
 

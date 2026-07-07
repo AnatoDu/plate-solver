@@ -39,7 +39,19 @@ COMPOSE_MAX_NODES = 7
 GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "compose")
 BC_TYPES = ("soft_hinge", "clamped")
 LOAD_TYPES = ("uniform", "patch", "point")
-THEORIES = ("classic", "ktn")
+# Лестница моделей одним ключом [model] theory (v0.4.0):
+#   classic — линейный Кирхгоф; karman — геометрически-НЕЛИНЕЙНОЕ решение
+#   Фёппля–Кармана (мембранная связь L(Φ, w)); ktn — ЛИНЕЙНЫЕ поправки
+#   сдвига/обжатия постобработкой на решении Кирхгофа (не нелинейная теория).
+THEORIES = ("classic", "karman", "ktn")
+# Полная нелинейная КТН (Карман + сдвиг + обжатие) — задел релиза v0.5.0:
+# значение распознаётся, но при обращении даёт NotImplementedError (§1.1 ТЗ).
+RESERVED_THEORIES = ("ktn_full",)
+# Закрепление кромки в плане (осмысленно только при theory = "karman", §3.3):
+#   immovable — u = v = 0 на ∂Ω (кромка не втягивается, натяжение максимально);
+#   movable   — N·n = 0 (кромка свободна в плане; эффект слабее, но НЕнулевой).
+INPLANE_BCS = ("immovable", "movable")
+KARMAN_METHODS = ("picard", "newton")
 REFERENCES = ("analytic", "mms", "fem", "none")
 STOP_CRITERIA = ("dr", "comp")
 
@@ -152,16 +164,25 @@ class LoadSpec:
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """Модель: классика (Кирхгоф, расщепление) или поправки КТН.
+    """Модель: лестница теорий ``classic | karman | ktn`` (§4).
 
     ``E``, ``nu``, ``h`` со значением None берутся из дефолтов Config
-    (physics-дефолты не дублируются).
+    (physics-дефолты не дублируются). ``inplane_bc`` и параметры нелинейной
+    итерации (``n_load_steps``, ``karman_*``) осмысленны только при
+    ``theory = "karman"``; при ``classic``/``ktn`` их задание отвергается
+    валидатором. None-параметры итерации наследуют дефолты Config.
     """
 
     theory: str = "classic"
     E: float | None = None
     nu: float | None = None
     h: float | None = None
+    inplane_bc: str = "immovable"           # karman: immovable | movable (§3.3)
+    n_load_steps: int | None = None         # karman: шагов по нагрузке (§5.2)
+    karman_relax: float | None = None       # karman: недорелаксация θ ∈ (0, 1]
+    karman_max_iter: int | None = None      # karman: предел итераций Пикара
+    karman_tol: float | None = None         # karman: относит. порог останова
+    karman_method: str | None = None        # karman: picard | newton
 
 
 GAP_KINDS = ("const", "plane", "paraboloid", "steps")
@@ -357,6 +378,12 @@ class Problem:
             v = getattr(self.model, attr)
             if v is not None:
                 kw[key] = v
+        # параметры нелинейной итерации Кармана (§5.4); None ⇒ дефолт Config
+        for attr in ("n_load_steps", "karman_relax", "karman_max_iter",
+                     "karman_tol", "karman_method"):
+            v = getattr(self.model, attr)
+            if v is not None:
+                kw[attr] = v
         if self.load.q0 is not None:
             kw["q0"] = self.load.q0
         if self.geometry.kind in ("circle", "annulus") and self.geometry.a is not None:
@@ -559,8 +586,17 @@ def _parse_load(data) -> LoadSpec:
 def _parse_model(data) -> ModelSpec:
     if not isinstance(data, dict):
         _fail("model", data, "таблица (секция TOML)", "model")
-    _require_keys("model", data, {"theory", "E", "nu", "h"}, "model")
+    _require_keys("model", data,
+                  {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
+                   "karman_relax", "karman_max_iter", "karman_tol",
+                   "karman_method"}, "model")
     theory = data.get("theory", "classic")
+    if theory in RESERVED_THEORIES:
+        # «при обращении» (§1.1): значение распознано, но не реализовано.
+        raise NotImplementedError(
+            "model.theory = 'ktn_full' (полная нелинейная КТН: Карман + "
+            "поперечный сдвиг + обжатие) — направление развития, релиз "
+            f"v0.5.0. В v0.4.0 доступны: {' | '.join(THEORIES)}.")
     if theory not in THEORIES:
         _fail("model.theory", theory, " | ".join(THEORIES), "model")
     E = _number("model", data, "E", "model", positive=True)
@@ -568,7 +604,33 @@ def _parse_model(data) -> ModelSpec:
     if nu is not None and not (-1.0 < nu < 0.5):
         _fail("model.nu", nu, "−1 < nu < 0.5", "model")
     h = _number("model", data, "h", "model", positive=True)
-    return ModelSpec(theory=theory, E=E, nu=nu, h=h)
+    # Закрепление кромки в плане и параметры нелинейной итерации осмысленны
+    # ТОЛЬКО для karman (§4): при classic/ktn их задание — ошибка постановки.
+    karman_only = {"inplane_bc", "n_load_steps", "karman_relax",
+                   "karman_max_iter", "karman_tol", "karman_method"}
+    provided = karman_only & set(data)
+    if provided and theory != "karman":
+        key = sorted(provided)[0]
+        _fail(f"model.{key}", data[key],
+              "ключ осмыслен только при theory = 'karman' (classic/ktn — "
+              "линейный изгиб без мембранной связи)", "model")
+    inplane_bc = data.get("inplane_bc", "immovable")
+    if inplane_bc not in INPLANE_BCS:
+        _fail("model.inplane_bc", inplane_bc, " | ".join(INPLANE_BCS), "model")
+    n_load_steps = _integer("model", data, "n_load_steps", "model", minimum=1)
+    karman_max_iter = _integer("model", data, "karman_max_iter", "model", minimum=1)
+    karman_relax = _number("model", data, "karman_relax", "model", positive=True)
+    if karman_relax is not None and karman_relax > 1.0:
+        _fail("model.karman_relax", karman_relax,
+              "0 < θ ≤ 1 (недорелаксация)", "model")
+    karman_tol = _number("model", data, "karman_tol", "model", positive=True)
+    karman_method = data.get("karman_method")
+    if karman_method is not None and karman_method not in KARMAN_METHODS:
+        _fail("model.karman_method", karman_method, " | ".join(KARMAN_METHODS), "model")
+    return ModelSpec(theory=theory, E=E, nu=nu, h=h, inplane_bc=inplane_bc,
+                     n_load_steps=n_load_steps, karman_relax=karman_relax,
+                     karman_max_iter=karman_max_iter, karman_tol=karman_tol,
+                     karman_method=karman_method)
 
 
 def _parse_gap_field(data: dict) -> GapSpec:
@@ -736,6 +798,22 @@ def _validate_cross(p: Problem) -> None:
                   "направление развития)", "bc")
         if p.model.theory == "ktn":
             _fail("model.theory", "ktn", "classic при bc.type = mixed (v0.3)", "bc")
+    if p.model.theory == "karman":
+        # Рамки v0.4.0 (§1): канонические области (круг, прямоугольник/квадрат),
+        # изгибные КУ clamped|soft_hinge, БЕЗ контакта. Прочее — задел v0.5.0.
+        if p.geometry.kind not in ("circle", "rectangle"):
+            _fail("model.theory", "karman",
+                  "geometry.kind = circle | rectangle (Карман — на канонических "
+                  "областях; L-форма/кольцо/compose — направление развития "
+                  "v0.5.0)", "model")
+        if p.bc.type not in ("clamped", "soft_hinge"):
+            _fail("bc.type", p.bc.type,
+                  "clamped | soft_hinge при theory = karman (мембранная связь на "
+                  "смешанных КУ — направление развития)", "bc")
+        if p.contact.enabled:
+            _fail("contact.enabled", True,
+                  "false при theory = karman (нелинейный контакт — МОР поверх "
+                  "Кармана — направление развития v0.5.0)", "model")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):

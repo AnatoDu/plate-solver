@@ -109,6 +109,43 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   напряжений лицевых поверхностей (канон NOTES §19).
 - `ktn.PlateMaterial`, `ktn.flexural_rigidity` — классика.
 
+## Геометрическая нелинейность (теория Кармана, v0.4.0)
+
+- `membrane.KarmanPlate` — нелинейный решатель Фёппля–Кармана:
+  `from_config(domain, cfg, bc_type=..., inplane_bc=...)`, `solve(f_values)` /
+  `solve_uniform(q0)` → `KarmanResult`; поля `deflection`, `deflection_at_quad`,
+  `structure_at`, `moments_at`, `membrane_forces_at`, `w_max_on_grid`, `cond`.
+  Итерация Пикара (ускорение Андерсона) с шагами по нагрузке; `inplane_bc`
+  `immovable` (u=v=0) | `movable` (N·n=0).
+- `membrane.KarmanResult` — прогиб `cw`/`w_nodes`, `w_max`, `w_max_classic`
+  (линейный Кирхгоф), перемещения `cu`/`cv`, усилия `Nx`/`Ny`/`Nxy`,
+  `converged`, `n_iter`, `history` (сходимость по уровням нагрузки).
+- `benchmarks` — независимые эталоны большого прогиба (чистые формулы и
+  замороженные таблицы с источниками; единый источник чисел для тестов и
+  ноутбука). Нормировки (прил. B): `pbar(p, a, E, h)`,
+  `pbar_to_pa4_over_Dh`, `pbar_to_pa4_over_64Dh`. Линейные наклоны Gate L:
+  `kirchhoff_clamped_circle`, `kirchhoff_hinge_circle`,
+  `kirchhoff_clamped_square`, `kirchhoff_hinge_square`. Нелинейные эталоны:
+  `hencky_center_deflection` (мембрана, `HENCKY_W_COEFF`, `HENCKY_SIGMA_COEFF`),
+  `way_clamped_circle` (ряды), `timoshenko_clamped_circular` и
+  `timoshenko_clamped_circular_inverse` (одночлен), `levy_square_clamped`
+  (ряды Фурье), `levy_square_ss_immovable` (`LEVY_SQUARE_SS_IMMOVABLE`,
+  `LEVY_SQUARE_SS_MOVABLE`).
+
+```python
+from plate_solver import Config
+from plate_solver.geometry import make_circle
+from plate_solver.membrane import KarmanPlate
+from plate_solver import benchmarks as bm
+
+# защемлённый круг, неподвижная кромка, P̄ = 6.321 (E=h=a=1 ⇒ P̄ = q0)
+cfg = Config(E=1.0, h=1.0, nu=0.3, a=1.0, q0=6.321, p=12, Q=200, n_load_steps=4)
+kp = KarmanPlate.from_config(make_circle(1.0), cfg, bc_type="clamped",
+                             inplane_bc="immovable")
+r = kp.solve_uniform()
+print(r.w_max, bm.way_clamped_circle())     # ~0.80 (Way: P̄=6.321 → w/h=0.800)
+```
+
 ## Эталоны и верификация
 
 - `references.resolve_reference(problem)` → список `Reference`;

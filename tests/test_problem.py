@@ -189,7 +189,8 @@ def test_verify_checks():
 
 
 def test_model_checks():
-    _expect_error(_case(model={"theory": "mindlin"}), "model.theory", "classic | ktn")
+    _expect_error(_case(model={"theory": "mindlin"}), "model.theory",
+                  "classic | karman | ktn")
     _expect_error(_case(model={"nu": 0.7}), "model.nu")
 
 

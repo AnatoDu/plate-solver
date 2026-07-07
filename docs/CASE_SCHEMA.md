@@ -36,10 +36,17 @@ type = "uniform"        # uniform | patch | point
 q0 = 4.0                # равномерная поперечная нагрузка (q0 > 0 «вниз»)
 
 [model]
-theory = "classic"      # classic | ktn (поправки Кармана–Тимошенко–Нагди)
+theory = "classic"      # classic | karman | ktn (лестница теорий, §model)
 # E = 2.1e6             # дефолты Config: E=2.1e6, nu=0.3, h=1.0
 # nu = 0.3
 h = 0.06                # толщина (важно для ktn)
+# --- только при theory = "karman" (геометрическая нелинейность) --- #
+# inplane_bc = "immovable"  # immovable (u=v=0) | movable (N·n=0)
+# n_load_steps = 1          # шагов по нагрузке (большой прогиб — увеличить)
+# karman_relax = 1.0        # недорелаксация θ ∈ (0, 1] итерации Пикара
+# karman_max_iter = 200     # предел итераций Пикара на уровень нагрузки
+# karman_tol = 1.0e-8       # относит. порог останова ‖Δw‖/‖w‖
+# karman_method = "picard"  # picard | newton (ускоритель, опционально)
 
 [discretization]
 p = 10                  # степень Чебышёва по оси (N = (p+1)²); дефолт 12
@@ -76,8 +83,14 @@ figures = true
 | load.P | float | — | число (point: результирующая сила) | dispatch.py |
 | load.x0, y0 | float | — | точка приложения (point) | dispatch.py |
 | load.eps | float | 0.05·min(шир., выс. bbox) | > 0 (point: радиус пятна) | dispatch.py |
-| model.theory | str | "classic" | classic, ktn | ktn.py |
+| model.theory | str | "classic" | classic, karman, ktn | dispatch.py |
 | model.E, nu, h | float | дефолты Config | E>0, −1<nu<0.5, h>0 | config.py |
+| model.inplane_bc | str | "immovable" | immovable, movable (только karman) | membrane.py |
+| model.n_load_steps | int | дефолт Config (1) | ≥ 1 (только karman) | membrane.py |
+| model.karman_relax | float | дефолт Config (1.0) | 0 < θ ≤ 1 (только karman) | membrane.py |
+| model.karman_max_iter | int | дефолт Config (200) | ≥ 1 (только karman) | membrane.py |
+| model.karman_tol | float | дефолт Config (1e-8) | > 0 (только karman) | membrane.py |
+| model.karman_method | str | дефолт Config ("picard") | picard, newton (только karman) | membrane.py |
 | contact.enabled | bool | false | true, false | contact.py |
 | contact.gap | float | — | > 0 (абсолютный зазор Δ) | contact.py |
 | contact.gap_factor | float | — | > 0 (Δ = gap_factor·w_free) | dispatch.py |
@@ -221,10 +234,39 @@ print(float(pb.deflection(cw, 0.0, 0.0)))
 
 ## model
 
-`classic` — теория Кирхгофа (расщепление). `ktn` — поправки уточнённой
-теории (поперечный сдвиг + обжатие): в контакте — через смещение контактной
-поверхности, в изгибе — `corrected_deflection` при r = 0; кривизна берётся
-из (P1) как Δw = −M/D, без численного дифференцирования.
+Лестница теорий одним ключом `theory` — с ЧЕСТНЫМИ терминами (важно, чтобы
+не смешивать линейные поправки и геометрическую нелинейность):
+
+* `classic` — линейная теория Кирхгофа (расщепление бигармоники);
+* `karman` — геометрически-**НЕЛИНЕЙНОЕ** решение Фёппля–Кармана: прогиб
+  входит квадратично в мембранные деформации, поле усилий `N` ужесточает
+  пластину (мембранная связь `L(Φ, w)`). Итерация Пикара по замороженным
+  усилиям `N_k` с наращиванием нагрузки (`membrane.py`, `THEORY.md`);
+* `ktn` — **ЛИНЕЙНЫЕ** поправки поперечного сдвига/обжатия (часть теории
+  Тимошенко–Нагди) ПОСТОБРАБОТКОЙ на решении Кирхгофа (`corrected_deflection`
+  при r = 0; кривизна из (P1) как Δw = −M/D, без численного
+  дифференцирования). Это НЕ нелинейная теория.
+
+Полная нелинейная КТН (`ktn_full` = Карман + сдвиг + обжатие) — задел
+релиза v0.5.0: значение распознаётся, но при обращении даёт
+`NotImplementedError`.
+
+**Только для `karman`.** `inplane_bc` — закрепление кромки В ПЛАНЕ:
+`immovable` (u = v = 0 на ∂Ω — кромка не втягивается, мембранное натяжение
+максимально; основной режим и лучшие эталоны) либо `movable` (N·n = 0 —
+кромка свободна в плане, эффект слабее, но НЕнулевой). Параметры нелинейной
+итерации: `n_load_steps` (шагов по нагрузке — для больших прогибов
+увеличивают; тёплый старт по уровням), `karman_relax` (недорелаксация
+θ ∈ (0, 1]), `karman_max_iter`, `karman_tol` (относительный останов
+‖Δw‖/‖w‖), `karman_method` (`picard` по умолчанию | `newton`). При
+`classic`/`ktn` задание любого из этих ключей — ошибка постановки.
+Рамки v0.4.0: круг и прямоугольник/квадрат, КУ `clamped`/`soft_hinge`,
+без контакта.
+
+**CLI-переопределение.** Флаги `plate-solve`/`plate-verify` `--theory`
+(`classic | karman | ktn`) и `--inplane-bc` (`immovable | movable`)
+переопределяют блок `[model]` — удобно гонять одну постановку тремя теориями
+(`--inplane-bc` — только вместе с `--theory karman`).
 
 ## contact
 

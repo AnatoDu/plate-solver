@@ -127,3 +127,16 @@ def test_report_smoke(tmp_path):
     assert "## Постановка" in txt and "## Сводные числа" in txt
     assert "## Верификация" in txt and "PASS" in txt
     assert "w_max" in txt
+
+
+def test_cli_theory_override(tmp_path, capsys):
+    """Флаги --theory / --inplane-bc переопределяют [model] (DoD: выбор теории через CLI)."""
+    from plate_solver.cli import main
+
+    case = _ROOT / "cases" / "ci" / "circle_clamped.toml"     # классика, малая P̄
+    # переопределить на karman: считается нелинейным трактом, exit 0
+    assert main([str(case), "--theory", "karman", "--inplane-bc", "immovable",
+                 "--out", str(tmp_path / "o")]) == 0
+    # --inplane-bc без karman — ошибка постановки (exit 1)
+    assert main([str(case), "--inplane-bc", "movable", "--out", str(tmp_path / "o2")]) == 1
+    assert "inplane-bc" in capsys.readouterr().err

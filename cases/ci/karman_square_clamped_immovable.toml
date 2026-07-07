@@ -1,0 +1,38 @@
+# Карман — защемлённый квадрат, неподвижная кромка (ν=0.316, эталон Levy).
+# Быстрый CI-случай (Q ≤ 256, умеренная нагрузка). Безразмерно: E=h=a=1 ⇒ P̄ = q0.
+# Полная сверка с таблицей Levy/IGA — tests/test_karman.py (маркер big).
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 60.0                # P̄ = 60 ⇒ w_c/h ≈ 0.68 (умеренно большой прогиб)
+
+[model]
+theory = "karman"
+inplane_bc = "immovable"
+E = 1.0
+nu = 0.316               # ν эталона Levy (§13: не смешивать с ν=0.3 Way/Hencky)
+h = 1.0
+n_load_steps = 4
+karman_tol = 1.0e-6
+karman_max_iter = 300
+
+[discretization]
+p = 12
+Q = 140
+grid_n = 48
+
+[verify]
+reference = "none"
+
+[output]
+dir = "results/karman_square_clamped_immovable"
