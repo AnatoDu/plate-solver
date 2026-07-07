@@ -184,7 +184,7 @@ tests/test_doc_matrix.py).
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
 | ktn_full | `KTNPlate` | ALGORITHMS.md, API.md, MIGRATION.md | 06_theory_comparison.ipynb, test_ktn_full.py, test_unified_theory.py |
-| ktn_solver | `KTNSolver` | API.md | test_contact_ktn.py, test_multiply_connected.py, test_unified_theory.py |
+| ktn_solver | `KTNSolver` | API.md, NOTES.md | test_contact_ktn.py, test_multiply_connected.py, test_unified_theory.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |
@@ -227,7 +227,7 @@ tests/test_doc_matrix.py).
 | references | `VerifyReport` | API.md | references.py |
 | references | `resolve_reference` | API.md | test_analytic_factory.py, test_mms_reference.py, test_references.py |
 | references | `verify_result` | API.md, dispatch_flow.md | 02_annulus_case.ipynb, run_reference.py, test_analytic_factory.py |
-| theory | `TheoryParams` | API.md | test_unified_theory.py |
+| theory | `TheoryParams` | API.md, NOTES.md | test_unified_theory.py |
 | theory | `classic` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, run_ktn.py, run_reference.py |
 | theory | `from_preset` | API.md | test_unified_theory.py |
 | theory | `karman` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, run_reference.py, test_cli.py |

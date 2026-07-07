@@ -172,11 +172,51 @@ class NonlinearContactMOR:
         u_c = self._face_deflection(cw)
         return self._package(r, w, u_c, cw, it, converged, hist, n_inner)
 
-    # -- совмещённая схема (N4) ----------------------------------------- #
+    # -- совмещённая схема (рабочая, предмет T7; прил. C.2) -------------- #
     def _solve_merged(self) -> NonlinearContactResult:
-        raise NotImplementedError(
-            "scheme = 'merged': совмещённый решатель МОР–КТН (один шаг МОР на один "
-            "шаг Пикара, T7) — веха N4 (contact_nl._solve_merged)")
+        r"""Совмещённый МОР–КТН: ОДИН шаг Пикара на ОДИН шаг МОР (§4.2, прил. C.2).
+
+        Два итерационных процесса связаны в один цикл с общей недорелаксацией:
+        нелинейное состояние (``N``, КТН-члены) и реакция ``r`` обновляются
+        совместно, без полного внутреннего решателя ⇒ быстрее вложенной схемы в
+        разы. Сходимость — предмет теоремы T7 (композиция сжатий МОР T4 и
+        Пикара T5; при малости нагрузки/зазора — сжатие). Гейт R4: совпадает с
+        вложенной до допуска.
+        """
+        solver, q = self.solver, self.solver.quad
+        q0 = float(self.cfg.q0)
+        theta = float(self.cfg.karman_relax)                # общая недорелаксация
+        c = self._free.cw.copy()
+        r = np.zeros(q.x.size)
+        hist: list[float] = []
+        converged = False
+        it = 0
+        for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
+            w_old = c @ solver._psi
+            b_level = solver._load_vector(q0 - r)           # нагрузка при текущей реакции
+            c, _forces = solver._picard_map(c, b_level, theta)  # ОДИН шаг Пикара
+            u_c = self._face_deflection(c)
+            r_new = r.copy()
+            r_new[self.fmask] = (r[self.fmask]
+                                 + self.beta_eff * (u_c[self.fmask] - self._gap_f))
+            np.maximum(r_new, 0.0, out=r_new)
+            r_new[~self.fmask] = 0.0
+            # совместная сходимость: реакция И прогиб стабилизировались
+            dr = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
+            r_scale = float(np.sqrt(np.sum(q.w * r_new ** 2)))
+            res_r = dr / r_scale if r_scale > 0.0 else dr
+            w_new = c @ solver._psi
+            wn = float(np.sqrt(np.sum(q.w * w_new ** 2)))
+            res_w = float(np.sqrt(np.sum(q.w * (w_new - w_old) ** 2)) / wn) if wn > 0 else 0.0
+            res = max(res_r, res_w)
+            hist.append(res)
+            r = r_new
+            if res < self.tol:
+                converged = True
+                break
+        w = c @ solver._psi
+        u_c = self._face_deflection(c)
+        return self._package(r, w, u_c, c, it, converged, hist, it)
 
     def _package(self, r, w, u_c, cw, iters, converged, hist, n_inner):
         q = self.solver.quad

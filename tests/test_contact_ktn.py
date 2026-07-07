@@ -83,6 +83,24 @@ def test_r3_refinement_zero_equals_karman_contact():
 
 
 @pytest.mark.big
+def test_r4_merged_equals_nested():
+    """R4 (§4.2, §7): совмещённая схема совпадает с вложенной (эталон) до допуска."""
+    cfg = _cfg()
+    gap = 0.5 * _solver(cfg).solve_uniform().w_max
+    rn = NonlinearContactMOR(_solver(cfg), cfg, gap=gap, scheme="nested").solve()
+    rm = NonlinearContactMOR(_solver(cfg), cfg, gap=gap, scheme="merged").solve()
+    assert rm.converged                                  # совмещённый сходится (T7)
+    assert abs(rm.w_max - rn.w_max) / rn.w_max < 5e-3
+    assert abs(rm.r_max - rn.r_max) / rn.r_max < 5e-3
+    assert rm.n_contact == rn.n_contact
+
+
+def test_merged_scheme_default_and_faster():
+    """Совмещённая схема — по умолчанию (Config.contact_scheme='merged')."""
+    assert Config().contact_scheme == "merged"
+
+
+@pytest.mark.big
 def test_ktn_signature_in_contact():
     """Подпись КТН: зона/пик реакции ktn_full отличаются от karman (сглаживание §6.1)."""
     cfg = _cfg()
