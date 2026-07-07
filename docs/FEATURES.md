@@ -155,7 +155,7 @@ tests/test_doc_matrix.py).
 | contact | `sample_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `sample_pair_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `solve_contact` | API.md, README.md | test_analytic_factory.py, test_face_deflection.py |
-| contact_nl | `NonlinearContactMOR` | API.md | 07_theory_ladder.ipynb, test_contact_ktn.py |
+| contact_nl | `NonlinearContactMOR` | ALGORITHMS.md, API.md | 07_theory_ladder.ipynb, test_contact_ktn.py |
 | contact_nl | `NonlinearContactResult` | API.md | __init__.py, contact_nl.py |
 | diagnostics | `contact_components` | API.md | test_diagnostics.py |
 | diagnostics | `contact_report` | API.md | 07_theory_ladder.ipynb, test_diagnostics.py |
@@ -174,8 +174,8 @@ tests/test_doc_matrix.py).
 | geometry | `make_compose` | API.md | test_geometry_registry.py |
 | geometry | `make_plate_with_hole` | API.md | test_multiply_connected.py |
 | geometry | `make_rectangle` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_clamped.py |
-| geometry | `r_and` | API.md, NOTES.md | test_contact.py, test_geometry.py, test_geometry_registry.py |
-| geometry | `r_diff` | API.md | test_geometry_registry.py |
+| geometry | `r_and` | ALGORITHMS.md, API.md, NOTES.md | test_contact.py, test_geometry.py, test_geometry_registry.py |
+| geometry | `r_diff` | ALGORITHMS.md, API.md | test_geometry_registry.py |
 | geometry | `r_not` | API.md | test_geometry_registry.py |
 | geometry | `r_or` | API.md, NOTES.md | test_geometry.py |
 | geometry | `rectangle_expr` | API.md | geometry.py |
