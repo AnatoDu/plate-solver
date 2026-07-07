@@ -51,6 +51,9 @@ _FACADE: dict[str, str] = {
     # -- единая параметрическая модель теорий (v0.6.0) --------------------- #
     "TheoryParams": "theory",
     "KTNSolver": "ktn_solver",
+    # -- нелинейный контакт МОР+КТН (v0.6.0) ------------------------------- #
+    "NonlinearContactMOR": "contact_nl",
+    "NonlinearContactResult": "contact_nl",
     # -- контакт (МОР) ------------------------------------------------------ #
     "solve_contact": "contact",
     "ContactMOR": "contact",

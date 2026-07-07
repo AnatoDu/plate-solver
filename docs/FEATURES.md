@@ -155,6 +155,8 @@ tests/test_doc_matrix.py).
 | contact | `sample_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `sample_pair_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `solve_contact` | API.md, README.md | test_analytic_factory.py, test_face_deflection.py |
+| contact_nl | `NonlinearContactMOR` | API.md | test_contact_ktn.py |
+| contact_nl | `NonlinearContactResult` | API.md | __init__.py, contact_nl.py |
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_lshape_contact.py |
 | dispatch | `build_domain` | API.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
 | dispatch | `solve` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
@@ -182,7 +184,7 @@ tests/test_doc_matrix.py).
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
 | ktn_full | `KTNPlate` | ALGORITHMS.md, API.md, MIGRATION.md | 06_theory_comparison.ipynb, test_ktn_full.py, test_unified_theory.py |
-| ktn_solver | `KTNSolver` | API.md | test_multiply_connected.py, test_unified_theory.py |
+| ktn_solver | `KTNSolver` | API.md | test_contact_ktn.py, test_multiply_connected.py, test_unified_theory.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |
