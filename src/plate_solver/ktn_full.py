@@ -95,6 +95,26 @@ class KTNPlate(KarmanPlate):
         _, _, _, pxx, pyy, pxy = _w_structure(domain, basis, quad.x, quad.y, self._power)
         self._pxx, self._pyy, self._pxy = pxx, pyy, pxy
         self._lap_psi = pxx + pyy
+        self._lap_q = None                           # Δq для члена (A); см. set_load_laplacian
+
+    def set_load_laplacian(self, lap_q) -> None:
+        """Задать Δq в узлах квадратуры для члена КТН (A) ``−h_*²Δq`` (§7).
+
+        ``None`` ⇒ член опущен (равномерная нагрузка даёт Δq ≡ 0; разрывные
+        patch/point — Δq не гладкая, член опускается с пометкой в диспетчере).
+        """
+        self._lap_q = None if lap_q is None else np.asarray(lap_q, float)
+
+    def _load_vector(self, f_values):
+        r"""Вектор нагрузки КТН: ``∫q ψ − h_*²∫Δq ψ`` (член A, §3.4/§7).
+
+        Под равномерной нагрузкой второй член нулевой (Δq = 0); под НЕравномерной
+        (gaussian) он смещает даже СРЕДИННЫЙ прогиб КТН относительно классики.
+        """
+        b = super()._load_vector(f_values)
+        if self._include_ktn and self._lap_q is not None:
+            b = b - self._h_star_sq * (self._psi @ (self._W * self._lap_q))
+        return b
 
     @classmethod
     def from_config(cls, domain, cfg, *, bc_type="clamped", inplane_bc="immovable",

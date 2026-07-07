@@ -79,12 +79,13 @@ figures = true
 | geometry.tree | таблица | — | compose-дерево (см. #compose) | geometry.py |
 | bc.type | str | — (обяз.) | soft_hinge, clamped, mixed | plate.py / clamped.py |
 | bc.sides | массив таблиц | — | side: x1..y2; type: clamped, hinge, free | clamped.py (MixedRectPlate) |
-| load.type | str | — (обяз.) | uniform, patch, point | dispatch.py |
-| load.q0 | float | — | число (uniform, patch) | dispatch.py |
+| load.type | str | — (обяз.) | uniform, patch, point, gaussian | dispatch.py |
+| load.q0 | float | — | число (uniform, patch, gaussian: амплитуда) | dispatch.py |
 | load.zone | таблица | — | геометрия зоны (patch; язык — как geometry) | dispatch.py |
 | load.P | float | — | число (point: результирующая сила) | dispatch.py |
-| load.x0, y0 | float | — | точка приложения (point) | dispatch.py |
+| load.x0, y0 | float | — | центр (point, gaussian) | dispatch.py |
 | load.eps | float | 0.05·min(шир., выс. bbox) | > 0 (point: радиус пятна) | dispatch.py |
+| load.sigma | float | — | > 0 (gaussian: ширина/СКО) | dispatch.py |
 | model.theory | str | "classic" | classic, karman, ktn_linear, ktn_full (алиас ktn=ktn_linear) | dispatch.py |
 | model.E, nu, h | float | дефолты Config | E>0, −1<nu<0.5, h>0 | config.py |
 | model.inplane_bc | str | "immovable" | immovable, movable (нелинейные теории) | membrane.py |
@@ -214,6 +215,12 @@ type = "free"
 `q̃ = q0·[ω_zone > 0]`. `point` — сосредоточенная сила `P` в точке
 `(x0, y0)` как регуляризованный patch: круговое пятно радиуса `eps`,
 `q = P/(π·eps²)`; дефолт `eps = 0.05·min(ширина, высота bbox)`.
+`gaussian` — гладкая локализованная `q = q0·exp(−r²/(2σ²))` (центр `x0, y0`,
+ширина `sigma`): у неё `Δq` аналитична, поэтому проявляется член КТН
+`−h_*²Δq` (`theory = ktn_full`) — под НЕравномерной нагрузкой уже и СРЕДИННЫЙ
+прогиб КТН отличается от классики (в отличие от равномерной, где `Δq = 0`);
+эффект растёт с сужением `sigma`. Для `patch`/`point` (разрывная `q`) член
+`−h_*²Δq` опускается с пометкой в предупреждениях.
 
 ### Неравномерная нагрузка
 
