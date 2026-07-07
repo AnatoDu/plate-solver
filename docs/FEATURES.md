@@ -50,7 +50,7 @@ tests/test_doc_matrix.py).
 | model.ktn_method | CASE_SCHEMA.md | test_karman.py, test_ktn_full.py |
 | model.n_load_steps | ALGORITHMS.md, API.md, CASE_SCHEMA.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |
 | model.nu | ALGORITHMS.md, API.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
-| model.theory | CASE_SCHEMA.md, MIGRATION.md, NOTES.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |
+| model.theory | API.md, CASE_SCHEMA.md, MIGRATION.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |
 | output.dir | API.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | output.figures | CASE_SCHEMA.md, README.md | golden_config.py, run_circle_1d_2d.py, run_clamped_circle.py |
 | plate2.bc | API.md, CASE_SCHEMA.md, MIGRATION.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
@@ -130,7 +130,7 @@ tests/test_doc_matrix.py).
 | benchmarks | `LEVY_SQUARE_SS_IMMOVABLE` | API.md | test_karman.py |
 | benchmarks | `LEVY_SQUARE_SS_MOVABLE` | API.md | test_karman.py |
 | benchmarks | `hencky_center_deflection` | API.md | 06_theory_comparison.ipynb, test_karman.py |
-| benchmarks | `kirchhoff_clamped_circle` | API.md | test_karman.py, test_ktn_full.py |
+| benchmarks | `kirchhoff_clamped_circle` | API.md | test_karman.py, test_ktn_full.py, test_unified_theory.py |
 | benchmarks | `kirchhoff_clamped_square` | API.md | test_karman.py |
 | benchmarks | `kirchhoff_hinge_circle` | API.md | test_karman.py |
 | benchmarks | `kirchhoff_hinge_square` | API.md | test_karman.py |
@@ -180,7 +180,8 @@ tests/test_doc_matrix.py).
 | ktn | `PlateMaterial` | API.md | circular_plate.py, conftest.py, test_smoke.py |
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
-| ktn_full | `KTNPlate` | ALGORITHMS.md, API.md, MIGRATION.md | 06_theory_comparison.ipynb, test_ktn_full.py |
+| ktn_full | `KTNPlate` | ALGORITHMS.md, API.md, MIGRATION.md | 06_theory_comparison.ipynb, test_ktn_full.py, test_unified_theory.py |
+| ktn_solver | `KTNSolver` | API.md | test_unified_theory.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |
@@ -223,6 +224,12 @@ tests/test_doc_matrix.py).
 | references | `VerifyReport` | API.md | references.py |
 | references | `resolve_reference` | API.md | test_analytic_factory.py, test_mms_reference.py, test_references.py |
 | references | `verify_result` | API.md, dispatch_flow.md | 02_annulus_case.ipynb, run_reference.py, test_analytic_factory.py |
+| theory | `TheoryParams` | API.md | test_unified_theory.py |
+| theory | `classic` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, run_ktn.py, run_reference.py |
+| theory | `from_preset` | API.md | test_unified_theory.py |
+| theory | `karman` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, run_reference.py, test_cli.py |
+| theory | `ktn_full` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, doc_matrix.py, run_reference.py |
+| theory | `ktn_linear` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, test_dispatch.py, test_face_deflection.py |
 | verify_fem | `FemComparison` | API.md | verify_fem.py |
 | verify_fem | `FemSolution` | API.md | verify_fem.py |
 | verify_fem | `annulus_mesh` | API.md | references.py |

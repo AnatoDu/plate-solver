@@ -109,6 +109,21 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   напряжений лицевых поверхностей (канон NOTES §19).
 - `ktn.PlateMaterial`, `ktn.flexural_rigidity` — классика.
 
+## Единая параметрическая модель теорий (`theory.py`, `ktn_solver.py`, v0.6.0)
+
+Все четыре теории — пресеты параметров ОДНОГО решателя; редукции точны ПО
+ПОСТРОЕНИЮ (§3 ТЗ, усиление T6).
+
+- `theory.TheoryParams` — управляемые члены (dataclass): `membrane` (нелинейность),
+  `h_psi_sq`/`h_star_sq` (уточнение), `compression`, `shear_field`; `h_c_sq`
+  (= h_ψ²−h_*²), `solve_ktn_terms`, `with_refinement_scale(α)` (морфинг §3.5).
+- Фабрики пресетов: `theory.classic()`, `theory.karman()`, `theory.ktn_linear(nu, h)`,
+  `theory.ktn_full(nu, h)`; `theory.from_preset(name, nu, h)` (алиас `ktn`→`ktn_linear`).
+- `ktn_solver.KTNSolver` — единый решатель: `from_config(domain, cfg, params, ...)` /
+  `from_theory_name(domain, cfg, name, ...)`; `solve_uniform`/`solve` → `KarmanResult`.
+  Пресет `karman` = `KarmanPlate`, `ktn_full` = `KTNPlate` (машинно); морфинг α —
+  единственный путь исполнения Карман↔полная КТН.
+
 ## Лицевые величины первым классом (`faces.py`, v0.5.0)
 
 Самостоятельный, переиспользуемый слой лицевых величин для ЛЮБОЙ теории
