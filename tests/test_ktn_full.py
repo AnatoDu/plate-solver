@@ -146,6 +146,14 @@ def test_ktn_full_soft_hinge_not_implemented():
                              inplane_bc="immovable")
 
 
+def test_ktn_method_newton_not_implemented():
+    """Ньютон для КТН (§5.4) — задел (§14 cut): явный NotImplementedError."""
+    cfg = Config(E=1.0, h=0.1, nu=0.3, a=1.0, q0=1e-4, p=8, Q=64, ktn_method="newton")
+    kp = KTNPlate.from_config(_DOM, cfg, bc_type="clamped", inplane_bc="immovable")
+    with pytest.raises(NotImplementedError, match="newton"):
+        kp.solve_uniform()
+
+
 # --------------------------------------------------------------------------- #
 #  Неравномерная нагрузка и член КТН (A) −h_*²Δq (§7, N3)
 # --------------------------------------------------------------------------- #
