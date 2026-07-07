@@ -54,6 +54,9 @@ print(res.w_max)
 - Примитивы-выражения: `circle_expr`, `rectangle_expr`.
 - Фабрики областей: `make_circle`, `make_rectangle`, `make_L`,
   `make_annulus`, `make_compose` (дерево операций из case-файла).
+- `make_plate_with_hole(x1, x2, y1, y2, hole_a, hole_cx, hole_cy)` — МНОГОСВЯЗНАЯ
+  область (прямоугольник с круглым отверстием, R-разность `ω_rect ∧ (−ω_hole)`,
+  v0.6.0 §5); нелинейный решатель КТН работает и на многосвязных формах.
 
 ## Решатели изгиба
 

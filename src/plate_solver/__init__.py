@@ -37,6 +37,7 @@ _FACADE: dict[str, str] = {
     "make_rectangle": "geometry",
     "make_L": "geometry",
     "make_annulus": "geometry",
+    "make_plate_with_hole": "geometry",
     "make_compose": "geometry",
     # -- решатели изгиба --------------------------------------------------- #
     "PlateBending": "plate",
