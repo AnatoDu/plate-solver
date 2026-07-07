@@ -125,6 +125,17 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 - `faces.membrane_face_stress(Nx, Ny, Nxy, h)` — мембранная составляющая `N/h`.
 - `Result.thickness_params()` — интроспекция параметров толщины из результата.
 
+## Полная нелинейная КТН (`ktn_full.py`, v0.5.0)
+
+- `ktn_full.KTNPlate` — полный нелинейный решатель Кармана–Тимошенко–Нагди,
+  слой ПОВЕРХ `KarmanPlate` (§5.1): добавляет во внеплоскостной шаг Пикара
+  члены (A) `−h_*²Δq_n` и (B) `+h_ψ²∫L Δv` (слабая форма §3.5, защемление).
+  `from_config(domain, cfg, bc_type="clamped", inplane_bc=..., include_ktn_terms=True)`,
+  `solve(f_values)`/`solve_uniform(q0)` → `KarmanResult` (w, N, история сходимости);
+  `face_params` (h_ψ²/h_*²/h_c²). При `include_ktn_terms=False` тождественен
+  `KarmanPlate` (редукция КТН→Карман, Gate R1). Мягкий шарнир → `NotImplementedError`
+  (§3.5, задел). Верификация — редукционная лестница `tests/test_ktn_full.py`.
+
 ## Геометрическая нелинейность (теория Кармана, v0.4.0)
 
 - `membrane.KarmanPlate` — нелинейный решатель Фёппля–Кармана:

@@ -129,7 +129,7 @@ tests/test_doc_matrix.py).
 | benchmarks | `LEVY_SQUARE_SS_IMMOVABLE` | API.md | test_karman.py |
 | benchmarks | `LEVY_SQUARE_SS_MOVABLE` | API.md | test_karman.py |
 | benchmarks | `hencky_center_deflection` | API.md | 06_theory_comparison.ipynb, test_karman.py |
-| benchmarks | `kirchhoff_clamped_circle` | API.md | test_karman.py |
+| benchmarks | `kirchhoff_clamped_circle` | API.md | test_karman.py, test_ktn_full.py |
 | benchmarks | `kirchhoff_clamped_square` | API.md | test_karman.py |
 | benchmarks | `kirchhoff_hinge_circle` | API.md | test_karman.py |
 | benchmarks | `kirchhoff_hinge_square` | API.md | test_karman.py |
@@ -179,6 +179,7 @@ tests/test_doc_matrix.py).
 | ktn | `PlateMaterial` | API.md | circular_plate.py, conftest.py, test_smoke.py |
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | API.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
+| ktn_full | `KTNPlate` | API.md | test_ktn_full.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |
@@ -195,7 +196,7 @@ tests/test_doc_matrix.py).
 | ladder | `strip_clamped_wmax` | API.md | run_ladder_1d.py |
 | ladder | `strip_hinge_exact` | API.md | run_ladder_1d.py |
 | ladder | `strip_hinge_wmax` | API.md | run_ladder_1d.py |
-| membrane | `KarmanPlate` | API.md | 06_theory_comparison.ipynb, test_karman.py |
+| membrane | `KarmanPlate` | API.md | 06_theory_comparison.ipynb, test_karman.py, test_ktn_full.py |
 | membrane | `KarmanResult` | API.md | 06_theory_comparison.ipynb |
 | plate | `PlateBending` | API.md, CASE_SCHEMA.md, dispatch_flow.md | 01_circle_api.ipynb, run_circle.py, run_circle_1d_2d.py |
 | poisson | `CACHE_NM_MAX` | API.md | test_poisson_disk.py |
