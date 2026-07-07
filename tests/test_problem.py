@@ -59,7 +59,7 @@ def test_to_config_inherits_config_defaults():
 
 def test_to_config_maps_all_keys():
     data = _case(
-        model={"theory": "ktn", "E": 1.0e6, "nu": 0.25, "h": 0.06},
+        model={"theory": "ktn_linear", "E": 1.0e6, "nu": 0.25, "h": 0.06},
         contact={"enabled": True, "gap": 5.0e-5, "beta": 1.0,
                  "max_iter": 500, "tol": 1e-6, "stop": "comp"},
         discretization={"p": 8, "Q": 40, "grid_n": 36},
@@ -190,7 +190,7 @@ def test_verify_checks():
 
 def test_model_checks():
     _expect_error(_case(model={"theory": "mindlin"}), "model.theory",
-                  "classic | karman | ktn")
+                  "classic | karman | ktn_linear | ktn_full")
     _expect_error(_case(model={"nu": 0.7}), "model.nu")
 
 

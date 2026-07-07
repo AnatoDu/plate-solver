@@ -22,6 +22,7 @@ r"""problem.py — слой постановки задачи: case-файл TOM
 from __future__ import annotations
 
 import tomllib
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,19 +40,27 @@ COMPOSE_MAX_NODES = 7
 GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "compose")
 BC_TYPES = ("soft_hinge", "clamped")
 LOAD_TYPES = ("uniform", "patch", "point")
-# Лестница моделей одним ключом [model] theory (v0.4.0):
-#   classic — линейный Кирхгоф; karman — геометрически-НЕЛИНЕЙНОЕ решение
-#   Фёппля–Кармана (мембранная связь L(Φ, w)); ktn — ЛИНЕЙНЫЕ поправки
-#   сдвига/обжатия постобработкой на решении Кирхгофа (не нелинейная теория).
-THEORIES = ("classic", "karman", "ktn")
-# Полная нелинейная КТН (Карман + сдвиг + обжатие) — задел релиза v0.5.0:
-# значение распознаётся, но при обращении даёт NotImplementedError (§1.1 ТЗ).
-RESERVED_THEORIES = ("ktn_full",)
-# Закрепление кромки в плане (осмысленно только при theory = "karman", §3.3):
+# Лестница моделей одним ключом [model] theory (v0.5.0, ЯВНЫЕ имена — §4):
+#   classic    — линейный Кирхгоф;
+#   karman     — геометрически-НЕЛИНЕЙНОЕ решение Фёппля–Кармана (L(Φ, w));
+#   ktn_linear — ЛИНЕЙНЫЕ поправки сдвига/обжатия постобработкой на решении
+#                Кирхгофа (не нелинейная теория; прежнее поведение "ktn");
+#   ktn_full   — ПОЛНАЯ нелинейная КТН: Карман + оператор (I − h_ψ²Δ)L(Φ, w)
+#                + нагрузочный член −h_*²Δq_n.
+THEORIES = ("classic", "karman", "ktn_linear", "ktn_full")
+# Депрекация-алиас: "ktn" неоднозначно (линейные поправки vs полная нелинейная
+# теория). Сохраняем поведение старых case-файлов ⇒ алиас на ktn_linear (НЕ на
+# ktn_full — это тихо сменило бы результат). Удаление алиаса — v1.0.0.
+THEORY_ALIASES = {"ktn": "ktn_linear"}
+# Нелинейные теории (мембранная итерация Пикара/Ньютона + шаги по нагрузке):
+# для них осмысленны inplane_bc и параметры итерации.
+NONLINEAR_THEORIES = ("karman", "ktn_full")
+# Закрепление кромки в плане (осмысленно только для нелинейных теорий, §3.3):
 #   immovable — u = v = 0 на ∂Ω (кромка не втягивается, натяжение максимально);
 #   movable   — N·n = 0 (кромка свободна в плане; эффект слабее, но НЕнулевой).
 INPLANE_BCS = ("immovable", "movable")
 KARMAN_METHODS = ("picard", "newton")
+KTN_METHODS = ("picard", "newton")
 REFERENCES = ("analytic", "mms", "fem", "none")
 STOP_CRITERIA = ("dr", "comp")
 
@@ -164,25 +173,27 @@ class LoadSpec:
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """Модель: лестница теорий ``classic | karman | ktn`` (§4).
+    """Модель: лестница теорий ``classic | karman | ktn_linear | ktn_full`` (§4).
 
     ``E``, ``nu``, ``h`` со значением None берутся из дефолтов Config
     (physics-дефолты не дублируются). ``inplane_bc`` и параметры нелинейной
-    итерации (``n_load_steps``, ``karman_*``) осмысленны только при
-    ``theory = "karman"``; при ``classic``/``ktn`` их задание отвергается
-    валидатором. None-параметры итерации наследуют дефолты Config.
+    итерации (``n_load_steps``, ``karman_*``) осмысленны только для НЕЛИНЕЙНЫХ
+    теорий (``karman``, ``ktn_full``); при ``classic``/``ktn_linear`` их задание
+    отвергается валидатором. ``karman_method`` — только ``karman``,
+    ``ktn_method`` — только ``ktn_full``. None-параметры наследуют дефолты Config.
     """
 
     theory: str = "classic"
     E: float | None = None
     nu: float | None = None
     h: float | None = None
-    inplane_bc: str = "immovable"           # karman: immovable | movable (§3.3)
-    n_load_steps: int | None = None         # karman: шагов по нагрузке (§5.2)
-    karman_relax: float | None = None       # karman: недорелаксация θ ∈ (0, 1]
-    karman_max_iter: int | None = None      # karman: предел итераций Пикара
-    karman_tol: float | None = None         # karman: относит. порог останова
+    inplane_bc: str = "immovable"           # нелин.: immovable | movable (§3.3)
+    n_load_steps: int | None = None         # нелин.: шагов по нагрузке (§5.2)
+    karman_relax: float | None = None       # нелин.: недорелаксация θ ∈ (0, 1]
+    karman_max_iter: int | None = None      # нелин.: предел итераций Пикара
+    karman_tol: float | None = None         # нелин.: относит. порог останова
     karman_method: str | None = None        # karman: picard | newton
+    ktn_method: str | None = None           # ktn_full: picard | newton
 
 
 GAP_KINDS = ("const", "plane", "paraboloid", "steps")
@@ -378,9 +389,9 @@ class Problem:
             v = getattr(self.model, attr)
             if v is not None:
                 kw[key] = v
-        # параметры нелинейной итерации Кармана (§5.4); None ⇒ дефолт Config
+        # параметры нелинейной итерации Кармана/КТН (§5.4/§5.5); None ⇒ дефолт Config
         for attr in ("n_load_steps", "karman_relax", "karman_max_iter",
-                     "karman_tol", "karman_method"):
+                     "karman_tol", "karman_method", "ktn_method"):
             v = getattr(self.model, attr)
             if v is not None:
                 kw[attr] = v
@@ -589,31 +600,46 @@ def _parse_model(data) -> ModelSpec:
     _require_keys("model", data,
                   {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
                    "karman_relax", "karman_max_iter", "karman_tol",
-                   "karman_method"}, "model")
-    theory = data.get("theory", "classic")
-    if theory in RESERVED_THEORIES:
-        # «при обращении» (§1.1): значение распознано, но не реализовано.
-        raise NotImplementedError(
-            "model.theory = 'ktn_full' (полная нелинейная КТН: Карман + "
-            "поперечный сдвиг + обжатие) — направление развития, релиз "
-            f"v0.5.0. В v0.4.0 доступны: {' | '.join(THEORIES)}.")
+                   "karman_method", "ktn_method"}, "model")
+    raw_theory = data.get("theory", "classic")
+    if raw_theory in THEORY_ALIASES:
+        # Депрекация-алиас (§4): "ktn" → "ktn_linear", поведение сохранено.
+        canonical = THEORY_ALIASES[raw_theory]
+        warnings.warn(
+            f"model.theory = '{raw_theory}' неоднозначно и переименовано; "
+            f"используйте '{canonical}' (линейные поправки сдвига/обжатия) или "
+            "'ktn_full' (полная нелинейная КТН). Алиас "
+            f"'{raw_theory}' будет удалён в v1.0.0.",
+            DeprecationWarning, stacklevel=3)
+        theory = canonical
+    else:
+        theory = raw_theory
     if theory not in THEORIES:
-        _fail("model.theory", theory, " | ".join(THEORIES), "model")
+        _fail("model.theory", raw_theory,
+              f"{' | '.join(THEORIES)} (или устаревший алиас 'ktn')", "model")
     E = _number("model", data, "E", "model", positive=True)
     nu = _number("model", data, "nu", "model")
     if nu is not None and not (-1.0 < nu < 0.5):
         _fail("model.nu", nu, "−1 < nu < 0.5", "model")
     h = _number("model", data, "h", "model", positive=True)
-    # Закрепление кромки в плане и параметры нелинейной итерации осмысленны
-    # ТОЛЬКО для karman (§4): при classic/ktn их задание — ошибка постановки.
-    karman_only = {"inplane_bc", "n_load_steps", "karman_relax",
-                   "karman_max_iter", "karman_tol", "karman_method"}
-    provided = karman_only & set(data)
-    if provided and theory != "karman":
+    # Закрепление кромки и параметры итерации осмысленны ТОЛЬКО для нелинейных
+    # теорий (karman, ktn_full, §4); при classic/ktn_linear — ошибка постановки.
+    nonlinear_only = {"inplane_bc", "n_load_steps", "karman_relax",
+                      "karman_max_iter", "karman_tol"}
+    provided = nonlinear_only & set(data)
+    if provided and theory not in NONLINEAR_THEORIES:
         key = sorted(provided)[0]
         _fail(f"model.{key}", data[key],
-              "ключ осмыслен только при theory = 'karman' (classic/ktn — "
-              "линейный изгиб без мембранной связи)", "model")
+              "ключ осмыслен только для нелинейных теорий "
+              f"({' | '.join(NONLINEAR_THEORIES)}); classic/ktn_linear — "
+              "линейный изгиб без мембранной связи", "model")
+    if "karman_method" in data and theory != "karman":
+        _fail("model.karman_method", data["karman_method"],
+              "ключ осмыслен только при theory = 'karman' "
+              "(для ktn_full — ktn_method)", "model")
+    if "ktn_method" in data and theory != "ktn_full":
+        _fail("model.ktn_method", data["ktn_method"],
+              "ключ осмыслен только при theory = 'ktn_full'", "model")
     inplane_bc = data.get("inplane_bc", "immovable")
     if inplane_bc not in INPLANE_BCS:
         _fail("model.inplane_bc", inplane_bc, " | ".join(INPLANE_BCS), "model")
@@ -627,10 +653,13 @@ def _parse_model(data) -> ModelSpec:
     karman_method = data.get("karman_method")
     if karman_method is not None and karman_method not in KARMAN_METHODS:
         _fail("model.karman_method", karman_method, " | ".join(KARMAN_METHODS), "model")
+    ktn_method = data.get("ktn_method")
+    if ktn_method is not None and ktn_method not in KTN_METHODS:
+        _fail("model.ktn_method", ktn_method, " | ".join(KTN_METHODS), "model")
     return ModelSpec(theory=theory, E=E, nu=nu, h=h, inplane_bc=inplane_bc,
                      n_load_steps=n_load_steps, karman_relax=karman_relax,
                      karman_max_iter=karman_max_iter, karman_tol=karman_tol,
-                     karman_method=karman_method)
+                     karman_method=karman_method, ktn_method=ktn_method)
 
 
 def _parse_gap_field(data: dict) -> GapSpec:
@@ -796,24 +825,26 @@ def _validate_cross(p: Problem) -> None:
             _fail("contact.enabled", True,
                   "false при bc.type = mixed (контакт при смешанных КУ — "
                   "направление развития)", "bc")
-        if p.model.theory == "ktn":
-            _fail("model.theory", "ktn", "classic при bc.type = mixed (v0.3)", "bc")
-    if p.model.theory == "karman":
-        # Рамки v0.4.0 (§1): канонические области (круг, прямоугольник/квадрат),
-        # изгибные КУ clamped|soft_hinge, БЕЗ контакта. Прочее — задел v0.5.0.
+        if p.model.theory == "ktn_linear":
+            _fail("model.theory", "ktn_linear", "classic при bc.type = mixed (v0.3)", "bc")
+    if p.model.theory in NONLINEAR_THEORIES:
+        # Рамки нелинейных теорий (§1): канонические области (круг,
+        # прямоугольник/квадрат), изгибные КУ clamped|soft_hinge, БЕЗ контакта.
+        # Нелинейный контакт (МОР поверх Кармана/КТН) — задел v0.6.0.
+        th = p.model.theory
         if p.geometry.kind not in ("circle", "rectangle"):
-            _fail("model.theory", "karman",
-                  "geometry.kind = circle | rectangle (Карман — на канонических "
-                  "областях; L-форма/кольцо/compose — направление развития "
-                  "v0.5.0)", "model")
+            _fail("model.theory", th,
+                  "geometry.kind = circle | rectangle (нелинейные теории — на "
+                  "канонических областях; L-форма/кольцо/compose — направление "
+                  "развития)", "model")
         if p.bc.type not in ("clamped", "soft_hinge"):
             _fail("bc.type", p.bc.type,
-                  "clamped | soft_hinge при theory = karman (мембранная связь на "
+                  f"clamped | soft_hinge при theory = {th} (мембранная связь на "
                   "смешанных КУ — направление развития)", "bc")
         if p.contact.enabled:
             _fail("contact.enabled", True,
-                  "false при theory = karman (нелинейный контакт — МОР поверх "
-                  "Кармана — направление развития v0.5.0)", "model")
+                  f"false при theory = {th} (нелинейный контакт — МОР поверх "
+                  "Кармана/КТН — направление развития v0.6.0)", "model")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):

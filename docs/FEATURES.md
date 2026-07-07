@@ -46,6 +46,7 @@ tests/test_doc_matrix.py).
 | model.karman_method | CASE_SCHEMA.md | test_karman.py |
 | model.karman_relax | CASE_SCHEMA.md | karman_circle_hencky_limit.toml |
 | model.karman_tol | CASE_SCHEMA.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |
+| model.ktn_method | CASE_SCHEMA.md | test_karman.py |
 | model.n_load_steps | API.md, CASE_SCHEMA.md, NOTES.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |
 | model.nu | API.md, CASE_SCHEMA.md, README.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | model.theory | CASE_SCHEMA.md, NOTES.md, README.md | karman_circle_clamped_immovable.toml, karman_circle_hencky_limit.toml, karman_square_clamped_immovable.toml |

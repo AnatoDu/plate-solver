@@ -55,6 +55,9 @@ class Config:
     karman_max_iter: int = 200   # предел итераций Пикара на один уровень нагрузки
     karman_relax: float = 1.0    # недорелаксация θ ∈ (0, 1] (1 — без релаксации)
     karman_method: str = "picard"  # "picard" (по умолч.) | "newton" (ускоритель)
+    # полная нелинейная КТН (theory=ktn_full, ktn_full.py) — переиспользует
+    # параметры итерации Кармана выше; собственный выбор метода:
+    ktn_method: str = "picard"   # "picard" (по умолч.) | "newton" (ускоритель)
 
     @property
     def D(self) -> float:

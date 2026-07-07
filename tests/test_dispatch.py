@@ -165,7 +165,7 @@ def test_ktn_bending_correction():
     base = dict(model={"theory": "classic", "h": 0.2},
                 discretization={"p": 6, "Q": 64, "grid_n": 24})
     classic = solve(_problem(**base))
-    base["model"] = {"theory": "ktn", "h": 0.2}
+    base["model"] = {"theory": "ktn_linear", "h": 0.2}
     ktn = solve(_problem(**base))
     assert ktn.w_max_classic == pytest.approx(classic.w_max, rel=1e-12)
     assert ktn.w_max > classic.w_max                     # уточнённая теория мягче
@@ -176,7 +176,7 @@ def test_ktn_clamped_bending_works():
     base = dict(bc={"type": "clamped"}, model={"theory": "classic", "h": 0.2},
                 discretization={"p": 6, "Q": 64, "grid_n": 24})
     classic = solve(_problem(**base))
-    base["model"] = {"theory": "ktn", "h": 0.2}
+    base["model"] = {"theory": "ktn_linear", "h": 0.2}
     ktn = solve(_problem(**base))
     assert ktn.w_max_classic == pytest.approx(classic.w_max, rel=1e-12)
     assert ktn.w_max > classic.w_max                 # уточнённая теория мягче

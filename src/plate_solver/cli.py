@@ -253,10 +253,12 @@ def _apply_model_overrides(args_problem, args):
     if inplane is not None:
         kw["inplane_bc"] = inplane
     model = dataclasses.replace(args_problem.model, **kw)
-    if inplane is not None and model.theory != "karman":
-        raise CaseError("--inplane-bc: осмыслен только при theory = 'karman' "
-                        "(добавьте --theory karman), см. docs/CASE_SCHEMA.md#model")
-    from .problem import _validate_cross
+    from .problem import NONLINEAR_THEORIES, _validate_cross
+
+    if inplane is not None and model.theory not in NONLINEAR_THEORIES:
+        raise CaseError("--inplane-bc: осмыслен только для нелинейных теорий "
+                        f"({' | '.join(NONLINEAR_THEORIES)}); добавьте "
+                        "--theory karman|ktn_full, см. docs/CASE_SCHEMA.md#model")
 
     problem = dataclasses.replace(args_problem, model=model)
     _validate_cross(problem)                          # рамки karman (§1) после override
@@ -396,15 +398,17 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
     parser.add_argument("--surface", choices=("mid", "top", "bottom"),
                         default="mid",
                         help="поверхность на w-фигуре: срединная (mid) или "
-                             "лицевые top/bottom (theory=ktn, NOTES §21)")
-    parser.add_argument("--theory", choices=("classic", "karman", "ktn"),
+                             "лицевые top/bottom (лицевые величины КТН, NOTES §21)")
+    parser.add_argument("--theory",
+                        choices=("classic", "karman", "ktn_linear", "ktn_full"),
                         default=None,
                         help="переопределить [model] theory: classic (Кирхгоф) | "
-                             "karman (геометрическая нелинейность) | ktn "
-                             "(линейные поправки сдвига/обжатия)")
+                             "karman (геометрическая нелинейность) | ktn_linear "
+                             "(линейные поправки сдвига/обжатия) | ktn_full "
+                             "(полная нелинейная КТН). Устаревший 'ktn' = ktn_linear")
     parser.add_argument("--inplane-bc", dest="inplane_bc",
                         choices=("immovable", "movable"), default=None,
-                        help="переопределить [model] inplane_bc (только karman): "
+                        help="переопределить [model] inplane_bc (нелинейные теории): "
                              "immovable (u=v=0) | movable (N·n=0)")
     from . import __version__
 
