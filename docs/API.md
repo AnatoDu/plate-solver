@@ -109,6 +109,22 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   напряжений лицевых поверхностей (канон NOTES §19).
 - `ktn.PlateMaterial`, `ktn.flexural_rigidity` — классика.
 
+## Лицевые величины первым классом (`faces.py`, v0.5.0)
+
+Самостоятельный, переиспользуемый слой лицевых величин для ЛЮБОЙ теории
+(§6): прогиб лицевой поверхности `u_c`, напряжения на гранях, интроспекция.
+
+- `faces.FaceParams` — параметры лицевых величин с КАНОНИЧЕСКИМИ именами (§3.2):
+  `h_psi_sq` (h_ψ²), `h_star_sq` (h_*²), `h_c_sq` (h_c² = h_ψ²−h_*², assert),
+  `c_curv`, `mu`, `D`; `from_config`, `introspection(length)` (§6.3: h/L и
+  порядок (h/L)²), `face_deflection(w, Δw, q, r, surface)` (нижняя грань — канон
+  §21.1, число-в-число `ktn_linear` через `ktn()`), `mid_corrected` (для w_max).
+- `faces.face_stresses(Mx, My, Mxy, h, nu, q_top, q_bottom, Nx, Ny, Nxy)` —
+  полные лицевые напряжения: изгиб + обжатие (`ktn.stresses_faces`) + мембрана
+  `N/h` (нелинейные теории).
+- `faces.membrane_face_stress(Nx, Ny, Nxy, h)` — мембранная составляющая `N/h`.
+- `Result.thickness_params()` — интроспекция параметров толщины из результата.
+
 ## Геометрическая нелинейность (теория Кармана, v0.4.0)
 
 - `membrane.KarmanPlate` — нелинейный решатель Фёппля–Кармана:

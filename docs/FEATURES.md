@@ -157,6 +157,9 @@ tests/test_doc_matrix.py).
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_lshape_contact.py |
 | dispatch | `build_domain` | API.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
 | dispatch | `solve` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
+| faces | `FaceParams` | API.md | test_faces.py |
+| faces | `face_stresses` | API.md | test_faces.py |
+| faces | `membrane_face_stress` | API.md | test_faces.py |
 | geometry | `BBox` | API.md | basis.py, geometry.py, quadrature.py |
 | geometry | `Domain` | API.md | run_ladder_mms.py, test_stresses.py |
 | geometry | `circle_expr` | API.md | test_geometry_registry.py |
@@ -172,10 +175,10 @@ tests/test_doc_matrix.py).
 | geometry | `rectangle_expr` | API.md | geometry.py |
 | geometry | `x` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
 | geometry | `y` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
-| ktn | `KTNParams` | API.md, NOTES.md | run_ktn.py, test_face_deflection.py, test_ktn.py |
+| ktn | `KTNParams` | API.md, NOTES.md | run_ktn.py, test_face_deflection.py, test_faces.py |
 | ktn | `PlateMaterial` | API.md | circular_plate.py, conftest.py, test_smoke.py |
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
-| ktn | `stresses_faces` | API.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_stresses.py |
+| ktn | `stresses_faces` | API.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
 | ladder | `Strip1DResult` | API.md | ladder.py |
 | ladder | `bending_moments` | API.md, NOTES.md | run_ladder_rect_clamped.py, run_ladder_rect_hinge.py, test_stresses.py |
 | ladder | `bending_moments_full` | API.md, NOTES.md | test_stresses.py |

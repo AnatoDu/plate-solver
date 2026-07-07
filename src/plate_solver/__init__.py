@@ -56,6 +56,9 @@ _FACADE: dict[str, str] = {
     "verify_result": "references",
     # -- напряжения и лицевые поверхности ----------------------------------- #
     "stresses_faces": "ktn",
+    # -- лицевые величины первым классом (уточнённая теория) ---------------- #
+    "FaceParams": "faces",
+    "face_stresses": "faces",
 }
 
 
