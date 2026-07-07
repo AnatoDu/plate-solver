@@ -209,7 +209,8 @@ class Result:
         theory = classic: обе лицевые ≡ срединной, dh ≡ 0. Классическое
         3D-восстановление — независимая диагностика (NOTES §21.2).
         """
-        if self.problem.model is None or self.problem.model.theory != "ktn_linear":
+        theory = None if self.problem.model is None else self.problem.model.theory
+        if theory not in ("ktn_linear", "ktn_full"):
             return self.w_grid.copy(), self.w_grid.copy(), \
                 np.zeros_like(self.w_grid)
         from .faces import FaceParams
@@ -218,6 +219,8 @@ class Result:
         q_top, q_bot = self._q_faces_on_grid()
         lap = -(Mx + My) / (self.config.D * (1.0 + self.config.nu))
         fp = FaceParams.from_config(self.config)
+        # u_c контактирующей (нижней) лицевой — та же кинематика (§21.1); для
+        # ktn_full прогиб w и кривизна Δw уже несут КТН-регуляризацию.
         w_bot = fp.face_deflection(self.w_grid, lap, q_top, q_bot, surface="bottom")
         return self.w_grid.copy(), w_bot, w_bot - self.w_grid
 
@@ -520,9 +523,12 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
 
-    if problem.model.theory in ("karman", "ktn_full"):    # нелинейные теории
-        # ktn_full строит собственный решатель в N2; на вехе N0 — KarmanPlate
-        # как носитель quad/структуры, а _solve_bending отвергает ktn_full.
+    if problem.model.theory == "ktn_full":                # полная нелинейная КТН (v0.5)
+        from .ktn_full import KTNPlate
+
+        solver = KTNPlate.from_config(dom, cfg, bc_type=problem.bc.type,
+                                      inplane_bc=problem.model.inplane_bc)
+    elif problem.model.theory == "karman":                # геометрическая нелинейность (v0.4)
         from .membrane import KarmanPlate
 
         solver = KarmanPlate.from_config(dom, cfg, bc_type=problem.bc.type,
@@ -648,15 +654,32 @@ def _solve_karman(problem, cfg, dom, solver, f, warnings) -> Result:
 
 
 def _solve_ktn_full(problem, cfg, dom, solver, f, warnings) -> Result:
-    """Полная нелинейная КТН (§3, §5). Веха N2.
+    r"""Полная нелинейная КТН (§3, §5): :class:`~plate_solver.ktn_full.KTNPlate`.
 
-    ЗАГЛУШКА N0: таксономия и маршрутизация заведены; решатель
-    :class:`~plate_solver.ktn_full.KTNPlate` (члены (A), (B) поверх KarmanPlate
-    + лицевая постобработка) реализуется на вехе N2 в ``ktn_full.py``.
+    КТН-члены (A), (B) собираются поверх мембранного решателя Кармана; ``Result``
+    несёт нелинейный ``w_max``, линейный ``w_max_classic``, историю сходимости
+    (``_karman_ref``) и параметры толщины (``thickness_params``). Лицевые
+    величины — ``faces_on_grid``/``save_fields`` (§6). Несошедшаяся итерация —
+    предупреждение (не ошибка).
     """
-    raise NotImplementedError(
-        "theory = 'ktn_full': полный нелинейный решатель КТН (KTNPlate) — "
-        "веха N2 (src/plate_solver/ktn_full.py)")
+    kr = solver.solve(f)
+    c = kr.cw
+    warn = list(warnings)
+    if not kr.converged:
+        last = kr.history[-1][2] if kr.history else float("nan")
+        warn.append(
+            f"ktn_full: итерация Пикара не достигла порога за karman_max_iter "
+            f"(последняя относительная невязка {last:.2e}); увеличьте "
+            f"karman_max_iter или n_load_steps")
+    Xg, Yg, W = _grid_fields(dom, cfg, lambda X, Y: solver.deflection(c, X, Y))
+    res = Result(problem=problem, config=cfg, w_max=kr.w_max,
+                 cond=float(solver.cond), Xg=Xg, Yg=Yg, w_grid=W,
+                 warnings=tuple(warn), w_nodes=kr.w_nodes,
+                 w_max_classic=kr.w_max_classic)
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", c)
+    object.__setattr__(res, "_karman_ref", kr)
+    return res
 
 
 def _gap_field_values(spec, quad):

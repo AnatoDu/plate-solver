@@ -1,0 +1,38 @@
+# Полная нелинейная КТН — защемлённый круг, равномерная нагрузка.
+# Быстрый CI-случай (Q ≤ 256): проверяет тракт ktn_full и лицевую подпись под
+# равномерной нагрузкой (Δq = 0 ⇒ срединный w ≈ Карман, лицевые dh ≠ 0).
+# Безразмерно: E=a=1 ⇒ P̄ = q0/h⁴ = 0.008/0.2⁴ ≈ 5. Редукция КТН→Карман→Кирхгоф
+# и гашение O(h²/L²) — tests/test_ktn_full.py (Gate R1/R2/R4).
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 0.008               # P̄ ≈ 5 (умеренно большой прогиб, w/h ≈ 0.66)
+
+[model]
+theory = "ktn_full"
+inplane_bc = "immovable"
+E = 1.0
+nu = 0.3
+h = 0.2                  # h/L = 0.2 (толстая пластина: эффект КТН заметен)
+n_load_steps = 4
+karman_tol = 1.0e-6
+karman_max_iter = 300
+
+[discretization]
+p = 12
+Q = 140
+grid_n = 48
+
+[verify]
+reference = "none"       # у полной КТН нет литературных эталонов — верификация
+                         # редукционная (R1–R5, tests/test_ktn_full.py)
+
+[output]
+dir = "results/ktn_full_circle_clamped_uniform"
