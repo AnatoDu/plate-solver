@@ -59,6 +59,9 @@ _FACADE: dict[str, str] = {
     # -- диагностика зоны контакта (v0.6.0) -------------------------------- #
     "contact_components": "diagnostics",
     "contact_report": "diagnostics",
+    # -- экспорт усилий и полей (v0.6.0) ----------------------------------- #
+    "forces_on_grid": "export",
+    "to_vtk": "export",
     # -- контакт (МОР) ------------------------------------------------------ #
     "solve_contact": "contact",
     "ContactMOR": "contact",

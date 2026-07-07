@@ -14,6 +14,8 @@
 - Стиль: `ruff check .`
 - Пример: `python examples/circular_plate.py`
 - Эталонный прогон: `python scripts/run_reference.py` (из корня)
+- Воспроизводимость: `python scripts/reproduce_all.py` (все case → сводка;
+  `--with-ladder` тяжёлые, `--artifacts` поля/рисунки; вывод в results/reproduce)
 
 ## Лестница теорий и философия верификации (v0.5.0)
 - Ключ `[model] theory`: `classic` (Кирхгоф) | `karman` (геом. нелинейность,

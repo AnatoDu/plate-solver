@@ -67,7 +67,7 @@ tests/test_doc_matrix.py).
 
 | команда | флаг | описано | покрыто (тесты/доки) |
 |---|---|---|---|
-| plate-ladder | `--out` | CASE_SCHEMA.md | doc_matrix.py, test_ci_cases.py, test_cli.py |
+| plate-ladder | `--out` | API.md, CASE_SCHEMA.md | doc_matrix.py, reproduce_all.py, test_ci_cases.py |
 | plate-ladder | `--version` | README.md | doc_matrix.py |
 | plate-solve | `--check` | CASE_SCHEMA.md, README.md | doc_matrix.py, test_cli.py |
 | plate-solve | `--fig-format` | CASE_SCHEMA.md, README.md | test_stresses.py |
@@ -76,7 +76,7 @@ tests/test_doc_matrix.py).
 | plate-solve | `--help` | README.md | README.md |
 | plate-solve | `--inplane-bc` | CASE_SCHEMA.md, MIGRATION.md | test_cli.py |
 | plate-solve | `--new` | CASE_SCHEMA.md, README.md | doc_matrix.py, test_cli.py |
-| plate-solve | `--out` | CASE_SCHEMA.md | doc_matrix.py, test_ci_cases.py, test_cli.py |
+| plate-solve | `--out` | API.md, CASE_SCHEMA.md | doc_matrix.py, reproduce_all.py, test_ci_cases.py |
 | plate-solve | `--report` | CASE_SCHEMA.md, README.md | doc_matrix.py, test_cli.py |
 | plate-solve | `--surface` | CASE_SCHEMA.md, README.md | CASE_SCHEMA.md, README.md |
 | plate-solve | `--sweep` | README.md | 02_annulus_case.ipynb, test_cli.py |
@@ -87,7 +87,7 @@ tests/test_doc_matrix.py).
 | plate-verify | `--grid` | API.md, CASE_SCHEMA.md, README.md | test_regrid.py |
 | plate-verify | `--help` | README.md | README.md |
 | plate-verify | `--inplane-bc` | CASE_SCHEMA.md, MIGRATION.md | test_cli.py |
-| plate-verify | `--out` | CASE_SCHEMA.md | doc_matrix.py, test_ci_cases.py, test_cli.py |
+| plate-verify | `--out` | API.md, CASE_SCHEMA.md | doc_matrix.py, reproduce_all.py, test_ci_cases.py |
 | plate-verify | `--surface` | CASE_SCHEMA.md, README.md | CASE_SCHEMA.md, README.md |
 | plate-verify | `--sweep` | README.md | 02_annulus_case.ipynb, test_cli.py |
 | plate-verify | `--theory` | CASE_SCHEMA.md, MIGRATION.md | test_cli.py |
@@ -164,6 +164,8 @@ tests/test_doc_matrix.py).
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_lshape_contact.py |
 | dispatch | `build_domain` | API.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
 | dispatch | `solve` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
+| export | `forces_on_grid` | API.md | test_export.py |
+| export | `to_vtk` | API.md | test_export.py |
 | faces | `FaceParams` | ALGORITHMS.md, API.md, MIGRATION.md | test_faces.py |
 | faces | `face_stresses` | ALGORITHMS.md, API.md | test_faces.py |
 | faces | `membrane_face_stress` | API.md | test_faces.py |
@@ -211,7 +213,7 @@ tests/test_doc_matrix.py).
 | poisson | `CACHE_NM_MAX` | API.md | test_poisson_disk.py |
 | poisson | `PoissonSolver` | API.md | test_geometry_registry.py, test_poisson_disk.py |
 | problem | `BCSpec` | API.md | problem.py |
-| problem | `CaseError` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | test_analytic_factory.py, test_cli.py, test_dispatch.py |
+| problem | `CaseError` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | reproduce_all.py, test_analytic_factory.py, test_cli.py |
 | problem | `ContactSpec` | API.md | problem.py |
 | problem | `DiscretizationSpec` | API.md | problem.py |
 | problem | `GAP_KINDS` | API.md | problem.py |
@@ -232,7 +234,7 @@ tests/test_doc_matrix.py).
 | references | `resolve_reference` | API.md | test_analytic_factory.py, test_mms_reference.py, test_references.py |
 | references | `verify_result` | API.md, dispatch_flow.md | 02_annulus_case.ipynb, run_reference.py, test_analytic_factory.py |
 | theory | `TheoryParams` | API.md, NOTES.md, THEORY.md | 07_theory_ladder.ipynb, test_unified_theory.py |
-| theory | `classic` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, run_ktn.py |
+| theory | `classic` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, reproduce_all.py |
 | theory | `from_preset` | API.md | test_unified_theory.py |
 | theory | `karman` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb |
 | theory | `ktn_full` | ALGORITHMS.md, API.md, CASE_SCHEMA.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb |
