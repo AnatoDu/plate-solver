@@ -118,10 +118,22 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
   метод обобщённой реакции вокруг полного нелинейного `KTNSolver` (§4). Лицевое
   условие Синьорини `u_c = w + (h_c²−h_*²)Δw ≤ z` (кривизна масштабируется
   теорией: 0 для classic/karman ⇒ контакт по срединной; физическая для ktn_full).
-  `scheme="nested"` — эталон (внешний МОР × полный решатель); `"merged"` — задел
-  N4. `solve()` → `NonlinearContactResult`.
-- `contact_nl.NonlinearContactResult` — реакция `r`, прогибы `w`/`u_c`, маска и
-  топология зоны контакта, пиковая реакция, история МОР.
+  `scheme="nested"` — эталон (внешний МОР × полный решатель); `"merged"` —
+  совмещённый (один шаг Пикара на шаг МОР, быстрый; T7), по умолчанию.
+  `solve()` → `NonlinearContactResult`.
+- `contact_nl.NonlinearContactResult` — реакция `r`, прогибы `w`/`u_c`, маска
+  зоны контакта, число контактных узлов и связных пятен (`n_components`), пиковая
+  реакция и её локализация, история МОР.
+
+## Диагностика зоны контакта (`diagnostics.py`, v0.6.0)
+
+Постобработка результата контакта (§8): размер, топология, сила.
+
+- `diagnostics.contact_components(x, y, mask, radius=None)` — число связных пятен
+  контакта (граф близости + union–find; порог `1.8·s`, s — медиана шага сетки).
+- `diagnostics.contact_report(r_nodes, quad, radius=None)` — сводка: `n_contact`,
+  `contact_fraction` (доля площади), `r_max`/`peak_xy` (пик и локализация),
+  `r_total` (суммарная сила `∫r dA`), `n_components` (число пятен).
 
 ## Единая параметрическая модель теорий (`theory.py`, `ktn_solver.py`, v0.6.0)
 

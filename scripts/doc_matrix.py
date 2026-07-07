@@ -27,8 +27,8 @@ SRC = ROOT / "src" / "plate_solver"
 
 #: модули с публичным API (плоский пакет, фасад — __init__)
 API_MODULES = ("analytic", "analytic_auto", "benchmarks", "clamped", "cli",
-               "config", "contact", "contact_nl", "dispatch", "faces", "geometry",
-               "ktn", "ktn_full", "ktn_solver", "ladder", "membrane", "plate",
+               "config", "contact", "contact_nl", "diagnostics", "dispatch", "faces",
+               "geometry", "ktn", "ktn_full", "ktn_solver", "ladder", "membrane", "plate",
                "poisson", "problem", "references", "theory", "verify_fem", "viz")
 
 
