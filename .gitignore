@@ -43,6 +43,7 @@ CLAUDE.local.md
 !/results/reference/reference_v0.3.csv
 !/results/reference/reference_v0.4.csv
 !/results/reference/reference_v0.5.csv
+!/results/reference/reference_v0.6.csv
 
 # артефакт разового coverage-прогона
 .coverage

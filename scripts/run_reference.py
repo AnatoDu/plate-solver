@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """run_reference.py — ЕДИНЫЙ эталонный прогон комплекса.
 
-Один запуск порождает results/reference/reference_v0.5.md (+ csv чисел):
+Один запуск порождает results/reference/reference_v0.6.md (+ csv чисел):
 
 * секции «золотой серии» — ТЕМИ ЖЕ функциями, что исторический
   run_golden.py (числа совпадают с legacy побайтово в напечатанной
@@ -12,12 +12,14 @@
   (требует scikit-fem для fem-ступеней; включает нелинейные karman-ступени
   v0.4/v0.5 — Hencky, Levy и ktn_full_thickness_sweep, reference="none").
 
-v0.5.0: отчёт вынесен в НОВЫЙ файл reference_v0.5.md; исторические
-reference_v0.3.md / reference_v0.4.md заморожены и НЕ трогаются (протокол §0).
+v0.6.0: отчёт вынесен в НОВЫЙ файл reference_v0.6.md; исторические
+reference_v0.3.md / v0.4.md / v0.5.md заморожены и НЕ трогаются (протокол §0).
+Числа золотой серии преемственны с v0.5 (единая модель и нелинейный контакт —
+чисто аддитивные слои, GoldenConfig не тронут); в отчёте меняется лишь версия.
 
 Отчёт ДЕТЕРМИНИРОВАН (без даты и git-хеша — они в спутнике
 provenance.json, вне хеш-ворот): двойной прогон обязан дать идентичные
-файлы (tests/test_reference_run.py). Файл reference_v0.5.md заморожен
+файлы (tests/test_reference_run.py). Файл reference_v0.6.md заморожен
 SHA-256 (tests/test_reference_hash.py): любое изменение чисел — красный
 тест; обновление — только осознанным коммитом с записью в CHANGELOG.
 
@@ -39,11 +41,11 @@ matplotlib.use("Agg")
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "results" / "reference"
-# v0.5.0: НОВЫЙ файл отчёта (старые reference_v0.3.md / v0.4.md заморожены, не
-# трогаются — протокол слияния §0). Лестница теперь включает нелинейные ступени
-# Кармана и полной КТН (ktn_full_thickness_sweep).
-OUT_MD = OUT_DIR / "reference_v0.5.md"
-OUT_CSV = OUT_DIR / "reference_v0.5.csv"
+# v0.6.0: НОВЫЙ файл отчёта (старые reference_v0.3.md / v0.4.md / v0.5.md
+# заморожены, не трогаются — протокол слияния §0). Числа преемственны с v0.5
+# (единая модель + нелинейный контакт — аддитивные слои, GoldenConfig не тронут).
+OUT_MD = OUT_DIR / "reference_v0.6.md"
+OUT_CSV = OUT_DIR / "reference_v0.6.csv"
 OUT_PROV = OUT_DIR / "provenance.json"
 
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -233,7 +235,7 @@ def ladder_section(csv_rows: list) -> list[str]:
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     csv_rows: list[tuple[str, str, str]] = []
-    L = ["# Эталонный отчёт plate-solver v0.5",
+    L = ["# Эталонный отчёт plate-solver v0.6",
          "",
          "Все числа получены ОДНИМ прогоном `scripts/run_reference.py` и",
          "заморожены хеш-воротами (tests/test_reference_hash.py). Обновление",
