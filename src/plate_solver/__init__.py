@@ -54,6 +54,9 @@ _FACADE: dict[str, str] = {
     # -- нелинейный контакт МОР+КТН (v0.6.0) ------------------------------- #
     "NonlinearContactMOR": "contact_nl",
     "NonlinearContactResult": "contact_nl",
+    # -- диагностика зоны контакта (v0.6.0) -------------------------------- #
+    "contact_components": "diagnostics",
+    "contact_report": "diagnostics",
     # -- контакт (МОР) ------------------------------------------------------ #
     "solve_contact": "contact",
     "ContactMOR": "contact",

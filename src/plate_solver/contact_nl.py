@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config import Config
+from .diagnostics import contact_components
 from .ktn_solver import KTNSolver
 
 
@@ -49,6 +50,7 @@ class NonlinearContactResult:
     contact_mask : булева маска зоны контакта (``r > 0``).
     r_max : пиковая реакция; peak_xy — её локализация.
     n_contact : число контактных узлов.
+    n_components : число связных пятен контакта (топология зоны, §8).
     iters, converged, residual_history : диагностика внешнего МОР.
     n_inner : суммарное число внутренних нелинейных итераций (вложенная схема).
     scheme : "nested" | "merged".
@@ -63,6 +65,7 @@ class NonlinearContactResult:
     r_max: float
     peak_xy: tuple
     n_contact: int
+    n_components: int
     iters: int
     converged: bool
     residual_history: np.ndarray
@@ -227,7 +230,9 @@ class NonlinearContactMOR:
             w_max=float(np.max(np.abs(w))), contact_mask=contact,
             r_max=float(r.max()) if r.size else 0.0,
             peak_xy=(float(q.x[peak]), float(q.y[peak])),
-            n_contact=int(contact.sum()), iters=iters, converged=converged,
+            n_contact=int(contact.sum()),
+            n_components=contact_components(q.x, q.y, contact),   # топология зоны (§8)
+            iters=iters, converged=converged,
             residual_history=np.array(hist), n_inner=n_inner, scheme=self.scheme)
 
 
