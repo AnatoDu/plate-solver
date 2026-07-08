@@ -85,10 +85,30 @@ class NonlinearContactMOR:
     foundation_mask : предикат ``(X, Y) → bool`` зоны возможного контакта;
         ``None`` ⇒ вся Ω.
     scheme : ``"nested"`` (эталон) | ``"merged"`` (совмещённый, N4).
+    gain_mode : нормировка усиления оператора (``β_eff = β/gain``, теорема 4).
+
+        * ``"secant"`` (по умолчанию, поведение v0.6.0) — секущая податливость
+          свободного НЕЛИНЕЙНОГО решения ``gain = w_free/q0``;
+        * ``"linear"`` — ЛИНЕЙНАЯ податливость ``gain = w_lin/q0`` (Кирхгоф,
+          ``N=0``, из того же свободного решения — ``w_max_classic``).
+
+        Обоснование ``"linear"``: сжатие МОР (теорема 4) требует
+        ``β_eff·‖G‖ < 2``, где ``G`` — податливость нагрузка→прогиб ТЕКУЩЕГО
+        состояния. Вблизи контактного состояния нагрузка почти скомпенсирована
+        реакцией (``q_n − r → 0`` в зоне), мембранные усилия малы и оператор
+        приближается к ЛИНЕЙНОМУ; при неподвижной кромке ``K_geo(N) ⪰ 0``
+        (растяжение) ⇒ ``w_nl ≤ w_lin`` при любой нагрузке ⇒ линейная
+        податливость — ВЕРХНЯЯ ГРАНЬ ``‖G‖`` вдоль всего пути итерации ⇒
+        ``β_eff·‖G‖ ≤ β < 2`` равномерно. Секущая нормировка занижает ``‖G‖``
+        в ``w_lin/w_free`` раз: при сильном мембранном ужесточении (длинные/
+        растянутые пластины, ``w_lin/w_free ≫ 1``) эффективная β относительно
+        реального оператора ``β·w_lin/w_free ≫ 2`` ⇒ расходимость. Плата за
+        ``"linear"`` — больше итераций (скорость ∝ β_eff).
     """
 
     def __init__(self, solver: KTNSolver, cfg: Config, *, gap,
-                 foundation_mask=None, scheme: str | None = None):
+                 foundation_mask=None, scheme: str | None = None,
+                 gain_mode: str = "secant"):
         self.solver = solver
         self.cfg = cfg
         self.scheme = scheme if scheme is not None else getattr(cfg, "contact_scheme", "nested")
@@ -109,14 +129,23 @@ class NonlinearContactMOR:
             if self.gap.shape != (q.x.size,):
                 raise ValueError("Поле зазора: ожидается массив длины числа узлов квадратуры.")
             self._gap_f = self.gap[self.fmask]
-        # усиление оператора — СЕКУЩАЯ податливость в рабочей точке ``w_free/q0``
-        # (свободное НЕЛИНЕЙНОЕ решение при q0): для линейной задачи совпадает с
-        # податливостью на единичную нагрузку, для нелинейной (жёстче) — меньше,
-        # поэтому β_eff = β·q0/w_free крупнее ⇒ МОР сходится быстрее. Свободное
-        # решение служит и тёплым стартом первого шага МОР.
+        # усиление оператора (β_eff = β/gain, см. gain_mode в докстринге класса):
+        # "secant" — податливость свободного НЕЛИНЕЙНОГО решения (быстрее, но при
+        # сильном мембранном ужесточении рвёт условие сжатия теоремы 4);
+        # "linear" — линейная податливость w_max_classic/q0 (верхняя грань ‖G‖ ⇒
+        # сходимость гарантирована, итераций больше). Свободное решение служит и
+        # тёплым стартом первого шага МОР.
+        if gain_mode not in ("secant", "linear"):
+            raise ValueError(f"gain_mode: ожидалось secant | linear, получено {gain_mode!r}")
+        self.gain_mode = gain_mode
         q0 = float(cfg.q0)
         self._free = solver.solve(np.full(q.x.size, q0))
-        self.gain = self._free.w_max / q0 if q0 != 0.0 else 1.0
+        if q0 == 0.0:
+            self.gain = 1.0
+        elif gain_mode == "linear":
+            self.gain = self._free.w_max_classic / q0
+        else:
+            self.gain = self._free.w_max / q0
         self.beta_eff = cfg.beta / self.gain
         self.max_iter = int(cfg.max_iter)
         self.tol = float(cfg.tol)
@@ -296,7 +325,11 @@ class NonlinearTwoPlateMOR:
     """
 
     def __init__(self, solver1: KTNSolver, solver2: KTNSolver, cfg: Config, *,
-                 gap=0.0, f1=None, f2=None, q2=None, foundation_mask=None):
+                 gap=0.0, f1=None, f2=None, q2=None, foundation_mask=None,
+                 gain_mode: str = "secant"):
+        if gain_mode not in ("secant", "linear"):
+            raise ValueError(f"gain_mode: ожидалось secant | linear, получено {gain_mode!r}")
+        self.gain_mode = gain_mode
         q = solver1.quad
         if not (np.array_equal(q.x, solver2.quad.x) and np.array_equal(q.y, solver2.quad.y)):
             raise ValueError("две пластины КТН: требуется ОБЩАЯ квадратура "
@@ -332,8 +365,11 @@ class NonlinearTwoPlateMOR:
         # общий масштаб — иначе β_eff завышен и итерация расходится.
         ref = max(float(np.max(np.abs(self.f1))),
                   float(np.max(np.abs(self.f2))), float(cfg.q0))
-        gain1 = solver1.solve(np.full(n, ref)).w_max / ref
-        gain2 = solver2.solve(np.full(n, ref)).w_max / ref
+        ref1, ref2 = solver1.solve(np.full(n, ref)), solver2.solve(np.full(n, ref))
+        if gain_mode == "linear":       # верхняя грань ‖G₁+G₂‖ (см. NonlinearContactMOR)
+            gain1, gain2 = ref1.w_max_classic / ref, ref2.w_max_classic / ref
+        else:
+            gain1, gain2 = ref1.w_max / ref, ref2.w_max / ref
         gain = gain1 + gain2
         self.beta_eff = cfg.beta / gain if gain > 0.0 else cfg.beta
         self.max_iter = int(cfg.max_iter)

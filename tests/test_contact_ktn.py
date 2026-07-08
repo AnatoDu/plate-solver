@@ -57,6 +57,41 @@ def test_face_condition_curvature_scales_with_theory():
     assert theory.ktn_full(0.3, 0.2).face_curv_coeff != 0.0
 
 
+def test_face_curv_coeff_is_physical_for_refined_theories():
+    """Лицевой коэффициент кривизны уточнённых теорий = ФИЗИЧЕСКИЙ h_c²−h_*².
+
+    Тождество §3.2 ``h_c² = h_ψ² − h_*²`` требует физического ``h_ψ²`` и в
+    пресете ``ktn_linear`` (в решении он не активен, но производный
+    ``face_curv_coeff`` иначе вырождается в ``−2h_*²`` — в 2.8 раза больше
+    физического, и контакт «щупает» преувеличенную лицевую поверхность).
+    Единый источник — :class:`~plate_solver.faces.FaceParams` (== KTNParams).
+    """
+    from plate_solver.faces import FaceParams
+
+    c_phys = FaceParams(E=1.0, nu=0.3, h=0.2).c_curv
+    assert theory.ktn_linear(0.3, 0.2).face_curv_coeff == pytest.approx(c_phys)
+    assert theory.ktn_full(0.3, 0.2).face_curv_coeff == pytest.approx(c_phys)
+
+
+def test_gain_mode_linear_normalizes_by_linear_compliance():
+    """gain_mode='linear': β_eff нормируется ЛИНЕЙНОЙ податливостью w_lin/q0.
+
+    Обоснование (теорема 4): при неподвижной кромке ``K_geo(N) ⪰ 0`` ⇒
+    ``w_nl ≤ w_lin`` ⇒ линейная податливость — верхняя грань ``‖G‖`` вдоль
+    всего пути МОР ⇒ ``β_eff·‖G‖ ≤ β < 2`` равномерно. Секущая занижает
+    ``‖G‖`` в ``w_lin/w_free`` раз (расходимость при сильном ужесточении).
+    """
+    cfg = _cfg(Q=48)
+    s = _solver(cfg)
+    sec = NonlinearContactMOR(s, cfg, gap=100.0, scheme="merged")
+    lin = NonlinearContactMOR(s, cfg, gap=100.0, scheme="merged", gain_mode="linear")
+    assert lin.gain == pytest.approx(sec._free.w_max_classic / cfg.q0)
+    assert lin.gain >= sec.gain * (1.0 - 1e-12)         # w_lin ≥ w_nl (K_geo ⪰ 0)
+    assert lin.beta_eff <= sec.beta_eff                 # шаг осторожнее
+    with pytest.raises(ValueError, match="gain_mode"):
+        NonlinearContactMOR(s, cfg, gap=1.0, gain_mode="quadratic")
+
+
 @pytest.mark.big
 def test_ktn_contact_limits_face_deflection():
     """Физика: контакт ограничивает ПРОГИБ до зазора; реакция r>0 в зоне."""
@@ -111,6 +146,25 @@ def test_ktn_signature_in_contact():
     rf = NonlinearContactMOR(_solver(cfg, "ktn_full"), cfg, gap=gap, scheme="nested").solve()
     # лицевая кривизна КТН меняет контактную границу ⇒ пик и/или число узлов иные
     assert (rf.n_contact != rk.n_contact) or (abs(rf.r_max - rk.r_max) > 1e-3 * rk.r_max)
+
+
+@pytest.mark.big
+def test_gain_mode_linear_stabilizes_under_strong_stiffening():
+    """Сильное мембранное ужесточение (w_lin/w_nl ≈ 10): секущая нормировка рвёт
+    условие сжатия МОР (эффективная β ≈ 16 ≫ 2) — итерация болтается, реакция
+    ДИКАЯ; линейная нормировка стабилизирует контакт к плато w ≈ z с ФИЗИЧЕСКОЙ
+    реакцией (секущая даёт r_max в разы больше при том же зазоре)."""
+    cfg = Config(E=1.0, h=0.2, nu=0.3, a=1.0, q0=0.4, p=8, Q=48,
+                 n_load_steps=3, karman_tol=1e-8, karman_max_iter=200,
+                 karman_relax=0.5, beta=1.5, max_iter=6000, tol=1e-7)
+    s = _solver(cfg, "karman")
+    gap = 0.15 * s.solve_uniform().w_max
+    bad = NonlinearContactMOR(s, cfg, gap=gap, scheme="merged").solve()
+    good = NonlinearContactMOR(s, cfg, gap=gap, scheme="merged",
+                               gain_mode="linear").solve()
+    assert good.w_max <= 1.05 * gap                     # линейная: плато держит зазор
+    assert bad.r_max > 1.5 * good.r_max                 # секущая: дикая реакция (не сжатие)
+    assert bad.residual_history[-1] > 10.0 * good.residual_history[-1]  # болтается сильнее
 
 
 # -- штамп: контакт с профилем препятствия z(x,y) (§9.2, N7) ------------- #

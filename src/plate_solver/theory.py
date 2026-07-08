@@ -123,8 +123,17 @@ def karman() -> TheoryParams:
 
 
 def ktn_linear(nu: float, h: float) -> TheoryParams:
-    """Линейные поправки сдвига/обжатия постобработкой: нелинейность выкл, уточнение вкл."""
-    return TheoryParams(membrane=False, h_psi_sq=0.0,
+    r"""Линейные поправки сдвига/обжатия постобработкой: нелинейность выкл, уточнение вкл.
+
+    ``h_ψ²`` — ФИЗИЧЕСКИЙ, а не ноль: в РЕШЕНИИ он всё равно не активен
+    (``solve_ktn_terms=False`` без нелинейности), но нужен тождеству §3.2
+    ``h_c² = h_ψ² − h_*²`` для ЛИЦЕВЫХ величин. При ``h_ψ²=0`` производный
+    коэффициент контактной кривизны вырождался в ``face_curv_coeff = −2h_*²``
+    вместо физического ``h_c²−h_*²`` (при ν=0.3 — в 2.8 раза больше), и контакт
+    ``ktn_linear`` «щупал» преувеличенную лицевую поверхность (исправлено;
+    тождество с :class:`~plate_solver.faces.FaceParams.c_curv` — под тестом).
+    """
+    return TheoryParams(membrane=False, h_psi_sq=physical_h_psi_sq(nu, h),
                         h_star_sq=physical_h_star_sq(nu, h),
                         compression=True, shear_field=False)
 
