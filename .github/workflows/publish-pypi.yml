@@ -7,6 +7,8 @@ name: publish-pypi
 on:
   release:
     types: [published]
+  workflow_dispatch:        # ручной запуск (Actions → Run workflow) — на случай,
+                            # если release-триггер не сработал или для до-публикации
 
 jobs:
   pypi-publish:
