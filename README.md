@@ -49,6 +49,12 @@ Russian.*
 ## Установка
 
 ```bash
+pip install plate-solver
+```
+
+Из исходников (для разработки — тесты и МКЭ-верификация):
+
+```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"        # + ".[dev,fem]" для независимой МКЭ-верификации
 ```
