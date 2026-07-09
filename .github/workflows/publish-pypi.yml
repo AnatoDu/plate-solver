@@ -1,0 +1,28 @@
+# Публикация на PyPI при выпуске GitHub-релиза — через Trusted Publishing (OIDC),
+# без API-токенов. Условие: на PyPI однократно зарегистрирован «доверенный
+# издатель» для этого репозитория и workflow (см. docs/RELEASING.md, раздел PyPI).
+# Артефакты собираются на теге релиза — та же сборка, что в ci.yml.
+name: publish-pypi
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC — обязательно для Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Сборка sdist + wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+      - name: Публикация на PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
