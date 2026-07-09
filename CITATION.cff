@@ -24,6 +24,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.21218627
     description: Concept DOI (all versions; resolves to latest)
+  - type: doi
+    value: 10.5281/zenodo.21282756
+    description: Version DOI (v0.6.2)
 license: MIT
 keywords:
   - пластины
