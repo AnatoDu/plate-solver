@@ -15,18 +15,15 @@ authors:
     given-names: Anatoly A.
     orcid: "https://orcid.org/0009-0009-9118-4629"
     affiliation: "Pitirim Sorokin Syktyvkar State University"
-version: 0.3.1
-date-released: 2026-07-06
+version: 0.6.2
+date-released: 2026-07-09
 repository-code: "https://github.com/AnatoDu/plate-solver"
 url: "https://doi.org/10.5281/zenodo.21218627"
-doi: 10.5281/zenodo.21218628
+doi: 10.5281/zenodo.21218627
 identifiers:
   - type: doi
     value: 10.5281/zenodo.21218627
     description: Concept DOI (all versions; resolves to latest)
-  - type: doi
-    value: 10.5281/zenodo.21218628
-    description: Version DOI (v0.3.1)
 license: MIT
 keywords:
   - пластины
@@ -35,3 +32,71 @@ keywords:
   - R-функции
   - метод обобщённой реакции
   - бигармоническое уравнение
+  - задача Синьорини
+  - уточнённая теория пластин
+references:
+  # Метод (математическая основа комплекса)
+  - type: article
+    authors:
+      - family-names: Rvachev
+        given-names: Vladimir L.
+      - family-names: Sheiko
+        given-names: Tatyana I.
+    title: "R-Functions in Boundary Value Problems in Mechanics"
+    journal: "Applied Mechanics Reviews"
+    volume: 48
+    issue: 4
+    year: 1995
+    start: 151
+    end: 188
+    doi: 10.1115/1.3005099
+  # Программные зависимости и независимая верификация
+  - type: article
+    authors:
+      - family-names: Harris
+        given-names: Charles R.
+    title: "Array programming with NumPy"
+    journal: "Nature"
+    volume: 585
+    year: 2020
+    doi: 10.1038/s41586-020-2649-2
+  - type: article
+    authors:
+      - family-names: Virtanen
+        given-names: Pauli
+    title: "SciPy 1.0: fundamental algorithms for scientific computing in Python"
+    journal: "Nature Methods"
+    volume: 17
+    year: 2020
+    doi: 10.1038/s41592-019-0686-2
+  - type: article
+    authors:
+      - family-names: Meurer
+        given-names: Aaron
+    title: "SymPy: symbolic computing in Python"
+    journal: "PeerJ Computer Science"
+    volume: 3
+    year: 2017
+    doi: 10.7717/peerj-cs.103
+  - type: article
+    authors:
+      - family-names: Hunter
+        given-names: John D.
+    title: "Matplotlib: A 2D graphics environment"
+    journal: "Computing in Science & Engineering"
+    volume: 9
+    issue: 3
+    year: 2007
+    doi: 10.1109/MCSE.2007.55
+  - type: article
+    authors:
+      - family-names: Gustafsson
+        given-names: Tom
+      - family-names: McBain
+        given-names: Geordie D.
+    title: "scikit-fem: A Python package for finite element assembly"
+    journal: "Journal of Open Source Software"
+    volume: 5
+    issue: 52
+    year: 2020
+    doi: 10.21105/joss.02369

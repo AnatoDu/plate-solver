@@ -1,6 +1,6 @@
 # Состав sdist: документация, реестры случаев, эталон Maple,
 # лицензия и цитирование едут вместе с исходником.
-include LICENSE CITATION.cff CHANGELOG.md README.md
+include LICENSE CITATION.cff CHANGELOG.md README.md codemeta.json CONTRIBUTING.md
 graft docs
 graft cases
 graft examples

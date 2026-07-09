@@ -23,7 +23,7 @@ from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 from .problem import CaseError, Problem
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 #: фасад: имя → модуль; секции — комментариями
 _FACADE: dict[str, str] = {

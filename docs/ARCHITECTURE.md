@@ -10,20 +10,36 @@
    `cli` (plate-solve / plate-verify / plate-ladder), `references`
    (верификация как свойство постановки).
 2. **Диспетчер** — `dispatch`: `solve(problem) → Result`; маршрутизация
-   по решателям (блок-схема — [dispatch_flow.md](dispatch_flow.md)).
-3. **Контакт** — `contact` (МОР: `ContactMOR`, `TwoPlateMOR`), `ktn`
-   (поправки уточнённой теории; напряжения лицевых поверхностей).
-4. **Решатели изгиба** — `plate` (расщепление, мягкий шарнир), `clamped`
-   (прямой Ритц, защемление; `MixedRectPlate` — смешанные КУ и свободный
-   край), `poisson` (кирпич расщепления), `radial` (1D по радиусу).
-5. **Геометрия и дискретизация** — `geometry` (R-функции, система R0),
+   по решателям и теориям (блок-схема — [dispatch_flow.md](dispatch_flow.md)).
+3. **Контакт** — `contact` (линейный МОР: `ContactMOR`, `TwoPlateMOR` над
+   classic/КТН-поправками), `contact_nl` (НЕЛИНЕЙНЫЙ контакт МОР поверх
+   полной КТН: `NonlinearContactMOR`, `NonlinearTwoPlateMOR`; схемы
+   nested|merged, выбор нормировки шага `gain_mode`), `diagnostics`
+   (размер, топология и сила зоны контакта), `contact_face`
+   (ЭКСПЕРИМЕНТАЛЬНЫЙ задел: лицевое условие Синьорини на самостоятельном
+   поле лицевого прогиба; вне публичного фасада, API нестабилен).
+4. **Единая модель теорий** — `theory` (`TheoryParams`; пресеты
+   `classic`/`karman`/`ktn_linear`/`ktn_full`; морфинг уточнения),
+   `ktn_solver` (`KTNSolver` — ОДИН решатель для всех пресетов, редукции
+   точны по построению), `ktn` (линейные поправки сдвига/обжатия,
+   напряжения лицевых поверхностей), `ktn_full` (полная нелинейная КТН),
+   `membrane` (геометрическая нелинейность Кармана), `faces` (лицевые
+   величины первым классом).
+5. **Решатели изгиба (ядро)** — `plate` (расщепление, мягкий шарнир),
+   `clamped` (прямой Ритц, защемление; `MixedRectPlate` — смешанные КУ и
+   свободный край), `poisson` (кирпич расщепления), `radial` (1D по
+   радиусу, осесимметрия).
+6. **Геометрия и дискретизация** — `geometry` (R-функции, система R0),
+   `rfunctions` (R-операции `r_and`/`r_or`/`r_diff` — многосвязность),
    `basis` (Чебышёв), `quadrature` (гауссова квадратура с маской ω > 0),
    `assembler`.
-6. **Эталоны** — `analytic` (ручные замкнутые решения), `analytic_auto`
-   (фабрика с самосертификацией), `ladder` (верификационная лестница,
-   MMS), `verify_fem` (независимый МКЭ, scikit-fem), `config`.
-7. **Вывод** — `viz` (фигуры, `replot` из fields.npz).
-8. **1D-задел** — `green1d`, `mor1d`, `stamp`, `stamp_ritz`,
+7. **Эталоны и верификация** — `analytic` (ручные замкнутые решения),
+   `analytic_auto` (фабрика с самосертификацией), `benchmarks`
+   (кармановские эталоны Hencky/Way/Levy), `ladder` (верификационная
+   лестница, MMS), `verify_fem` (независимый МКЭ, scikit-fem), `config`.
+8. **Вывод** — `viz` (фигуры, `replot` из fields.npz), `export`
+   (результирующие усилия и запись сеточных полей в LEGACY-VTK).
+9. **1D-задел** — `green1d`, `mor1d`, `stamp`, `stamp_ritz`,
    `strip_contact`, `penalty`, `problems` (историческое ядро 1D-контакта
    и сравнений; используется эталонными воротами).
 
@@ -43,20 +59,45 @@ flowchart TD
     contact --> config
     contact --> ktn
     contact --> plate
+    contact_face --> config
+    contact_face --> faces
+    contact_face --> ktn
+    contact_face --> ktn_solver
+    contact_face --> membrane
+    contact_nl --> config
+    contact_nl --> diagnostics
+    contact_nl --> ktn_solver
     dispatch --> clamped
     dispatch --> config
     dispatch --> contact
+    dispatch --> faces
     dispatch --> ktn
+    dispatch --> ktn_full
     dispatch --> ladder
+    dispatch --> membrane
     dispatch --> plate
     dispatch --> problem
+    faces --> ktn
     geometry --> problem
+    ktn_full --> basis
+    ktn_full --> faces
+    ktn_full --> membrane
+    ktn_full --> quadrature
+    ktn_solver --> basis
+    ktn_solver --> ktn_full
+    ktn_solver --> quadrature
+    ktn_solver --> theory
     ladder --> clamped
     ladder --> geometry
+    membrane --> basis
+    membrane --> clamped
+    membrane --> ladder
+    membrane --> quadrature
     mor1d --> green1d
     penalty --> basis
     penalty --> config
     penalty --> plate
+    penalty --> quadrature
     plate --> basis
     plate --> poisson
     plate --> quadrature
@@ -76,6 +117,7 @@ flowchart TD
     stamp --> mor1d
     stamp_ritz --> mor1d
     stamp_ritz --> stamp
+    theory --> faces
     verify_fem --> plate
     viz --> config
     viz --> contact
@@ -88,7 +130,7 @@ matplotlib в `viz`, scikit-fem в `verify_fem`, sympy-фабрика в
 
 ## Принцип «плоский пакет + фасад»
 
-Пакет НАМЕРЕННО плоский (22 модуля в `src/plate_solver/`): стабильность
+Пакет НАМЕРЕННО плоский (38 модулей в `src/plate_solver/`): стабильность
 листинга исходного текста к регистрации, короткие ссылки из документации
 (NOTES/THEORY ссылаются на имена файлов), обозримость для стороннего
 читателя. «Нелоскость» достигается фасадом: `__init__.py` экспортирует

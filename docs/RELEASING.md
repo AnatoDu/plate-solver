@@ -20,6 +20,22 @@
 3. Вписать DOI: бейдж в README (заменить плейсхолдер), поле `doi:` в
    CITATION.cff; закоммитить.
 
+## Публикация на PyPI (на каждый релиз)
+
+Артефакты собраны на шаге «Релиз на GitHub» (`python -m build`; `twine check
+dist/*` — оба PASSED).
+
+1. **Репетиция на TestPyPI** (версия на боевом PyPI неизменяема):
+   `python -m twine upload --repository testpypi dist/*` — проверить рендер
+   README и метаданные на `test.pypi.org/project/plate-solver`.
+2. **Боевая публикация** — один из вариантов:
+   - токен: `python -m twine upload dist/*` (логин `__token__`, пароль —
+     API-токен pypi.org);
+   - Trusted Publishing (без токенов): добавить репозиторий как trusted
+     publisher на PyPI (OIDC) и публиковать GitHub Action
+     `pypa/gh-action-pypi-publish` от того же релиза, что и Zenodo.
+3. **Проверка:** `pip install plate-solver` в чистом окружении.
+
 ## Госрегистрация ПрЭВМ
 
 Комплект материалов собирает `scripts/make_registration_kit.py`

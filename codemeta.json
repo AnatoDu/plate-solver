@@ -1,0 +1,62 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "plate-solver",
+  "description": "Комплекс программ для расчёта изгиба и одностороннего (Синьорини) контакта упругих пластин произвольного очертания. Геометрия и краевые условия — R-функциями В. Л. Рвачёва (структура решения w=ω·Φ удовлетворяет краевым условиям тождественно); изгиб — методом Ритца (базис ω·Φ, полиномы Чебышёва, однократная факторизация Холецкого); контакт со свободной границей — методом обобщённой реакции (МОР). Все теории объединены в единую параметрическую модель (пресеты: классическая Кирхгофа, геометрически нелинейная Кармана, линейные и полные нелинейные поправки типа Кармана–Тимошенко–Нагди — поперечный сдвиг и обжатие; редукции точны по построению). Нелинейный контакт МОР работает поверх полной КТН; поддержаны многосвязные области, сценарии со штампом и двумя пластинами, диагностика зоны контакта, экспорт полей/усилий и конвейер воспроизводимости. Числовые результаты защищены тест-воротами, эталонные отчёты — под хеш-контролем. / Bending and unilateral (Signorini) contact of thin elastic plates of arbitrary planform: Rvachev's R-functions describe geometry and boundary conditions, a spectral Ritz method solves the bending, and the generalized reaction method resolves free-boundary contact.",
+  "version": "0.6.2",
+  "identifier": "https://doi.org/10.5281/zenodo.21218627",
+  "license": "https://spdx.org/licenses/MIT",
+  "codeRepository": "https://github.com/AnatoDu/plate-solver",
+  "issueTracker": "https://github.com/AnatoDu/plate-solver/issues",
+  "readme": "https://github.com/AnatoDu/plate-solver/blob/main/README.md",
+  "relatedLink": [
+    "https://doi.org/10.5281/zenodo.21218627",
+    "https://github.com/AnatoDu/plate-solver/tree/main/docs"
+  ],
+  "isBasedOn": "https://doi.org/10.1115/1.3005099",
+  "developmentStatus": "active",
+  "applicationCategory": "Computational mechanics",
+  "programmingLanguage": "Python",
+  "runtimePlatform": "Python 3.11+",
+  "operatingSystem": "OS Independent",
+  "datePublished": "2026-07-09",
+  "dateModified": "2026-07-09",
+  "downloadUrl": "https://github.com/AnatoDu/plate-solver/archive/refs/tags/v0.6.2.tar.gz",
+  "keywords": [
+    "plates",
+    "bending",
+    "contact problem",
+    "Signorini problem",
+    "R-functions",
+    "generalized reaction method",
+    "biharmonic equation",
+    "refined plate theory",
+    "computational mechanics",
+    "finite element verification"
+  ],
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Anatoly A.",
+      "familyName": "Durkin",
+      "@id": "https://orcid.org/0009-0009-9118-4629",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Pitirim Sorokin Syktyvkar State University"
+      }
+    }
+  ],
+  "maintainer": {
+    "@type": "Person",
+    "givenName": "Anatoly A.",
+    "familyName": "Durkin",
+    "@id": "https://orcid.org/0009-0009-9118-4629"
+  },
+  "softwareRequirements": [
+    "Python >=3.11",
+    "numpy >=1.24",
+    "scipy >=1.10",
+    "sympy >=1.12",
+    "matplotlib >=3.10.9"
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "title": "plate-solver: изгиб и односторонний контакт упругих пластин произвольного очертания",
-  "description": "Комплекс программ: R-функции (Рвачёв) для геометрии, метод Ритца для изгиба, метод обобщённой реакции для одностороннего контакта со свободной границей, поправки уточнённой теории типа Кармана–Тимошенко–Нагди. Bending and unilateral contact of thin elastic plates of arbitrary planform (R-functions + Ritz + generalized reaction method + refined-theory corrections).",
+  "description": "Комплекс программ для расчёта изгиба и одностороннего (Синьорини) контакта упругих пластин произвольного очертания. Геометрия и краевые условия — R-функциями В. Л. Рвачёва (структура решения w=ω·Φ удовлетворяет краевым условиям тождественно); изгиб — методом Ритца (базис ω·Φ, полиномы Чебышёва, однократная факторизация Холецкого); контакт со свободной границей — методом обобщённой реакции (МОР). Все теории объединены в единую параметрическую модель (пресеты: классическая Кирхгофа, геометрически нелинейная Кармана, линейные и полные нелинейные поправки типа Кармана–Тимошенко–Нагди — поперечный сдвиг и обжатие; редукции точны по построению). Нелинейный контакт МОР работает поверх полной КТН; поддержаны многосвязные области, сценарии со штампом и двумя пластинами, диагностика зоны контакта, экспорт полей/усилий и конвейер воспроизводимости. Числовые результаты защищены тест-воротами, эталонные отчёты — под хеш-контролем. / Bending and unilateral (Signorini) contact of thin elastic plates of arbitrary planform: Rvachev's R-functions describe geometry and boundary conditions, a spectral Ritz method solves the bending, and the generalized reaction method resolves free-boundary contact. All theories share one parametric model (Kirchhoff, von Karman, and linear/full nonlinear Karman–Timoshenko–Naghdi refined corrections for transverse shear and compression, exact reductions by construction); nonlinear contact runs on top of full KTN, with multiply-connected domains, rigid-stamp and two-plate scenarios, contact-zone diagnostics, field/stress-resultant export and a reproducibility pipeline. Shipped numbers are test-gated; reference reports are hash-controlled.",
   "creators": [
     {
       "name": "Durkin, Anatoly A.",
@@ -8,7 +8,7 @@
       "orcid": "0009-0009-9118-4629"
     }
   ],
-  "version": "0.3.1",
+  "version": "0.6.2",
   "license": "MIT",
   "upload_type": "software",
   "language": "rus",
@@ -29,6 +29,36 @@
       "relation": "isSupplementTo",
       "identifier": "https://github.com/AnatoDu/plate-solver",
       "resource_type": "software"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.1115/1.3005099",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.1038/s41586-020-2649-2",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.1038/s41592-019-0686-2",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.7717/peerj-cs.103",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.1109/MCSE.2007.55",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.21105/joss.02369",
+      "resource_type": "publication-article"
     }
   ]
 }
