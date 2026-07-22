@@ -139,11 +139,20 @@ def test_ktn_signature_faces_nontrivial():
     assert tp["h_psi_sq"] > 0 and tp["h_over_L"] == pytest.approx(0.2, rel=1e-2)
 
 
-def test_ktn_full_soft_hinge_not_implemented():
-    """Мягкий шарнир для КТН — задел §3.5: явный NotImplementedError."""
-    with pytest.raises(NotImplementedError, match="ЗАЩЕМЛЕНИИ"):
-        KTNPlate.from_config(_DOM, _cfg(0.1, 1.0), bc_type="soft_hinge",
-                             inplane_bc="immovable")
+def test_ktn_full_soft_hinge_solves():
+    """Мягкий шарнир для КТН (v0.6.3, §3.5): решается на круге, шарнир гнётся сильнее.
+
+    Полная соответствующая верификация граничного члена (тождество Грина,
+    редукции, сходимость) — в tests/test_soft_hinge_ktn.py.
+    """
+    cfg = _cfg(0.1, 1.0)
+    sh = KTNPlate.from_config(_DOM, cfg, bc_type="soft_hinge", inplane_bc="immovable")
+    cl = KTNPlate.from_config(_DOM, cfg, bc_type="clamped", inplane_bc="immovable")
+    import numpy as np
+    q = np.full(sh.quad.x.size, cfg.q0)
+    r_sh, r_cl = sh.solve(q), cl.solve(q)
+    assert r_sh.converged and np.isfinite(r_sh.w_max)
+    assert r_sh.w_max > r_cl.w_max                        # шарнир податливее защемления
 
 
 def test_ktn_method_newton_not_implemented():

@@ -1,0 +1,49 @@
+# CI: нелинейная пара пластин МОР+КТН, круг, защемление (v0.6.3).
+# Обе пластины — полная КТН; условие непроникания на ЛИЦЕВЫХ прогибах
+# u_c1 − u_c2 ≤ z (§9.2). Реакция взаимодействия общая: q1−r, q2+r.
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 0.01                 # малая нагрузка ⇒ МОР сходится быстро
+
+[model]
+theory = "ktn_full"
+h = 0.2
+n_load_steps = 2
+karman_max_iter = 80
+karman_tol = 1.0e-6
+
+[contact]
+enabled = true
+target = "plate2"
+gap = 0.0                 # касание срединных (лицевые расходятся по КТН)
+scheme = "merged"
+beta = 1.5
+max_iter = 3000
+tol = 3.0e-4
+
+[plate2]
+[plate2.bc]
+type = "clamped"
+[plate2.load]
+type = "uniform"
+q0 = 0.0                  # нижняя пластина без собственной нагрузки
+[plate2.model]
+theory = "ktn_full"
+
+[discretization]
+p = 8
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "none"        # ворота-инварианты пары (r≥0, комплементарность)
+
+[output]
+dir = "results/ci/ktn_full_two_plates_contact"

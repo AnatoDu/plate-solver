@@ -1,0 +1,36 @@
+# CI: эллиптическая пластина, ШАРНИРНОЕ опирание, контакт (классика, v0.6.3).
+# Шарнир (soft_hinge) + контакт доступны для линейных теорий (classic, ktn_linear)
+# на любой R-области, включая эллипс. Контакт по срединной поверхности.
+[geometry]
+kind = "ellipse"
+a = 1.5
+b = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+theory = "classic"
+h = 0.06
+
+[contact]
+enabled = true
+gap_factor = 0.6
+beta = 1.2
+max_iter = 1500
+tol = 1.0e-7
+
+[discretization]
+p = 8
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "none"
+
+[output]
+dir = "results/ci/ellipse_soft_hinge_contact"

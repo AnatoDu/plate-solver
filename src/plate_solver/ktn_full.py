@@ -47,6 +47,94 @@ from .membrane import KarmanPlate, _w_structure
 from .quadrature import interior_nodes
 
 
+def _star_boundary_quad(domain, m_bnd: int = 360):
+    r"""Квадратура по ∂Ω для звёздной относительно центра bbox области (§3.5, ЭКСПЕРИМ.).
+
+    Для КАЖДОГО угла θ луч из центра bbox пересекает границу ω = 0 в одной точке
+    (бисекция по r). Возвращает ``(Xb, Yb, ds, nx, ny)``: точки границы, элемент
+    длины ``ds`` (трапеции по замкнутому контуру) и ВНЕШНЮЮ нормаль
+    ``n = −∇ω/‖∇ω‖`` (ω > 0 внутри ⇒ ∇ω внутрь). Годится для звёздных областей
+    (круг, эллипс, выпуклые); для невыпуклых/многосвязных — задел.
+    """
+    x0, x1, y0, y1 = domain.bbox
+    cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+    if float(domain.omega(cx, cy)) <= 0.0:
+        raise ValueError(
+            "звёздная квадратура ∂Ω: центр bbox вне материала (ω ≤ 0) — область "
+            "не звёздная относительно центра (кольцо/многосвязная/невыпуклая); "
+            "реализована для circle | ellipse (выпуклые звёздные)")
+    r_hi = float(np.hypot(x1 - x0, y1 - y0))                 # заведомо снаружи
+    th = np.linspace(0.0, 2.0 * np.pi, m_bnd, endpoint=False)
+    dx, dy = np.cos(th), np.sin(th)
+    lo = np.zeros(m_bnd)
+    hi = np.full(m_bnd, r_hi)
+    for _ in range(60):                                      # бисекция ω = 0 по лучу
+        mid = 0.5 * (lo + hi)
+        inside = domain.omega(cx + mid * dx, cy + mid * dy) > 0.0
+        lo = np.where(inside, mid, lo)
+        hi = np.where(inside, hi, mid)
+    r = 0.5 * (lo + hi)
+    Xb, Yb = cx + r * dx, cy + r * dy
+    gx, gy = domain.grad_omega(Xb, Yb)                       # ∇ω (внутрь)
+    gn = np.hypot(gx, gy)
+    gn[gn == 0.0] = 1.0
+    nx, ny = -gx / gn, -gy / gn                              # внешняя нормаль
+    d_next = np.hypot(np.roll(Xb, -1) - Xb, np.roll(Yb, -1) - Yb)
+    d_prev = np.hypot(Xb - np.roll(Xb, 1), Yb - np.roll(Yb, 1))
+    ds = 0.5 * (d_next + d_prev)                             # элемент длины (замкнутый контур)
+    return Xb, Yb, ds, nx, ny
+
+
+def _contour_boundary_quad(domain, ngrid: int = 800):
+    r"""Общая квадратура по ∂Ω (все контуры ω=0, вкл. внутренние) через contourpy.
+
+    Для МНОГОСВЯЗНЫХ областей (кольцо): контуры ``ω = 0`` извлекаются из сетки
+    bbox; ``ds`` — длины сегментов, внешняя нормаль ``n = −∇ω/‖∇ω‖`` в серединах
+    сегментов (автоматически верна и для внутренних границ — направлена в дырку).
+    ⚠️ У ВХОДЯЩИХ (реентрантных) углов точность падает (сингулярность) —
+    реализована для гладких границ (кольцо), не для L/compose с вырезом.
+    """
+    from contourpy import contour_generator
+
+    x0, x1, y0, y1 = domain.bbox
+    pad = 0.02 * max(x1 - x0, y1 - y0)
+    gx = np.linspace(x0 - pad, x1 + pad, ngrid)
+    gy = np.linspace(y0 - pad, y1 + pad, ngrid)
+    X, Y = np.meshgrid(gx, gy)
+    cg = contour_generator(X, Y, domain.omega(X, Y))
+    xs, ys, dss = [], [], []
+    for poly in cg.lines(0.0):
+        P = np.asarray(poly, float)
+        if len(P) < 3:
+            continue
+        mid = 0.5 * (P[:-1] + P[1:])                         # середины сегментов
+        seg = P[1:] - P[:-1]
+        xs.append(mid[:, 0])
+        ys.append(mid[:, 1])
+        dss.append(np.hypot(seg[:, 0], seg[:, 1]))
+    if not xs:
+        raise ValueError("контурная квадратура ∂Ω: граница ω = 0 не найдена")
+    Xb, Yb, ds = np.concatenate(xs), np.concatenate(ys), np.concatenate(dss)
+    gxv, gyv = domain.grad_omega(Xb, Yb)
+    gn = np.hypot(gxv, gyv)
+    gn[gn == 0.0] = 1.0
+    return Xb, Yb, ds, -gxv / gn, -gyv / gn
+
+
+def _boundary_quad(domain):
+    r"""Квадратура по ∂Ω граничного члена §3.5: звёздная (быстрая) ИЛИ контурная.
+
+    Центр bbox в материале (``ω > 0``) ⇒ область звёздная от центра
+    (круг/эллипс/прямоугольник) — быстрая бисекция; иначе (кольцо,
+    многосвязная) — общая контурная квадратура.
+    """
+    x0, x1, y0, y1 = domain.bbox
+    cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+    if float(domain.omega(cx, cy)) > 0.0:
+        return _star_boundary_quad(domain)
+    return _contour_boundary_quad(domain)
+
+
 def _lin_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Решение НЕсимметричной системы (член B несимметричен) с диаг. предобусл.
 
@@ -77,15 +165,23 @@ class KTNPlate(KarmanPlate):
     ----------
     include_ktn_terms : при ``False`` КТН-члены выключены ⇒ решатель ТОЖДЕСТВЕНЕН
         ``KarmanPlate`` (для Gate R1 — редукция до машинной точности).
+
+    Мягкий шарнир (``bc_type="soft_hinge"``, v0.6.3). Полная КТН на шарнире
+    отличается от защемления ОДНИМ граничным членом слабой формы (§3.5): при
+    структуре ``ω¹`` ``v = 0`` на ∂Ω, но ``∂v/∂n ≠ 0``, поэтому в формуле Грина
+    для ``−h_ψ²∫ v ΔL`` остаётся ``−h_ψ²∮ L·∂ψ/∂n ds`` (для защемления ``ω²``
+    даёт ``∂ψ/∂n = 0`` ⇒ член ТОЖДЕСТВЕННО ноль). Граничный член собирается
+    звёздной квадратурой по ∂Ω (:func:`_star_boundary_quad`; circle, ellipse,
+    выпуклые). Корректность граничного члена проверена ДИСКРЕТНЫМ ТОЖДЕСТВОМ
+    ГРИНА (``∫ v ΔL = ∫ L Δv − ∮ L ∂v/∂n`` до точности квадратуры; без члена —
+    50 % ошибки), редукциями (члены-выкл → Карман; ``h → 0`` → Кирхгоф) и
+    сходимостью по ``p``. Независимого литературного эталона полной КТН нет
+    (как и отложенный gate R3 для защемления) — краевая модель §3.5
+    предполагается стандартной (``w = 0``, ``M_n = 0``).
     """
 
     def __init__(self, domain, basis, quad, cfg, *, bc_type="clamped",
                  inplane_bc="immovable", include_ktn_terms=True):
-        if bc_type == "soft_hinge":
-            raise NotImplementedError(
-                "theory = 'ktn_full' на мягком шарнире: граничный член слабой "
-                "формы (B) по полудеформационным условиям (§3.5) — задел; в "
-                "v0.5.0 полная КТН реализована на ЗАЩЕМЛЕНИИ (bc = clamped)")
         super().__init__(domain, basis, quad, cfg, bc_type=bc_type, inplane_bc=inplane_bc)
         self._include_ktn = bool(include_ktn_terms)
         self._faces = FaceParams(E=cfg.E, nu=cfg.nu, h=cfg.h)
@@ -96,6 +192,20 @@ class KTNPlate(KarmanPlate):
         self._pxx, self._pyy, self._pxy = pxx, pyy, pxy
         self._lap_psi = pxx + pyy
         self._lap_q = None                           # Δq для члена (A); см. set_load_laplacian
+        # Граничный член слабой формы для мягкого шарнира (§3.5): нужен ТОЛЬКО
+        # когда активны КТН-члены (h_ψ² > 0, ktn_full). Для Кармана (члены выкл)
+        # и защемления не собирается.
+        self._soft_hinge_bnd = (bc_type == "soft_hinge") and self._include_ktn
+        self._bnd = None
+        if self._soft_hinge_bnd:
+            Xb, Yb, ds_b, nx_b, ny_b = _boundary_quad(domain)
+            _, psx_b, psy_b, pxx_b, pyy_b, pxy_b = _w_structure(
+                domain, basis, Xb, Yb, self._power)
+            self._bnd = {
+                "Xb": Xb, "Yb": Yb, "ds": ds_b,
+                "pxx": pxx_b, "pyy": pyy_b, "pxy": pxy_b,
+                "dpsidn": psx_b * nx_b + psy_b * ny_b,       # ∂ψ_j/∂n на ∂Ω, (N, M_b)
+            }
 
     def set_load_laplacian(self, lap_q) -> None:
         """Задать Δq в узлах квадратуры для члена КТН (A) ``−h_*²Δq`` (§7).
@@ -132,6 +242,28 @@ class KTNPlate(KarmanPlate):
         LN = self._pxx * Nx + 2.0 * self._pxy * Nxy + self._pyy * Ny
         return (self._lap_psi * W) @ LN.T
 
+    def _boundary_term_from_N(self, Nx_b, Ny_b, Nxy_b) -> np.ndarray:
+        r"""Граничная матрица по усилиям НА ГРАНИЦЕ: ``B[j,i] = ∮ (N:∇∇ψ_i)·∂ψ_j/∂n ds``.
+
+        Дискретная реализация граничного интеграла формулы Грина (§3.5). Отделена
+        от вычисления ``N``, чтобы верификация (MMS с фиксированным ``N``) могла
+        подать усилия напрямую.
+        """
+        b = self._bnd
+        LN = b["pxx"] * Nx_b + 2.0 * b["pxy"] * Nxy_b + b["pyy"] * Ny_b  # L(ψ_i) на ∂Ω, (N, M_b)
+        return (b["dpsidn"] * b["ds"]) @ LN.T
+
+    def _ktn_boundary_term(self, cu, cv, cw) -> np.ndarray:
+        r"""Граничная матрица (§3.5, ЭКСПЕРИМ.): усилия ``N`` на границе из состояния.
+
+        Возникает в формуле Грина для ``−h_ψ²∫ v ΔL`` при мягком шарнире (``v=0``,
+        ``∂v/∂n≠0`` на ∂Ω). ``N`` берутся на границе из текущего решения
+        (``membrane_forces_at``). Для защемления ``∂ψ/∂n = 0`` ⇒ матрица нулевая.
+        """
+        b = self._bnd
+        Nx_b, Ny_b, Nxy_b = self.membrane_forces_at(cu, cv, cw, b["Xb"], b["Yb"])
+        return self._boundary_term_from_N(Nx_b, Ny_b, Nxy_b)
+
     def solve(self, f_values, c0=None):
         r"""Итерация Пикара с КТН-членами (§5.3). ``ktn_method='newton'`` — задел.
 
@@ -156,6 +288,9 @@ class KTNPlate(KarmanPlate):
         A = (self.D * self._S_bend
              + self._geometric_stiffness(Nx, Ny, Nxy)
              + self._h_psi_sq * self._ktn_regularization(Nx, Ny, Nxy))
+        if self._soft_hinge_bnd:
+            # мягкий шарнир: +h_ψ²∫ v ΔL = +h_ψ²(M_2 − B_∂Ω) (формула Грина, §3.5)
+            A = A - self._h_psi_sq * self._ktn_boundary_term(a, b, c)
         c_raw = _lin_solve(A, b_level)
         g = (1.0 - theta) * c + theta * c_raw
         return g, (a, b, Nx, Ny, Nxy)

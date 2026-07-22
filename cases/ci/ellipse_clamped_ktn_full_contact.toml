@@ -1,0 +1,40 @@
+# CI: эллиптическая пластина, защемление, контакт по полной КТН (v0.6.3).
+# Форма произвольного очертания через примитив ellipse (полуоси a, b);
+# контакт «щупает» ЛИЦЕВУЮ поверхность (условие Синьорини на грани).
+[geometry]
+kind = "ellipse"
+a = 1.5                    # полуось по x
+b = 1.0                    # полуось по y
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 0.01
+
+[model]
+theory = "ktn_full"
+h = 0.2
+n_load_steps = 3
+karman_max_iter = 100
+karman_tol = 1.0e-6
+
+[contact]
+enabled = true
+gap_factor = 0.5
+scheme = "merged"
+beta = 1.5
+max_iter = 3000
+tol = 3.0e-4
+
+[discretization]
+p = 8
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "none"        # для эллипса аналитического эталона нет — ворота-инварианты
+
+[output]
+dir = "results/ci/ellipse_clamped_ktn_full_contact"

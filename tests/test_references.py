@@ -76,7 +76,7 @@ def test_resolver_errors():
         resolve_reference(_problem(geometry={"kind": "compose", "tree": tree},
                                    bc={"type": "clamped"},
                                    verify={"reference": "fem", "cross_1d": False}))
-    with pytest.raises(CaseError, match="инварианты"):
+    with pytest.raises(CaseError, match="инвариант"):
         resolve_reference(_problem(contact={"enabled": True, "gap_factor": 0.5},
                                    verify={"reference": "analytic"}))
     with pytest.raises(CaseError, match="ЦЕНТРЕ"):

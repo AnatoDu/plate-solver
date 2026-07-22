@@ -435,6 +435,43 @@ def vf_annulus_mesh(a: float, b: float):
 # --------------------------------------------------------------------------- #
 #  Резолвер и отчёт
 # --------------------------------------------------------------------------- #
+def _is_axisym_contact_case(problem) -> bool:
+    """Поддержан ли осесимметричный контактный эталон (круг, шарнир, классика)."""
+    c = problem.contact
+    return (problem.geometry.kind == "circle"
+            and problem.bc.type == "soft_hinge"
+            and problem.model.theory == "classic"
+            and problem.load.type == "uniform"
+            and c.target == "foundation"
+            and c.zone is None
+            and c.force is None
+            and c.gap is not None)              # скалярный зазор (не gap_factor/поле)
+
+
+def _axisym_contact_reference(problem, cfg) -> Reference:
+    r"""Эталон: круг, мягкий шарнир, контакт с плоским основанием (Кирхгоф).
+
+    ``w_max = Δ`` тривиален (пластина ложится на основание в зоне контакта),
+    поэтому гейт — прогиб ВНЕ контактной зоны, в точке ``r = (c + a)/2`` (где
+    ``w < Δ``), против сертифицированного ``axisym_contact_solution``
+    (центральная плоская зона + кольцевая реакция Кирхгофа, §analytic_auto).
+    """
+    from .analytic_auto import FactoryError, axisym_contact_solution
+
+    a = float(cfg.a)
+    gap = float(problem.contact.gap)
+    try:
+        sol = axisym_contact_solution(a=a, D=cfg.D, q0=cfg.q0, gap=gap)
+    except FactoryError as e:
+        _fail("contact.gap", gap,
+              f"0 < Δ < w_free(0) для осесимметричного эталона контакта ({e})")
+    c_star = float(sol.meta["c"])
+    r_gate = 0.5 * (c_star + a)                 # середина между кромкой зоны и краем
+    w_ref = float(sol.w(r_gate, 0.0))
+    return Reference(name="analytic-контакт (circle, soft_hinge, Кирхгоф)",
+                     kind="analytic", w_max=w_ref, gated=True, point=(r_gate, 0.0))
+
+
 def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
     """Список именованных эталонов постановки.
 
@@ -444,10 +481,18 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
     cfg = problem.to_config() if cfg is None else cfg
     v = problem.verify
     refs: list[Reference] = []
-    if v.reference != "none" and problem.contact.enabled:
+    if problem.contact.enabled:
+        # Контакт: сертифицированный осесимметричный эталон (круг+шарнир+классика)
+        # ЛИБО ворота инвариантов (reference=none). Прочий контакт эталона не имеет.
+        if v.reference == "none":
+            return refs
+        if v.reference == "analytic" and _is_axisym_contact_case(problem):
+            refs.append(_axisym_contact_reference(problem, cfg))
+            return refs
         _fail("verify.reference", v.reference,
-              "none — эталонов контактной задачи в v0.2 нет "
-              "(ворота контакта — инварианты)")
+              "none, либо analytic для circle + soft_hinge + classic + основание "
+              "со скалярным зазором (осесимметричный эталон контакта Кирхгофа); "
+              "прочий контакт — ворота инвариантов (r≥0, комплементарность, зона)")
     if v.reference == "analytic":
         ref_val = _analytic_wmax(problem, cfg)
         point = None

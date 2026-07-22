@@ -156,6 +156,32 @@ def test_b3_t4_contact_stress_profile_regression(tmp_path):
     assert float(np.max(q_bot[j, :])) > 0.0
 
 
+def test_replot_compression_and_moment_maps(tmp_path):
+    """v0.6.3: карта обжатия dh (только КТН) и карты моментов (matplotlib)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from pathlib import Path
+
+    from plate_solver import viz
+    from plate_solver.dispatch import solve
+    from plate_solver.problem import Problem
+
+    root = Path(__file__).resolve().parents[1] / "cases" / "ci"
+
+    # КТН: dh ≠ 0 ⇒ есть и compression, и moments
+    res = solve(Problem.from_toml(root / "ktn_full_circle_clamped_uniform.toml"))
+    res.save(tmp_path / "ktn")
+    names = {p.name for p in viz.replot(tmp_path / "ktn", formats=("png",))}
+    assert {"compression.png", "moments.png"} <= names
+
+    # classic: dh ≡ 0 ⇒ карты обжатия НЕТ, моменты есть
+    res = solve(Problem.from_toml(root / "circle_clamped.toml"))
+    res.save(tmp_path / "cl")
+    names = {p.name for p in viz.replot(tmp_path / "cl", formats=("png",))}
+    assert "moments.png" in names and "compression.png" not in names
+
+
 def test_b2_fields_npz_and_replot(tmp_path):
     """B2: fields.npz полон (схема 1) и viz.replot воспроизводит фигуры."""
     import matplotlib

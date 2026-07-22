@@ -152,10 +152,31 @@ def test_karman_multiply_connected_and_noncanonical_allowed():
     assert p.geometry.kind == "L"
 
 
-def test_karman_rejects_contact():
-    """Нелинейный контакт (МОР поверх Кармана) — вне рамок v0.4.0."""
-    _expect_error(_case(contact={"enabled": True, "gap": 1e-3}),
-                  "contact.enabled", "направление развития")
+def test_karman_contact_supported_and_bounds():
+    """Нелинейный контакт МОР+Карман поддержан на защемлении+равномерной (v0.6.3).
+
+    Маршрутизируется в :class:`~plate_solver.contact_nl.NonlinearContactMOR`
+    (метод верифицирован в tests/test_contact_ktn.py; интеграция диспетчера —
+    tests/test_contact_nonlinear.py). Защемление — любая R-область; мягкий
+    шарнир — circle | ellipse (звёздная квадратура ∂Ω). Силовое управление и
+    неравномерная нагрузка — направления развития v0.7.
+    """
+    # поддержано: karman + контакт (clamped, uniform) — валидация проходит
+    Problem.from_dict(_case(contact={"enabled": True, "gap": 1e-3}))
+    # поддержано: мягкий шарнир на КРУГЕ (звёздная квадратура ∂Ω, v0.6.3)
+    Problem.from_dict(_case(bc={"type": "soft_hinge"},
+                            contact={"enabled": True, "gap": 1e-3}))
+    # мягкий шарнир на НЕзвёздной области (L) — понятный отказ
+    _expect_error(_case(geometry={"kind": "L", "side": 1.0, "cut": 0.5},
+                        bc={"type": "soft_hinge"},
+                        contact={"enabled": True, "gap": 1e-3}),
+                  "bc.type", "circle")
+    # поддержано: силовой штамп для ОДИНОЧНОЙ пластины (v0.6.3)
+    Problem.from_dict(_case(contact={"enabled": True, "force": 1e-3}))
+    # неравномерная нагрузка — тракт реализован для равномерной
+    _expect_error(_case(load={"type": "point", "P": 1e-3, "x0": 0.0, "y0": 0.0},
+                        contact={"enabled": True, "gap": 1e-3}),
+                  "load.type", "uniform")
 
 
 def test_config_karman_defaults():

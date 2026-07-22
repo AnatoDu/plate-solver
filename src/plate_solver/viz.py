@@ -332,6 +332,35 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
         ax2.legend(fontsize=8)
         ax2.set_title("Профиль σy⁻ через зону (влияние обжатия)")
         _save(fig, "reaction")
+
+    # 4) карта обжатия dh = w_bot − w_срединная (лицевая кинематика КТН, §21);
+    #    для classic/karman тождественно ноль ⇒ фигура не строится.
+    if "dh" in data.files and float(np.nanmax(np.abs(data["dh"]))) > 0.0:
+        fig, ax = plt.subplots(figsize=(6.5, 5.5))
+        vmax = float(np.nanmax(np.abs(data["dh"])))
+        pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data["dh"]),
+                            cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+        ax.set_aspect("equal")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Обжатие dh = w_нижн.лицевая − w_срединная (§21)")
+        fig.colorbar(pcm, ax=ax, label="dh")
+        _save(fig, "compression")
+
+    # 5) карты изгибных моментов Mx, My, Mxy (matplotlib; ранее только в VTK)
+    if "Mx" in data.files:
+        mcomps = [("Mx", "Mx"), ("My", "My"), ("Mxy", "Mxy")]
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.6))
+        vmax = max((float(np.nanmax(np.abs(data[k]))) for k, _ in mcomps
+                    if k in data.files), default=0.0) or 1.0
+        for ax, (key, title) in zip(axes.ravel(), mcomps, strict=True):
+            pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data[key]),
+                                cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+            ax.set_aspect("equal")
+            ax.set_title(title)
+        fig.colorbar(pcm, ax=axes, label="M", shrink=0.8)
+        fig.suptitle("Изгибные моменты Mx, My, Mxy")
+        _save(fig, "moments")
     return out
 
 def surface3d(X, Y, W, *, elev: float = 28.0, azim: float = -60.0,

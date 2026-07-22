@@ -87,6 +87,19 @@ def rectangle_expr(x1: float, x2: float, y1: float, y2: float) -> sp.Expr:
     return r_and(wx, wy)
 
 
+def ellipse_expr(a: float, b: float, cx: float = 0.0, cy: float = 0.0) -> sp.Expr:
+    """ω эллипса с полуосями (a, b) и центром (cx, cy), нормированная как круг.
+
+    .. math:: \\omega = \\frac{a\\,b}{a+b}\\Big(1 - \\frac{(x-c_x)^2}{a^2}
+              - \\frac{(y-c_y)^2}{b^2}\\Big)
+
+    Внутри эллипса ω > 0, на границе ω = 0. Множитель ``a·b/(a+b)`` подобран
+    так, чтобы при ``a = b = R`` выражение совпало с :func:`circle_expr`
+    (``ω = (R² − r²)/(2R)``) — единая нормировка масштаба (обусловленность).
+    """
+    return a * b / (a + b) * (1 - (x - cx) ** 2 / a**2 - (y - cy) ** 2 / b**2)
+
+
 # --------------------------------------------------------------------------- #
 #  Область: значение ω и точный градиент ∇ω (через lambdify)
 # --------------------------------------------------------------------------- #
@@ -145,6 +158,14 @@ def make_rectangle(x1: float, x2: float, y1: float, y2: float) -> Domain:
     if not (x1 < x2 and y1 < y2):
         raise ValueError("Требуется x1 < x2 и y1 < y2.")
     return Domain(rectangle_expr(x1, x2, y1, y2), (x1, x2, y1, y2))
+
+
+def make_ellipse(a: float = 1.0, b: float = 1.0) -> Domain:
+    """Эллипс с полуосями ``a`` (по x) и ``b`` (по y), центр (0,0);
+    bbox = (−a, a, −b, b). При ``a = b`` — круг радиуса ``a``."""
+    if a <= 0 or b <= 0:
+        raise ValueError("Полуоси a, b должны быть положительными.")
+    return Domain(ellipse_expr(a, b), (-a, a, -b, b))
 
 
 def make_annulus(a: float = 1.0, b: float = 0.4) -> Domain:
@@ -270,8 +291,10 @@ __all__ = [
     "r_diff",
     "circle_expr",
     "rectangle_expr",
+    "ellipse_expr",
     "make_circle",
     "make_rectangle",
+    "make_ellipse",
     "make_L",
     "make_annulus",
     "make_plate_with_hole",

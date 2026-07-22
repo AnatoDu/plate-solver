@@ -6,10 +6,14 @@ r"""dispatch.py — диспетчер: постановка Problem → рас�
   (расщепление бигармоники на две задачи Пуассона);
 * ``bc.type = clamped``     → :class:`~plate_solver.clamped.ClampedPlate`
   (структура w = ω²Φ, прямой Ритц по бигармонике);
-* ``contact.enabled``       → :class:`~plate_solver.contact.ContactMOR`
-  (только soft_hinge — гарантировано валидатором); ``[contact.zone]`` →
-  ``foundation_mask = [ω_zone > 0]`` в узлах квадратуры;
-* ``model.theory = ktn``    → :class:`~plate_solver.ktn.KTNParams`
+* ``contact.enabled`` + ``theory = classic | ktn_linear`` →
+  :class:`~plate_solver.contact.ContactMOR` (soft_hinge И clamped; ``[contact.zone]``
+  → ``foundation_mask = [ω_zone > 0]`` в узлах квадратуры);
+* ``contact.enabled`` + ``theory = karman | ktn_full`` (v0.6.3) →
+  :class:`~plate_solver.contact_nl.NonlinearContactMOR` (МОР поверх полной КТН,
+  лицевое условие Синьорини; защемление, равномерная нагрузка);
+  пара — :class:`~plate_solver.contact_nl.NonlinearTwoPlateMOR`;
+* ``model.theory = ktn_linear`` → :class:`~plate_solver.ktn.KTNParams`
   (в контакте — смещение контактной поверхности, как в ContactMOR; в чистом
   изгибе — ``corrected_deflection`` при r = 0, кривизна Δw = −M/D из (P1)).
 
@@ -55,6 +59,8 @@ def build_domain(spec: GeometrySpec) -> geometry.Domain:
         return geometry.make_L(spec.side, spec.cut)
     if spec.kind == "annulus":
         return geometry.make_annulus(spec.a, spec.b)
+    if spec.kind == "ellipse":
+        return geometry.make_ellipse(spec.a, spec.b)
     if spec.kind == "compose":
         return geometry.make_compose(spec.tree)
     raise CaseError(f"geometry.kind: получено {spec.kind!r}, ожидалось значение "
@@ -351,14 +357,18 @@ class Result:
         if solver2 is None or cfg2 is None:
             return {}
         inside2 = np.isfinite(self.contact.w2_grid)
-        p2 = 2 if hasattr(solver2, "S") else 1
         Mx2 = np.full(self.Xg.shape, np.nan)
         My2 = np.full(self.Xg.shape, np.nan)
         Mxy2 = np.full(self.Xg.shape, np.nan)
         with np.errstate(invalid="ignore", divide="ignore"):
-            mx, my, mxy = bending_moments_full(
-                solver2.domain, solver2.basis, self.contact.cw2, p2,
-                cfg2.D, cfg2.nu, self.Xg[inside2], self.Yg[inside2])
+            if hasattr(solver2, "moments_at"):          # KarmanPlate/KTNSolver: своя структура
+                mx, my, mxy = solver2.moments_at(
+                    self.contact.cw2, self.Xg[inside2], self.Yg[inside2])
+            else:
+                p2 = 2 if hasattr(solver2, "S") else 1  # ω²Φ у защемления
+                mx, my, mxy = bending_moments_full(
+                    solver2.domain, solver2.basis, self.contact.cw2, p2,
+                    cfg2.D, cfg2.nu, self.Xg[inside2], self.Yg[inside2])
         Mx2[inside2], My2[inside2], Mxy2[inside2] = mx, my, mxy
         r_fld = np.nan_to_num(self.contact.r_grid, nan=0.0)
         s2 = stresses_faces(Mx2, My2, Mxy2, h=cfg2.h, nu=cfg2.nu,
@@ -547,7 +557,18 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
 
-    if problem.model.theory == "ktn_full":                # полная нелинейная КТН (v0.5)
+    nonlinear_contact = (problem.contact.enabled
+                         and problem.model.theory in ("karman", "ktn_full"))
+    if nonlinear_contact:                                 # нелинейный контакт МОР+КТН (v0.6.3)
+        from .ktn_solver import KTNSolver
+
+        # единый решатель КТН (пресет теории) — вокруг него работает
+        # NonlinearContactMOR; bc = clamped (любая R-область) или soft_hinge
+        # (circle | ellipse, граничный член §3.5) — гарантировано валидатором.
+        solver = KTNSolver.from_theory_name(dom, cfg, problem.model.theory,
+                                            bc_type=problem.bc.type,
+                                            inplane_bc=problem.model.inplane_bc)
+    elif problem.model.theory == "ktn_full":              # полная нелинейная КТН (v0.5)
         from .ktn_full import KTNPlate
 
         solver = KTNPlate.from_config(dom, cfg, bc_type=problem.bc.type,
@@ -738,6 +759,14 @@ def _cond_of(solver) -> float:
 
 
 def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
+    # Нелинейный контакт МОР+КТН (karman | ktn_full, v0.6.3): отдельный тракт
+    # вокруг единого решателя КТН (лицевое условие Синьорини, §4).
+    if problem.model.theory in ("karman", "ktn_full"):
+        if problem.contact.target == "plate2":
+            return _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings)
+        if problem.contact.force is not None:
+            return _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings)
+        return _solve_contact_nonlinear(problem, cfg, dom, solver, warnings)
     q = solver.quad
     # Δ: скаляр gap | gap_factor·w_free | поле [contact.gap] (A1)
     f = _uniform(cfg, q) if f_values is None else f_values
@@ -796,8 +825,204 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     return res
 
 
-def _plate2_solver(problem: Problem, cfg: Config, dom):
-    """Построить решатель второй пластины по [plate2] (дефолты — от первой)."""
+def _contact_metrics_nl(r, disp, gap, gap_ref, q0):
+    r"""Безразмерные метрики Синьорини нелинейного контакта (Δ > 0, §4.1).
+
+    Совпадают с :meth:`ContactMOR._complementarity`:
+    ``comp = max|r·(u−Δ)| / (q0·Δ_ref)``; ``overshoot = max_{r>0}(u−Δ)/Δ_ref``,
+    где ``u`` — ЛИЦЕВОЕ смещение ``u_c`` (условие контакта по грани).
+    """
+    comp = float(np.max(np.abs(r * (disp - gap))) / (q0 * gap_ref))
+    contact = r > 0.0
+    over = (float(np.max((disp - gap)[contact])) / gap_ref
+            if contact.any() else float("nan"))
+    return comp, over
+
+
+def _solve_contact_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
+    r"""Нелинейный контакт МОР поверх КТН (§4): karman | ktn_full на защемлении.
+
+    ``solver`` — единый :class:`~plate_solver.ktn_solver.KTNSolver` (пресет
+    теории). Реакция ``r`` определяется вокруг ПОЛНОГО нелинейного решателя КТН
+    (:class:`~plate_solver.contact_nl.NonlinearContactMOR`); контакт «щупает»
+    ЛИЦЕВУЮ поверхность (условие Синьорини на грани, ``u_c = w + (h_c²−h_*²)Δw``;
+    для ``karman`` коэффициент кривизны ноль ⇒ по срединной). Нагрузка
+    равномерная (гарантировано валидатором); зазор Δ(x, y) и зона препятствия —
+    как в линейном контакте. Результат адаптируется в :class:`ContactResult`
+    (тот же пайплайн сетки/VTK/фигур/лицевых величин).
+    """
+    from .contact import sample_fields_on_grid
+    from .contact_nl import NonlinearContactMOR
+
+    q = solver.quad
+    c = problem.contact
+    warn = list(warnings)
+
+    # свободное (без контакта) нелинейное решение: w_free для gap_factor/отчёта.
+    free = solver.solve(np.full(q.x.size, float(cfg.q0)))
+    w_free = float(np.max(np.abs(free.w_nodes)))
+
+    # зона основания (дефолт — вся Ω); предикат для NonlinearContactMOR.
+    zone_mask = None
+    fmask = None
+    if c.zone is not None:
+        zone_mask = _zone_mask(c.zone, q, key="contact.zone",
+                               advice="увеличьте Q или зону")
+        fmask = lambda X, Y: zone_mask                          # noqa: E731
+
+    # зазор Δ: скаляр gap | gap_factor·w_free | поле [contact.gap] (A1)
+    if c.gap is not None:
+        gap_val = float(c.gap)
+    elif c.gap_factor is not None:
+        gap_val = c.gap_factor * w_free
+    else:
+        gap_val = _gap_field_values(c.gap_field, q)
+    if np.ndim(gap_val) == 0:
+        delta = float(gap_val)
+        if delta <= 0:
+            raise CaseError(f"contact.gap: получено Δ = {delta:.3g}, ожидалось > 0, "
+                            f"см. {_SCHEMA_DOC}#contact")
+    else:
+        fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
+        gmin = float(np.min(gap_val[fm]))
+        if gmin <= 0:
+            raise CaseError(
+                f"contact.gap: получено min Δ = {gmin:.3g} на основании, ожидалось "
+                f"> 0 (поле зазора не должно пересекать пластину), "
+                f"см. {_SCHEMA_DOC}#contact")
+        delta = gmin
+
+    mor = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
+                              scheme=cfg.contact_scheme, gain_mode=cfg.contact_gain)
+    nres = mor.solve()
+    if not nres.converged:
+        last = float(nres.residual_history[-1]) if nres.residual_history.size else float("nan")
+        warn.append(
+            f"{problem.model.theory}: нелинейный контакт МОР ({nres.scheme}) не "
+            f"достиг tol за max_iter (последняя невязка {last:.2e}); увеличьте "
+            "contact.max_iter, смените contact.gain на linear или scheme на nested")
+
+    # адаптация NonlinearContactResult → ContactResult (пайплайн вывода)
+    Xg, Yg, w_grid, r_grid, zone = sample_fields_on_grid(
+        solver, nres.cw, nres.r_nodes, cfg.grid_n)
+    comp, overshoot = _contact_metrics_nl(nres.r_nodes, nres.u_c_nodes, gap_val,
+                                          delta, float(cfg.q0))
+    cres = ContactResult(
+        Xg=Xg, Yg=Yg, w_grid=w_grid, r_grid=r_grid, contact_zone=zone,
+        r_nodes=nres.r_nodes, w_nodes=nres.w_nodes, iters=nres.iters,
+        converged=nres.converged, residual_history=nres.residual_history,
+        peak_xy=nres.peak_xy, plate=solver, cw=nres.cw, w_ktn_nodes=None,
+        comp_residual=comp, gap_overshoot=overshoot)
+    res = Result(problem=problem, config=cfg,
+                 w_max=float(np.max(np.abs(nres.w_nodes))),
+                 cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w_grid,
+                 warnings=tuple(warn), contact=cres, delta=float(delta),
+                 w_free_max=w_free, w_max_classic=float(free.w_max_classic))
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", nres.cw)
+    return res
+
+
+def _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
+    r"""Силовой штамп поверх нелинейной КТН (§4 + A2): задана сила P, ищется уровень.
+
+    ``F(level) = ∫r − P`` монотонно убывает по уровню штампа; brentq на
+    ``[касание, отрыв]``. Каждый вызов — полный
+    :class:`~plate_solver.contact_nl.NonlinearContactMOR` (стартует со
+    свободного нелинейного решения; тёплого старта между уровнями нет). Форма
+    штампа — из ``[contact.gap]`` (нет ⇒ плоский). Мягкий шарнир требует
+    ``gain = "linear"`` (как позиционный контакт).
+    """
+    from scipy.optimize import brentq
+
+    from .contact import sample_fields_on_grid
+    from .contact_nl import NonlinearContactMOR
+
+    q = solver.quad
+    c = problem.contact
+    warn = list(warnings)
+    P = float(c.force)
+
+    free = solver.solve(np.full(q.x.size, float(cfg.q0)))
+    w_free = float(np.max(np.abs(free.w_nodes)))
+    w_free_nodes = free.w_nodes
+
+    zone_mask = None
+    fmask = None
+    if c.zone is not None:
+        zone_mask = _zone_mask(c.zone, q, key="contact.zone", advice="увеличьте Q или зону")
+        fmask = lambda X, Y: zone_mask                          # noqa: E731
+    fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
+
+    shape = _gap_field_values(c.gap_field, q) if c.gap_field is not None else 0.0
+    if np.ndim(shape) == 0:
+        shape = float(shape)
+    if c.gap is not None or c.gap_factor is not None:
+        warn.append("contact.gap: скалярный gap/gap_factor игнорируется в силовом "
+                    "режиме (force); форма штампа — [contact.gap]")
+
+    shape_fm = shape[fm] if np.ndim(shape) else shape
+    level_hi = float(np.max(w_free_nodes[fm] - shape_fm)) * (1.0 + 1e-9) + 1e-30
+    scale = w_free
+    min_shape = float(np.min(shape_fm)) if np.ndim(shape) else shape
+    level_lo = 1e-8 * scale - min_shape
+
+    st = {"nres": None, "iters": 0, "calls": 0}
+
+    def F(level: float) -> float:
+        gap_val = (level + shape) if np.ndim(shape) else float(level + shape)
+        nres = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
+                                   scheme=cfg.contact_scheme,
+                                   gain_mode=cfg.contact_gain).solve()
+        st["nres"] = nres
+        st["iters"] += nres.iters
+        st["calls"] += 1
+        return float(np.sum(q.w * nres.r_nodes)) - P
+
+    if F(level_lo) <= 0.0:
+        raise CaseError(
+            f"contact.force: получено P = {P:g}, ожидалось 0 < P ≤ "
+            f"{float(np.sum(q.w * st['nres'].r_nodes)):.6g} (максимум ∫r при "
+            f"касании), см. {_SCHEMA_DOC}#contact")
+    level_star = brentq(F, level_lo, level_hi, xtol=1e-8 * scale)
+    F(level_star)
+    nres = st["nres"]
+    force_total = float(np.sum(q.w * nres.r_nodes))
+    if not nres.converged:
+        warn.append(f"{problem.model.theory}: силовой нелинейный контакт — МОР не "
+                    "достиг tol (полусходимость); точность ∫r ограничена")
+
+    Xg, Yg, w_grid, r_grid, zone = sample_fields_on_grid(
+        solver, nres.cw, nres.r_nodes, cfg.grid_n)
+    gap_star = (level_star + shape) if np.ndim(shape) else float(level_star + shape)
+    gap_ref = float(np.min(gap_star)) if np.ndim(gap_star) else abs(gap_star) or 1.0
+    comp, over = _contact_metrics_nl(nres.r_nodes, nres.u_c_nodes, gap_star,
+                                     gap_ref, float(cfg.q0))
+    cres = ContactResult(
+        Xg=Xg, Yg=Yg, w_grid=w_grid, r_grid=r_grid, contact_zone=zone,
+        r_nodes=nres.r_nodes, w_nodes=nres.w_nodes, iters=nres.iters,
+        converged=nres.converged, residual_history=nres.residual_history,
+        peak_xy=nres.peak_xy, plate=solver, cw=nres.cw, w_ktn_nodes=None,
+        comp_residual=comp, gap_overshoot=over)
+    res = Result(problem=problem, config=cfg,
+                 w_max=float(np.max(np.abs(nres.w_nodes))),
+                 cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w_grid,
+                 warnings=tuple(warn), contact=cres, delta=float(level_star + min_shape),
+                 w_free_max=w_free, level=float(level_star), force_total=force_total,
+                 w_max_classic=float(free.w_max_classic))
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", nres.cw)
+    object.__setattr__(res, "_force_calls", st["calls"])
+    object.__setattr__(res, "_force_iters_total", st["iters"])
+    return res
+
+
+def _plate2_solver(problem: Problem, cfg: Config, dom, *, nonlinear_theory=None):
+    """Построить решатель второй пластины по [plate2] (дефолты — от первой).
+
+    ``nonlinear_theory`` (karman | ktn_full) ⇒ единый :class:`KTNSolver` для
+    нелинейной пары (§9.2, защемление); иначе — линейный решатель (v0.3).
+    """
     import dataclasses
 
     p2 = problem.plate2
@@ -818,6 +1043,13 @@ def _plate2_solver(problem: Problem, cfg: Config, dom):
     if p2.load.q0 is not None:
         kw["q0"] = p2.load.q0
     cfg2 = dataclasses.replace(cfg, **kw)
+    if nonlinear_theory is not None:
+        from .ktn_solver import KTNSolver
+
+        inplane2 = model2.inplane_bc if model2 is not None else "immovable"
+        solver2 = KTNSolver.from_theory_name(dom2, cfg2, nonlinear_theory,
+                                             bc_type="clamped", inplane_bc=inplane2)
+        return solver2, cfg2, dom2
     if p2.bc.type == "clamped":
         return ClampedPlate.from_config(dom2, cfg2), cfg2, dom2
     return PlateBending.from_config(dom2, cfg2), cfg2, dom2
@@ -873,6 +1105,91 @@ def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
+    object.__setattr__(res, "_plate2_ref", solver2)
+    object.__setattr__(res, "_cfg2_ref", cfg2)
+    return res
+
+
+def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
+    r"""Взаимный контакт ДВУХ пластин КТН (§9.2): karman | ktn_full, защемление.
+
+    ``solver`` — единый :class:`KTNSolver` первой пластины;
+    :class:`~plate_solver.contact_nl.NonlinearTwoPlateMOR` определяет реакцию
+    ``r`` СОВМЕСТНО двумя нелинейными решателями. Условие непроникания — на
+    ЛИЦЕВЫХ прогибах ``u_c1 − u_c2 ≤ z`` (масштаб кривизны — от теории каждой
+    пластины). Общая квадратура (одна планформа/Q) обязательна; результат
+    адаптируется в :class:`TwoPlateResult` (тот же пайплайн вывода).
+    """
+    from .contact import TwoPlateResult, sample_pair_fields_on_grid
+    from .contact_nl import NonlinearTwoPlateMOR
+
+    theory = problem.model.theory
+    q1 = solver.quad
+    c = problem.contact
+    warn = list(warnings)
+    solver2, cfg2, dom2 = _plate2_solver(problem, cfg, dom, nonlinear_theory=theory)
+
+    # свободные (без взаимодействия) решения: масштаб щели и gap_factor
+    free1 = solver.solve(np.full(q1.x.size, float(cfg.q0)))
+    free2 = solver2.solve(np.full(solver2.quad.x.size, float(cfg2.q0)))
+    w_free1 = float(np.max(np.abs(free1.w_nodes)))
+    w_free2 = float(np.max(np.abs(free2.w_nodes)))
+    w_scale = (w_free1 + w_free2) if (w_free1 + w_free2) > 0.0 else 1.0
+
+    # зазор: скаляр (≥ 0, Δ=0 — касание) | gap_factor·w_free₁ | поле на узлах первой
+    if c.gap is not None:
+        gap_val = float(c.gap)
+    elif c.gap_factor is not None:
+        gap_val = c.gap_factor * w_free1
+    elif c.gap_field is not None:
+        gap_val = _gap_field_values(c.gap_field, q1)
+    else:
+        gap_val = 0.0
+
+    zone_mask = None
+    fmask = None
+    if c.zone is not None:
+        zone_mask = _zone_mask(c.zone, q1, key="contact.zone",
+                               advice="увеличьте Q или пересечение")
+        fmask = lambda X, Y: zone_mask                          # noqa: E731
+
+    try:
+        mor = NonlinearTwoPlateMOR(solver, solver2, cfg, gap=gap_val,
+                                   f1=np.full(q1.x.size, float(cfg.q0)),
+                                   q2=float(cfg2.q0), foundation_mask=fmask,
+                                   gain_mode=cfg.contact_gain)
+    except ValueError as e:
+        raise CaseError(f"contact.target: {e} см. {_SCHEMA_DOC}#plate2") from None
+    nres = mor.solve()
+    if not nres.converged:
+        last = float(nres.residual_history[-1]) if nres.residual_history.size else float("nan")
+        warn.append(
+            f"{theory}: нелинейная пара МОР не достигла tol за max_iter "
+            f"(последняя невязка {last:.2e}); увеличьте contact.max_iter или "
+            "смените contact.gain на linear")
+
+    # адаптация NonlinearTwoPlateResult → TwoPlateResult (пайплайн вывода)
+    Xg, Yg, w1g, w2g, rg, zone = sample_pair_fields_on_grid(
+        solver, solver2, nres.cw1, nres.cw2, nres.r_nodes, cfg.grid_n)
+    u = nres.u_c1_nodes - nres.u_c2_nodes                       # сближение лицевых
+    comp = float(np.max(np.abs(nres.r_nodes * (u - gap_val))) / (float(cfg.q0) * w_scale))
+    contact = nres.r_nodes > 0.0
+    over = (float(np.max((u - gap_val)[contact])) / w_scale
+            if contact.any() else float("nan"))
+    cres = TwoPlateResult(
+        Xg=Xg, Yg=Yg, w_grid=w1g, w2_grid=w2g, r_grid=rg, contact_zone=zone,
+        r_nodes=nres.r_nodes, w_nodes=nres.w1_nodes, w2_nodes=nres.w2_nodes,
+        iters=nres.iters, converged=nres.converged,
+        residual_history=nres.residual_history, peak_xy=nres.peak_xy,
+        plate=solver, plate2=solver2, cw=nres.cw1, cw2=nres.cw2,
+        comp_residual=comp, gap_overshoot=over)
+    delta_repr = (float(np.min(gap_val)) if np.ndim(gap_val) else float(gap_val))
+    res = Result(problem=problem, config=cfg, w_max=float(nres.w1_max),
+                 cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w1g,
+                 warnings=tuple(warn), contact=cres, delta=delta_repr,
+                 w_free_max=w_free1, w_max_classic=float(nres.w1_max))
+    object.__setattr__(res, "_plate_ref", solver)
+    object.__setattr__(res, "_c_ref", nres.cw1)
     object.__setattr__(res, "_plate2_ref", solver2)
     object.__setattr__(res, "_cfg2_ref", cfg2)
     return res

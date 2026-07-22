@@ -51,8 +51,9 @@ print(res.w_max)
 - `x`, `y` — sympy-символы; `Domain(omega_expr, bbox)` — область
   ω(x, y) ≥ 0; `BBox`.
 - Операции системы R0: `r_and`, `r_or`, `r_not`, `r_diff`.
-- Примитивы-выражения: `circle_expr`, `rectangle_expr`.
-- Фабрики областей: `make_circle`, `make_rectangle`, `make_L`,
+- Примитивы-выражения: `circle_expr`, `rectangle_expr`, `ellipse_expr`
+  (эллипс с полуосями a, b; при a = b сводится к `circle_expr`).
+- Фабрики областей: `make_circle`, `make_rectangle`, `make_ellipse`, `make_L`,
   `make_annulus`, `make_compose` (дерево операций из case-файла).
 - `make_plate_with_hole(x1, x2, y1, y2, hole_a, hole_cx, hole_cy)` — МНОГОСВЯЗНАЯ
   область (прямоугольник с круглым отверстием, R-разность `ω_rect ∧ (−ω_hole)`,

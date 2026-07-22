@@ -1,0 +1,37 @@
+# CI: контакт круга (мягкий шарнир) с плоским основанием — АБСОЛЮТНЫЙ эталон.
+# Сертифицированное осесимметричное решение Кирхгофа (analytic_auto.
+# axisym_contact_solution): центральная плоская зона + кольцевая реакция.
+# Гейт — прогиб ВНЕ контактной зоны (w_max = Δ тривиален). Апгрейд контакта
+# с «инвариантов» до абсолютного эталона (v0.6.3).
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+theory = "classic"
+h = 0.06
+
+[contact]
+enabled = true
+gap = 2.0e-3              # 0 < Δ < w_free(0) = 4.51e-3 (условие существования эталона)
+max_iter = 2000
+tol = 1.0e-8
+
+[discretization]
+p = 8
+Q = 128
+grid_n = 16
+
+[verify]
+reference = "analytic"   # сертифицированный контактный эталон Кирхгофа
+tol = 2.0e-2
+
+[output]
+dir = "results/ci/circle_soft_contact_certified"

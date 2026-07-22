@@ -37,7 +37,7 @@ COMPOSE_PRIMITIVES = ("circle", "rectangle")
 COMPOSE_MAX_DEPTH = 3
 COMPOSE_MAX_NODES = 7
 
-GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "compose")
+GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "ellipse", "compose")
 BC_TYPES = ("soft_hinge", "clamped")
 LOAD_TYPES = ("uniform", "patch", "point", "gaussian")
 # Лестница моделей одним ключом [model] theory (v0.5.0, ЯВНЫЕ имена — §4):
@@ -63,6 +63,10 @@ KARMAN_METHODS = ("picard", "newton")
 KTN_METHODS = ("picard", "newton")
 REFERENCES = ("analytic", "mms", "fem", "none")
 STOP_CRITERIA = ("dr", "comp")
+# Нелинейный контакт МОР+КТН (contact_nl.py, v0.6.3): схема композиции двух
+# итераций (§4.2) и нормировка усиления оператора (теорема 4, §4.1).
+CONTACT_SCHEMES = ("nested", "merged")
+CONTACT_GAINS = ("secant", "linear")
 
 # Минимум узлов квадратуры в зоне (нагрузки или контакта) — защита от
 # «зоны без узлов»: интеграл по маске теряет смысл.
@@ -258,6 +262,9 @@ class ContactSpec:
     tol: float | None = None
     stop: str | None = None
     zone: GeometrySpec | None = None
+    # нелинейный контакт МОР+КТН (theory = karman | ktn_full, v0.6.3):
+    scheme: str | None = None           # nested | merged (§4.2); None ⇒ дефолт Config
+    gain: str | None = None             # secant | linear (§4.1); None ⇒ дефолт Config
 
 
 @dataclass(frozen=True)
@@ -410,6 +417,11 @@ class Problem:
             v = getattr(self.contact, attr)
             if v is not None:
                 kw[attr] = v
+        # нелинейный контакт (§4): схема композиции и нормировка усиления
+        if self.contact.scheme is not None:
+            kw["contact_scheme"] = self.contact.scheme
+        if self.contact.gain is not None:
+            kw["contact_gain"] = self.contact.gain
         for attr in ("p", "Q", "grid_n"):
             v = getattr(self.discretization, attr)
             if v is not None:
@@ -457,6 +469,15 @@ def _parse_geometry(section: str, data, *, allow_compose: bool = True) -> Geomet
         if not b < a:
             _fail(f"{section}.b", b, f"0 < b < a (= {a}) — внутренний радиус меньше внешнего",
                   anchor)
+        return GeometrySpec(kind=kind, a=a, b=b)
+
+    if kind == "ellipse":
+        # Эллипс с полуосями a (по x), b (по y); центр (0,0). Полуоси
+        # независимы (a = b ⇒ круг); нет аналитического эталона (reference:
+        # none | fem). Верхнеуровневый вид — НЕ примитив compose (ограда).
+        _require_keys(section, data, {"kind", "a", "b"}, anchor)
+        a = _number(section, data, "a", anchor, required=True, positive=True)
+        b = _number(section, data, "b", anchor, required=True, positive=True)
         return GeometrySpec(kind=kind, a=a, b=b)
 
     # compose
@@ -732,7 +753,7 @@ def _parse_contact(data) -> ContactSpec:
         _fail("contact", data, "таблица (секция TOML)", "contact")
     _require_keys("contact", data,
                   {"enabled", "target", "gap", "gap_factor", "force", "beta",
-                   "max_iter", "tol", "stop", "zone"},
+                   "max_iter", "tol", "stop", "zone", "scheme", "gain"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
     target = data.get("target", "foundation")
@@ -752,6 +773,12 @@ def _parse_contact(data) -> ContactSpec:
     stop = data.get("stop")
     if stop is not None and stop not in STOP_CRITERIA:
         _fail("contact.stop", stop, " | ".join(STOP_CRITERIA), "contact")
+    scheme = data.get("scheme")
+    if scheme is not None and scheme not in CONTACT_SCHEMES:
+        _fail("contact.scheme", scheme, " | ".join(CONTACT_SCHEMES), "contact")
+    gain = data.get("gain")
+    if gain is not None and gain not in CONTACT_GAINS:
+        _fail("contact.gain", gain, " | ".join(CONTACT_GAINS), "contact")
     zone = _parse_geometry("contact.zone", data["zone"]) if "zone" in data else None
     force = _number("contact", data, "force", "contact", positive=True)
     if enabled and force is None:
@@ -765,7 +792,8 @@ def _parse_contact(data) -> ContactSpec:
     return ContactSpec(enabled=enabled, target=target, gap=gap,
                        gap_factor=gap_factor,
                        gap_field=gap_field, force=force, beta=beta,
-                       max_iter=max_iter, tol=tol, stop=stop, zone=zone)
+                       max_iter=max_iter, tol=tol, stop=stop, zone=zone,
+                       scheme=scheme, gain=gain)
 
 
 def _parse_plate2(data) -> Plate2Spec:
@@ -842,21 +870,49 @@ def _validate_cross(p: Problem) -> None:
         if p.model.theory == "ktn_linear":
             _fail("model.theory", "ktn_linear", "classic при bc.type = mixed (v0.3)", "bc")
     if p.model.theory in NONLINEAR_THEORIES:
-        # Рамки нелинейных теорий (v0.6.0): любые области, включая неканонические
-        # и МНОГОСВЯЗНЫЕ (L-форма, кольцо, compose с вырезом — R-операции над ω,
-        # §5). Изгибные КУ clamped|soft_hinge. Контакт — только v0.6.0-тракт (§4).
+        # Рамки нелинейных теорий: любые области, включая неканонические и
+        # МНОГОСВЯЗНЫЕ (L, кольцо, compose — R-операции над ω, §5). Изгибные КУ
+        # clamped | soft_hinge. Полная КТН на мягком шарнире (граничный член §3.5)
+        # требует звёздной квадратуры ∂Ω ⇒ только circle | ellipse.
         th = p.model.theory
+        # Гладкие/выпуклые границы (без ВХОДЯЩИХ углов) — для них квадратура ∂Ω
+        # граничного члена §3.5 (мягкий шарнир полной КТН) точна: circle/ellipse/
+        # rectangle (звёздные) и annulus (многосвязная, контурная квадратура).
+        # L/compose с вырезом — реентрантный угол рвёт точность (v0.7).
+        star = p.geometry.kind in ("circle", "ellipse", "rectangle", "annulus")
         if p.bc.type not in ("clamped", "soft_hinge"):
             _fail("bc.type", p.bc.type,
                   f"clamped | soft_hinge при theory = {th} (мембранная связь на "
                   "смешанных КУ — направление развития)", "bc")
+        if th == "ktn_full" and p.bc.type == "soft_hinge" and not star:
+            _fail("geometry.kind", p.geometry.kind,
+                  "circle | ellipse | rectangle | annulus при theory = ktn_full и "
+                  "bc = soft_hinge (граничный член §3.5 — квадратура ∂Ω; область с "
+                  "входящим углом (L/compose) — направление развития v0.7)", "geometry")
         if p.contact.enabled:
-            # нелинейный контакт МОР+КТН — веха N3 (contact_nl.py); линейный
-            # ContactMOR к нелинейной теории неприменим.
-            _fail("contact.enabled", True,
-                  f"false при theory = {th} (нелинейный контакт — МОР поверх "
-                  "КТН — направление развития, веха N3 v0.6.0, contact_nl.py)",
-                  "model")
+            # Нелинейный контакт МОР+КТН (contact_nl.py): позиционный штамп/
+            # основание. Защемление — любая R-область; мягкий шарнир — только
+            # circle | ellipse (звёздная квадратура ∂Ω для граничного члена §3.5).
+            if p.bc.type == "soft_hinge" and (not star or p.contact.target == "plate2"):
+                _fail("bc.type", p.bc.type,
+                      f"clamped при theory = {th} с контактом (мягкий шарнир — "
+                      "только одиночная пластина circle | ellipse | rectangle | "
+                      "annulus; пара и прочие — направление развития v0.7)", "bc")
+            if p.contact.force is not None and p.contact.target == "plate2":
+                _fail("contact.force", p.contact.force,
+                      f"отсутствие force при theory = {th} для ПАРЫ (силовое "
+                      "управление парой — направление развития v0.7)", "contact")
+            if p.load.type != "uniform":
+                _fail("load.type", p.load.type,
+                      f"uniform при theory = {th} с контактом (нелинейный контакт "
+                      "МОР+КТН реализован для равномерной нагрузки, §4)", "load")
+    # Ключи схемы/усиления осмысленны ТОЛЬКО для нелинейного контакта (§4).
+    if (p.contact.scheme is not None or p.contact.gain is not None) and not (
+            p.contact.enabled and p.model.theory in NONLINEAR_THEORIES):
+        _fail("contact.scheme", p.contact.scheme or p.contact.gain,
+              "заданы только при contact.enabled = true и theory = karman | "
+              "ktn_full (схема композиции / нормировка усиления нелинейного "
+              "контакта МОР+КТН, §4.1–4.2)", "contact")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):
@@ -869,20 +925,37 @@ def _validate_cross(p: Problem) -> None:
                   "отложено (направление развития)", "plate2")
         theories = {p.model.theory,
                     p.plate2.model.theory if p.plate2.model is not None else "classic"}
-        if theories != {"classic"}:
+        if theories == {"classic"}:
+            pass                                    # классическая пара (v0.3)
+        elif theories <= {"karman"} or theories <= {"ktn_full"}:
+            # Нелинейная пара МОР+КТН (v0.6.3): ОБЕ пластины — одна нелинейная
+            # теория, общая квадратура (одна планформа, один Q — проверит
+            # решатель, NonlinearTwoPlateMOR); защемление и равномерная нагрузка
+            # (для первой — общий нелинейный блок выше). Условие непроникания —
+            # на лицевых прогибах u_c1 − u_c2 ≤ z (§9.2).
+            if p.plate2.bc.type != "clamped":
+                _fail("plate2.bc", p.plate2.bc.type,
+                      f"clamped при theory = {p.model.theory} (нелинейная пара "
+                      "МОР+КТН реализована на защемлении, §9.2)", "plate2")
+            if p.plate2.load.type != "uniform":
+                _fail("plate2.load", p.plate2.load.type,
+                      f"uniform при theory = {p.model.theory} (нелинейная пара — "
+                      "равномерная нагрузка, §9.2)", "plate2")
+        else:
             _fail("model.theory", sorted(theories),
-                  "classic — контактное условие пары в v0.3 классическое "
-                  "(срединные плоскости; геометрически контактируют нижняя "
-                  "лицевая верхней и верхняя лицевая нижней пластины), КТН "
-                  "для пары — направление развития", "plate2")
+                  "либо classic (классическая пара по срединным плоскостям, v0.3), "
+                  "либо ОБЕ пластины одной нелинейной теории karman | ktn_full "
+                  "(нелинейная пара МОР+КТН, v0.6.3, §9.2); смешанные пары и "
+                  "ktn_linear для пары — направление развития", "plate2")
         if c.gap is not None and c.gap < 0:
             _fail("contact.gap", c.gap, "число ≥ 0 (Δ=0 — касание пластин)",
                   "plate2")
     elif c.enabled and c.gap is not None and c.gap <= 0:
         _fail("contact.gap", c.gap, "число > 0 (жёсткое основание)", "contact")
-    if p.verify.reference == "analytic" and p.geometry.kind == "compose":
+    if p.verify.reference == "analytic" and p.geometry.kind in ("compose", "ellipse"):
         _fail("verify.reference", "analytic",
-              "mms | fem | none — для compose-геометрии аналитического эталона нет", "verify")
+              f"mms | fem | none — для геометрии {p.geometry.kind} аналитического "
+              "эталона нет (замкнутого решения свободной задачи нет)", "verify")
     axisymmetric = p.geometry.kind in ("circle", "annulus") and p.load.type == "uniform"
     if p.verify.cross_1d and not axisymmetric:
         _fail("verify.cross_1d", True,
