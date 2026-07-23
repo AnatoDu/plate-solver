@@ -406,17 +406,24 @@ def levy_solution(*, x1: float, x2: float, y1: float, y2: float,
 #  Осесимметричный контактный эталон: круг + плоское основание
 # --------------------------------------------------------------------------- #
 def axisym_contact_solution(*, a: float, D: float, q0: float, gap: float,
-                            ) -> CertifiedSolution:
-    r"""Контакт круга (мягкий шарнир) с плоским жёстким основанием (зазор Δ).
+                            bc: str = "soft_hinge") -> CertifiedSolution:
+    r"""Контакт круга с плоским жёстким основанием (зазор Δ); ``bc`` — опирание кромки.
 
     Классическая конструкция Кирхгофа: центральная зона r ≤ c ложится
     плашмя (w ≡ Δ, распределённая реакция r = q₀) плюс КОЛЬЦЕВАЯ
     сосредоточенная реакция P_c на границе зоны (известный дельта-слой
     контакта пластин Кирхгофа: скачок перерезывающей Q при непрерывных
-    w, w′, M). Вне зоны — общее осесимметричное решение с условиями
-    w(c) = Δ, w′(c) = 0, w″(c) = 0 (непрерывность M при w″ ≡ 0 в зоне),
-    w(a) = 0, Δw(a) = 0 (мягкий шарнир); c — корень по последнему условию
-    (единственный на (0, a)). Требование существования: 0 < Δ < w_free(0).
+    w, w′, M). Вне зоны — общее осесимметричное решение с условиями сшивки
+    w(c) = Δ, w′(c) = 0, w″(c) = 0 (непрерывность M при w″ ≡ 0 в зоне) и
+    ДВУМЯ краевыми условиями на кромке по ``bc``:
+
+    * ``soft_hinge`` — мягкий шарнир: w(a) = 0, Δw(a) = 0
+      (свободный центральный прогиб w_free(0) = 3 q₀ a⁴ / 64D);
+    * ``clamped`` — защемление: w(a) = 0, w′(a) = 0
+      (защемлённый круг ЖЁСТЧЕ: w_free(0) = q₀ a⁴ / 64D).
+
+    ``c`` — корень условия w″(c) = 0 (единственный на (0, a)); требование
+    существования контакта: 0 < Δ < w_free(0).
 
     Сертификат: невязки всех пяти условий сшивки/КУ, непроникновение
     (w ≤ Δ вне зоны), P_c ≥ 0; предел Δ → w_free⁻ согласован с функцией
@@ -424,19 +431,27 @@ def axisym_contact_solution(*, a: float, D: float, q0: float, gap: float,
     """
     from scipy.optimize import brentq
 
+    if bc not in ("soft_hinge", "clamped"):
+        raise FactoryError(f"контактный эталон: bc = {bc!r}, ожидалось "
+                           "'soft_hinge' | 'clamped'")
     r, c_s, Dl = sp.symbols("r c Delta_gap", positive=True)
     C = sp.symbols("C1:5")
     w = q0 * r**4 / (64 * D) + C[0] + C[1] * r**2 + C[2] * sp.log(r) \
         + C[3] * r**2 * sp.log(r)
     wp = sp.diff(w, r)
     lap = sp.diff(w, r, 2) + wp / r
-    w_free0 = 3.0 * q0 * a**4 / (64.0 * D)          # w_free(0), мягкий шарнир
+    if bc == "soft_hinge":
+        w_free0 = 3.0 * q0 * a**4 / (64.0 * D)      # w_free(0), мягкий шарнир
+        outer = sp.Eq(lap.subs(r, a), 0)            # нулевой момент: Δw(a) = 0
+    else:
+        w_free0 = q0 * a**4 / (64.0 * D)            # w_free(0), защемление
+        outer = sp.Eq(wp.subs(r, a), 0)             # защемление: w′(a) = 0
     if not (0.0 < gap < w_free0):
         raise FactoryError(
-            f"контактный эталон: ожидалось 0 < Δ < w_free(0) = {w_free0:.6g}, "
-            f"получено Δ = {gap:.6g}")
+            f"контактный эталон ({bc}): ожидалось 0 < Δ < w_free(0) = "
+            f"{w_free0:.6g}, получено Δ = {gap:.6g}")
     conds = [sp.Eq(w.subs(r, c_s), Dl), sp.Eq(wp.subs(r, c_s), 0),
-             sp.Eq(w.subs(r, a), 0), sp.Eq(lap.subs(r, a), 0)]
+             sp.Eq(w.subs(r, a), 0), outer]
     sol = sp.solve(conds, list(C), dict=True)[0]
     wpp_c = sp.lambdify(c_s, sp.diff(w, r, 2).subs(sol).subs(Dl, gap).subs(r, c_s))
     # корень w″(c) = 0: сканирование с брекетингом (края (0, a) сингулярны)
@@ -464,9 +479,12 @@ def axisym_contact_solution(*, a: float, D: float, q0: float, gap: float,
         "wp_c": abs(float(sp.diff(w_out, r).subs(r, c_star))) * a / scale,
         "wpp_c": abs(float(sp.diff(w_out, r, 2).subs(r, c_star))) * a**2 / scale,
         "w_a": abs(float(w_out.subs(r, a))) / scale,
-        "lap_a": abs(float((sp.diff(w_out, r, 2)
-                            + sp.diff(w_out, r) / r).subs(r, a))) * a**2 / scale,
     }
+    if bc == "soft_hinge":                          # нулевой момент Δw(a) = 0
+        cert["lap_a"] = abs(float((sp.diff(w_out, r, 2)
+                            + sp.diff(w_out, r) / r).subs(r, a))) * a**2 / scale
+    else:                                           # защемление w′(a) = 0
+        cert["wp_a"] = abs(float(sp.diff(w_out, r).subs(r, a))) * a / scale
     rr = np.linspace(c_star, a, 400)
     w_out_num = sp.lambdify(r, w_out, "numpy")
     overshoot = float(np.max(w_out_num(rr) - gap)) / scale
@@ -481,6 +499,6 @@ def axisym_contact_solution(*, a: float, D: float, q0: float, gap: float,
 
     return CertifiedSolution(
         w=w_xy, kind="axisym_contact", certificate=cert,
-        meta={"c": c_star, "P_ring": P_ring,
+        meta={"c": c_star, "P_ring": P_ring, "bc": bc,
               "ring_force_total": 2 * np.pi * c_star * P_ring,
               "w_free0": w_free0, "gap": gap, "w_expr_outer": w_out})

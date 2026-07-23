@@ -23,7 +23,7 @@ from .config import Config
 from .ktn import KTNParams, PlateMaterial, flexural_rigidity
 from .problem import CaseError, Problem
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 
 #: фасад: имя → модуль; секции — комментариями
 _FACADE: dict[str, str] = {
@@ -51,6 +51,11 @@ _FACADE: dict[str, str] = {
     # -- единая параметрическая модель теорий (v0.6.0) --------------------- #
     "TheoryParams": "theory",
     "KTNSolver": "ktn_solver",
+
+    "buckling": "eigenmodes",
+    "natural_frequencies": "eigenmodes",
+    "linear_plate": "eigenmodes",
+    "EigenPair": "eigenmodes",
     # -- нелинейный контакт МОР+КТН (v0.6.0) ------------------------------- #
     "NonlinearContactMOR": "contact_nl",
     "NonlinearContactResult": "contact_nl",

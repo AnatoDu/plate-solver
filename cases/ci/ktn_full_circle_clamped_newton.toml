@@ -1,0 +1,36 @@
+# CI: ПОЛНАЯ КТН, защемлённый круг, УСКОРЕНИЕ НЬЮТОНА (v0.6.4).
+# Полная нелинейная КТН через согласованный касательный оператор
+# (ktn_method="newton", касательная включает вариацию регуляризатора h_ψ²):
+# квадратичная сходимость там, где Пикар медлит (тонкие пластины). Ворота —
+# сквозной вход case-файл → диспетчер → Ньютон, exit 0. E=h=a=1 ⇒ P̄ = q0 = 6.0.
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 6.0
+
+[model]
+theory = "ktn_full"
+inplane_bc = "immovable"
+E = 1.0
+nu = 0.3
+h = 1.0
+ktn_method = "newton"      # модифицированный касательный КТН (§5.4)
+karman_tol = 1.0e-9
+karman_max_iter = 60
+
+[discretization]
+p = 10
+Q = 128
+grid_n = 24
+
+[verify]
+reference = "none"         # редукционная лестница R1–R5 — tests/test_ktn_full.py
+
+[output]
+dir = "results/ci/ktn_full_circle_clamped_newton"

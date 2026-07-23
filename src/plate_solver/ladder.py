@@ -241,6 +241,79 @@ def mms_clamped_disk_w(R: float, D: float):
     return (R**2 - sx**2 - sy**2) ** 2 / (64.0 * D)
 
 
+def mms_ktn_load_and_exact(w_expr, D: float, N, h_psi_sq: float,
+                           h_star_sq: float = 0.0):
+    r"""MMS для ПОЛНОЙ КТН при ФИКСИРОВАННЫХ мембранных усилиях ``N`` (§3.4/§3.5).
+
+    Заморозка ``N`` линеаризует внеплоскостной оператор КТН, и по заданному
+    ``w`` строится нагрузка, обращающая сильную форму
+
+    .. math::
+        D\,\Delta^2 w - (I - h_\psi^2\Delta)\,L(w) = (I - h_*^2\Delta)\,q,\qquad
+        L(w) = N_x w_{xx} + 2 N_{xy} w_{xy} + N_y w_{yy}.
+
+    Обозначим ``S = D Δ²w − L(w) + h_ψ² ΔL(w)`` (левая часть). Нагрузка —
+    решение экранированного Пуассона ``(I − h_*²Δ)q = S``: для ПОЛИНОМИАЛЬНОГО
+    ``S`` ряд Неймана ``q = Σ_k (h_*²Δ)^k S`` ОБРЫВАЕТСЯ (``Δ`` понижает степень),
+    поэтому ``q`` и ``Δq`` строятся символьно ТОЧНО. Это сертифицирует ВСЕ члены
+    сборки КТН одним изготовленным решением: изгиб ``D S_bend``, геометрическую
+    жёсткость (член ``L``), регуляризацию (член B, ``h_ψ²``) и нагрузочный член A
+    (``h_*²Δq``). При ``h_*² = 0`` возвращается ``q = S`` (член A выключен).
+
+    Parameters
+    ----------
+    w_expr : sympy-выражение ``w(x, y)`` (должно удовлетворять КУ решателя).
+    D : цилиндрическая жёсткость.
+    N : кортеж ``(Nx, Ny, Nxy)`` ПОСТОЯННЫХ усилий (числа или sympy-константы;
+        постоянство ⇒ ``L, ΔL`` полиномиальны и интегрирование по частям точно).
+    h_psi_sq, h_star_sq : лицевые коэффициенты ``h_ψ²`` (член B) и ``h_*²`` (член A).
+
+    Returns
+    -------
+    (q_func, lap_q_func, w_func) : callables ``(X, Y) -> ndarray`` для ``q``,
+        ``Δq`` (передать решателю через ``set_load_laplacian``) и ``w``.
+    """
+    import sympy as sp
+
+    from .geometry import x as sx
+    from .geometry import y as sy
+
+    Nx, Ny, Nxy = N
+
+    def _lap(e):
+        return sp.expand(sp.diff(e, sx, 2) + sp.diff(e, sy, 2))
+
+    w_expr = sp.sympify(w_expr)
+    L = (Nx * sp.diff(w_expr, sx, 2) + 2 * Nxy * sp.diff(w_expr, sx, sy)
+         + Ny * sp.diff(w_expr, sy, 2))
+    S = sp.expand(D * _lap(_lap(w_expr)) - L + h_psi_sq * _lap(L))
+    # q = (I − h_*²Δ)⁻¹ S = Σ_k (h_*²Δ)^k S — обрывается на полиномиальном S
+    q_expr, term = sp.Integer(0), sp.expand(S)
+    guard = 0
+    while term != 0 and guard < 64:
+        q_expr = q_expr + term
+        term = sp.expand(h_star_sq * _lap(term))
+        guard += 1
+    if term != 0:                                        # ряд не оборвался ⇒ w не полином
+        raise ValueError(
+            "mms_ktn_load_and_exact: ряд (I − h_*²Δ)⁻¹ не оборвался за 64 члена — "
+            "изготовленное w должно быть ПОЛИНОМИАЛЬНЫМ (иначе член A не точен)")
+    q_expr = sp.expand(q_expr)
+    lap_q_expr = _lap(q_expr)
+
+    def _wrap(fn):
+        def g(X, Y):
+            X = np.asarray(X, float)
+            Y = np.asarray(Y, float)
+            out = np.asarray(fn(X, Y), float)
+            return out if out.shape == X.shape else np.broadcast_to(out, X.shape).astype(float)
+        return g
+
+    return (_wrap(sp.lambdify((sx, sy), q_expr, "numpy")),
+            _wrap(sp.lambdify((sx, sy), lap_q_expr, "numpy")),
+            _wrap(sp.lambdify((sx, sy), w_expr, "numpy")))
+
+
 # =========================================================================== #
 #  Изгибающие моменты из RFM-решения: гессиан структуры ω^p·Φ
 # =========================================================================== #
@@ -344,5 +417,6 @@ __all__ = [
     "rect_sin_load", "rect_sin_exact", "rect_sin_wmax",
     "navier_uniform", "navier_uniform_center",
     "mms_load_and_exact", "mms_clamped_rect_w", "mms_clamped_disk_w",
+    "mms_ktn_load_and_exact",
     "bending_moments", "bending_moments_full",
 ]

@@ -56,7 +56,7 @@ cross_1d = true          # сверка с 1D-Ритцем по радиусу [
 tol = 1.0e-2
 # model_gap = false''',
     "rectangle": '''[verify]
-reference = "mms"        # mms | fem | none (analytic для прямоугольника нет)
+reference = "analytic"   # ряд Навье (soft_hinge + равномерная); mms — только clamped
 tol = 1.0e-2''',
     "L": '''[verify]
 reference = "fem"        # fem | mms | none (нужен pip install -e ".[fem]")
@@ -314,6 +314,17 @@ def _run_case(args, do_verify: bool) -> int:
     path = res.save(out_dir, fig_formats=formats,
                     surface=getattr(args, "surface", "mid"))
     s = res.scalars()
+    if res.eigen is not None:
+        label = ("критич. множители λ" if res.eigen.kind == "buckling"
+                 else "частоты ω")
+        print(f"{args.case}: собственная задача [{res.eigen.kind}], {label}:")
+        for i, v in enumerate(res.eigen.values, 1):
+            print(f"  мода {i}: {v:.6e}")
+        print(f"cond(A) = {res.cond:.2e}")
+        for w in res.warnings:
+            print(f"предупреждение: {w}")
+        print(f"результат: {path}")
+        return 0
     print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
     if problem.model.theory in ("karman", "ktn_linear", "ktn_full"):
         tp = res.thickness_params()          # интроспекция §6.3

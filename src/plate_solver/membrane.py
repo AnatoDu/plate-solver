@@ -339,6 +339,125 @@ class KarmanPlate:
         g = (1.0 - theta) * c + theta * c_raw
         return g, (a, b, Nx, Ny, Nxy)
 
+    # -- Ньютон: согласованный касательный оператор (§5.4) ------------------- #
+    def _nonlinear_operator(self, c, forces) -> np.ndarray:
+        r"""Оператор невязки без нагрузки: ``(D·S_bend + K_geo(N(c)))·c``.
+
+        Определяет остаток ``R(c) = _nonlinear_operator(c) − b``. Переопределяется
+        в КТН (добавляет члены ``h_ψ²`` регуляризации и граничный §3.5).
+        """
+        _, _, Nx, Ny, Nxy = forces
+        return (self.D * self._S_bend + self._geometric_stiffness(Nx, Ny, Nxy)) @ c
+
+    def _dN_dc(self, wx, wy):
+        r"""Производные мембранных усилий по коэффициентам прогиба ``∂N_αβ/∂c_k``.
+
+        Общий блок для касательного оператора (Карман и КТН). Возвращает
+        ``(dNx, dNy, dNxy)`` формы ``(M, n)`` — по узлу квадратуры и коэффициенту.
+        Учитывает КОНДЕНСАЦИЮ плоских DOF: ``∂(u,v)/∂c = K_uv⁻¹·∂f_pre/∂c``.
+        """
+        Px, Py, C, nu, n = self._Px, self._Py, self._C, self.nu, self._n
+        W, half = self._W, 0.5 * (1.0 - self.nu)
+        dex = wx[:, None] * self._psi_x.T                    # ∂e_x/∂c_k = wx·ψ_kx
+        dey = wy[:, None] * self._psi_y.T
+        dexy = wx[:, None] * self._psi_y.T + wy[:, None] * self._psi_x.T
+        # предв. усилия ∂Ne/∂c → правая часть плоской задачи ∂f_pre/∂c (2n × n)
+        dfa = -(Px @ (W[:, None] * (C * (dex + nu * dey)))
+                + Py @ (W[:, None] * (C * half * dexy)))
+        dfb = -(Py @ (W[:, None] * (C * (dey + nu * dex)))
+                + Px @ (W[:, None] * (C * half * dexy)))
+        drhs = np.vstack([dfa, dfb])
+        if self._membrane_immovable:
+            dab = _spd_solve(self._Kuv, drhs)
+        else:
+            dab = self._Kuv_pinv @ drhs
+        da, db = dab[:n], dab[n:]
+        ex = Px.T @ da + dex                                 # ∂ε_lin/∂c + ∂e/∂c
+        ey = Py.T @ db + dey
+        gxy = Py.T @ da + Px.T @ db + dexy
+        return C * (ex + nu * ey), C * (ey + nu * ex), C * half * gxy
+
+    def _newton_tangent(self, c, forces) -> np.ndarray:
+        r"""Согласованный касательный оператор ``J = dR/dc`` (§5.4).
+
+        ``J = D·S_bend + K_geo(N) + T``; ``T_{ik} = ∫ (∂N_αβ/∂c_k) ψ_{i,α} w_β``
+        (материально-геометрический член от зависимости ``N(c)``, с конденсацией
+        плоских DOF). Симметричен (Гессиан приведённой энергии). Проверен
+        конечными разностями (``tests/test_newton.py``).
+        """
+        wx, wy = c @ self._psi_x, c @ self._psi_y
+        _, _, Nx, Ny, Nxy = forces
+        Kg = self._geometric_stiffness(Nx, Ny, Nxy)
+        dNx, dNy, dNxy = self._dN_dc(wx, wy)
+        W, psx, psy = self._W, self._psi_x, self._psi_y
+        Rx = psx * wx[None, :]                                # ψ_{i,x}·w_x (n × M)
+        Ry = psy * wy[None, :]
+        Rxy = psx * wy[None, :] + psy * wx[None, :]
+        T = (Rx * W[None, :]) @ dNx + (Ry * W[None, :]) @ dNy + (Rxy * W[None, :]) @ dNxy
+        return self.D * self._S_bend + Kg + T
+
+    def _residual(self, c, b_level) -> np.ndarray:
+        """Остаток ``R(c) = оператор(c) − b_level`` (пересобирает ``N(c)``)."""
+        forces = self._membrane_forces(c @ self._psi_x, c @ self._psi_y)
+        return self._nonlinear_operator(c, forces) - b_level
+
+    def _solve_newton(self, f_values, c0=None) -> KarmanResult:
+        r"""Ньютон с согласованным касательным оператором и бэктрекингом (§5.4).
+
+        Квадратичная сходимость: ~5–6 итераций против десятков у Пикара, слабо
+        зависит от уровня нагрузки. Глобализация — бэктрекинг по норме остатка
+        (робастно от нулевого старта); наращивание нагрузки — по ``n_load_steps``.
+        """
+        b_full = self._load_vector(np.asarray(f_values, float))
+        tol = float(self.cfg.karman_tol)
+        max_iter = int(self.cfg.karman_max_iter)
+        n_steps = max(1, int(self.cfg.n_load_steps))
+        scale = max(float(np.linalg.norm(b_full)), 1e-30)
+        if c0 is None:
+            c = np.zeros(self.basis.N)
+        else:
+            c = np.asarray(c0, float).copy()
+            n_steps = 1
+        history: list = []
+        total_iter = 0
+        converged = False
+        forces = self._membrane_forces(c @ self._psi_x, c @ self._psi_y)
+        for step in range(1, n_steps + 1):
+            b_level = (step / n_steps) * b_full
+            converged = False
+            rn = float("nan")
+            it = 0
+            for it in range(1, max_iter + 1):  # noqa: B007 — it нужен после цикла
+                forces = self._membrane_forces(c @ self._psi_x, c @ self._psi_y)
+                r = self._nonlinear_operator(c, forces) - b_level
+                r_norm = float(np.linalg.norm(r))
+                rn = r_norm / scale
+                if rn < tol:
+                    converged = True
+                    break
+                dc = _spd_solve(self._newton_tangent(c, forces), -r)
+                alpha = 1.0
+                new_norm = r_norm
+                for _ in range(30):             # бэктрекинг по норме остатка
+                    new_norm = float(np.linalg.norm(self._residual(c + alpha * dc, b_level)))
+                    if new_norm <= (1.0 - 1e-4 * alpha) * r_norm:
+                        break
+                    alpha *= 0.5
+                c = c + alpha * dc
+                if new_norm > (1.0 - 1e-3) * r_norm:   # стагнация: дальше не улучшить
+                    break                              # (ill-cond. базис, movable-pinv)
+            total_iter += it
+            history.append((step / n_steps, it, rn))
+        a, b, Nx, Ny, Nxy = forces
+        w_nodes = c @ self._psi
+        c_lin = self._bending_solve(b_full)
+        self._cw = c
+        return KarmanResult(
+            cw=c, w_nodes=w_nodes, w_max=float(np.max(np.abs(w_nodes))),
+            w_max_classic=float(np.max(np.abs(c_lin @ self._psi))),
+            cu=a, cv=b, Nx=Nx, Ny=Ny, Nxy=Nxy, converged=converged,
+            n_iter=total_iter, history=history)
+
     # -- основной цикл ------------------------------------------------------ #
     def solve(self, f_values, c0=None) -> KarmanResult:
         r"""Итерация Пикара (ускорение Андерсона) с шагами по нагрузке (§5.1–5.2).
@@ -358,10 +477,12 @@ class KarmanPlate:
         близок к решению — резко экономит итерации.
         """
         cfg = self.cfg
-        if getattr(cfg, "karman_method", "picard") != "picard":
+        method = getattr(cfg, "karman_method", "picard")
+        if method == "newton":                               # §5.4 — квадратичный
+            return self._solve_newton(f_values, c0=c0)
+        if method != "picard":
             raise NotImplementedError(
-                "karman_method = 'newton' — опциональный ускоритель, в v0.4.0 "
-                "не реализован (метод по умолчанию — 'picard')")
+                f"karman_method = {method!r}: ожидалось picard | newton")
         f_values = np.asarray(f_values, float)
         b_full = self._load_vector(f_values)
         theta = float(cfg.karman_relax)

@@ -264,19 +264,92 @@ class KTNPlate(KarmanPlate):
         Nx_b, Ny_b, Nxy_b = self.membrane_forces_at(cu, cv, cw, b["Xb"], b["Yb"])
         return self._boundary_term_from_N(Nx_b, Ny_b, Nxy_b)
 
-    def solve(self, f_values, c0=None):
-        r"""Итерация Пикара с КТН-членами (§5.3). ``ktn_method='newton'`` — задел.
+    def _newton_tangent(self, c, forces) -> np.ndarray:
+        r"""Касательный оператор КТН: кармановский ``J`` + производная члена (B).
 
-        Ньютон (касательный оператор с учётом КТН-членов, §5.4) — опциональный
-        ускоритель, в v0.5.0 не реализован (по §14 — первый под сокращение);
-        метод по умолчанию — Пикар с ускорением Андерсона (унаследован).
+        ``+ h_ψ²(M_2 + T_{M2})`` — матрица регуляризации и её ∂N-производная
+        (``T_{M2,jk} = ∫ Δψ_j (∂N_αβ/∂c_k) w_{,αβ}``, тот же ``∂N/∂c``, что у
+        Кармана, но с весом кривизны). Для защемления касательная ТОЧНА
+        (проверено КР); на мягком шарнире граничный член добавляется матрицей
+        без ∂N-члена (``O(h²)`` — модифицированный Ньютон, сверхлинейно).
+        """
+        J = super()._newton_tangent(c, forces)
+        if not self._include_ktn:
+            return J
+        a, b, Nx, Ny, Nxy = forces
+        dNx, dNy, dNxy = self._dN_dc(c @ self._psi_x, c @ self._psi_y)
+        wxx, wyy, wxy = c @ self._pxx, c @ self._pyy, c @ self._pxy
+        dL = dNx * wxx[:, None] + 2.0 * dNxy * wxy[:, None] + dNy * wyy[:, None]
+        T_M2 = (self._lap_psi * self._W[None, :]) @ dL       # ∂N-член M_2
+        J = J + self._h_psi_sq * (self._ktn_regularization(Nx, Ny, Nxy) + T_M2)
+        if self._soft_hinge_bnd:
+            J = J - self._h_psi_sq * self._ktn_boundary_term(a, b, c)
+        return J
+
+    def _nonlinear_operator(self, c, forces) -> np.ndarray:
+        r"""Оператор невязки КТН: Карман ``+ h_ψ²(M_2 − B_∂Ω)`` (§3.5), применённый к ``c``."""
+        Ac = super()._nonlinear_operator(c, forces)
+        if self._include_ktn:
+            a, b, Nx, Ny, Nxy = forces
+            Ac = Ac + self._h_psi_sq * (self._ktn_regularization(Nx, Ny, Nxy) @ c)
+            if self._soft_hinge_bnd:
+                Ac = Ac - self._h_psi_sq * (self._ktn_boundary_term(a, b, c) @ c)
+        return Ac
+
+    def solve(self, f_values, c0=None):
+        r"""Пикар (§5.3) или Ньютон (§5.4, ``ktn_method='newton'``).
+
+        Ньютон использует МОДИФИЦИРОВАННЫЙ касательный оператор — кармановский
+        ``J`` (члены КТН порядка ``O(h²/L²)`` — малое возмущение, тангенс почти
+        точен ⇒ сверхлинейная сходимость без сборки касательной КТН-членов).
         ``c0`` — тёплый старт (внешний цикл МОР, `contact_nl.py`).
         """
-        if getattr(self.cfg, "ktn_method", "picard") != "picard":
+        method = getattr(self.cfg, "ktn_method", "picard")
+        if method == "newton":
+            return self._solve_newton(f_values, c0=c0)
+        if method != "picard":
             raise NotImplementedError(
-                "ktn_method = 'newton' — опциональный ускоритель КТН (§5.4), в "
-                "v0.5.0 не реализован; метод по умолчанию — 'picard'")
+                f"ktn_method = {method!r}: ожидалось picard | newton")
         return super().solve(f_values, c0=c0)
+
+    def solve_fixed_forces(self, q_values, Nx, Ny, Nxy, lap_q=None) -> np.ndarray:
+        r"""ЛИНЕЙНЫЙ решатель КТН при ЗАМОРОЖЕННЫХ мембранных усилиях ``N`` (верификация).
+
+        Усилия ``N`` берутся ГОТОВЫМИ (не пересчитываются из ``w``), поэтому
+        внеплоскостной оператор КТН линеен по ``w``:
+
+        .. math::
+            \bigl(D\,S_\text{bend} + K_\text{geo}(N)
+                  + h_\psi^2 M_2(N) - [h_\psi^2 B_{\partial\Omega}(N)]\bigr)\,c
+            = \int q\,\psi - h_*^2\!\int \Delta q\,\psi.
+
+        Граничный член ``B_{\partial\Omega}`` добавляется лишь на мягком шарнире
+        (§3.5); при защемлении он тождественно нулевой. Служит методу
+        изготовленных решений (MMS, `ladder.mms_ktn_load_and_exact`): по
+        согласованным ``q``, ``Δq`` и ``N`` восстанавливает ``w`` в структуре
+        решателя (сертификат сборки — все члены КТН одним прогоном). ``N`` —
+        скаляр или поле в узлах квадратуры.
+
+        Returns
+        -------
+        c : коэффициенты решения (``deflection(c, ·)`` — прогиб).
+        """
+        shape = self.quad.x.shape
+        Nx = np.broadcast_to(np.asarray(Nx, float), shape)
+        Ny = np.broadcast_to(np.asarray(Ny, float), shape)
+        Nxy = np.broadcast_to(np.asarray(Nxy, float), shape)
+        A = self.D * self._S_bend + self._geometric_stiffness(Nx, Ny, Nxy)
+        if self._include_ktn:
+            A = A + self._h_psi_sq * self._ktn_regularization(Nx, Ny, Nxy)
+            if self._soft_hinge_bnd:                    # граничный член §3.5 (усилия на ∂Ω)
+                b = self._bnd
+                nb = b["Xb"].shape
+                A = A - self._h_psi_sq * self._boundary_term_from_N(
+                    np.broadcast_to(np.asarray(Nx).ravel()[0], nb),
+                    np.broadcast_to(np.asarray(Ny).ravel()[0], nb),
+                    np.broadcast_to(np.asarray(Nxy).ravel()[0], nb))
+        self.set_load_laplacian(lap_q)
+        return _lin_solve(A, self._load_vector(q_values))
 
     def _picard_map(self, c, b_level, theta):
         r"""Шаг Пикара с КТН-членом (B). При выключенных членах — тождественно Карман."""

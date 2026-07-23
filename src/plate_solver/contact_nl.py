@@ -80,6 +80,10 @@ class NonlinearContactMOR:
     ----------
     solver : :class:`~plate_solver.ktn_solver.KTNSolver` (пресет теории).
     cfg : параметры (``q0``, ``beta``, ``max_iter``, ``tol``; см. Config).
+        ``cfg.mor_anderson > 0`` включает проекционное ускорение Андерсона
+        ВНЕШНЕГО цикла реакции (окно памяти; §4.1) — на вложенной схеме 3–5
+        даёт кратно меньше дорогих внутренних решений при той же неподвижной
+        точке; ``0`` (дефолт) — чистый проекционный шаг.
     gap : зазор/препятствие ``z`` (скаляр — плоское препятствие; массив длины
         числа узлов квадратуры — профиль штампа, §9.2).
     foundation_mask : предикат ``(X, Y) → bool`` зоны возможного контакта;
@@ -175,6 +179,9 @@ class NonlinearContactMOR:
         n_inner = 0
         it = 0
         cw = self._free.cw                                  # тёплый старт — свободное решение
+        m_win = int(getattr(self.cfg, "mor_anderson", 0))   # окно проекц. Андерсона (0 — выкл.)
+        g_hist: list[np.ndarray] = []
+        f_hist: list[np.ndarray] = []
         for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
             # тёплый старт нелинейного решателя предыдущим прогибом: нагрузка
             # q0−r меняется слабо между шагами МОР ⇒ внутренняя итерация дёшева.
@@ -182,15 +189,32 @@ class NonlinearContactMOR:
             n_inner += res_k.n_iter
             cw = res_k.cw
             u_c = self._face_deflection(cw)
-            r_new = r.copy()
-            r_new[self.fmask] = (r[self.fmask]
-                                 + self.beta_eff * (u_c[self.fmask] - self._gap_f))
-            np.maximum(r_new, 0.0, out=r_new)               # проекция r ≥ 0
-            r_new[~self.fmask] = 0.0
-            # ОТНОСИТЕЛЬНАЯ невязка (нормировка на масштаб реакции): терпит
+            g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
+            g[self.fmask] = (r[self.fmask]
+                             + self.beta_eff * (u_c[self.fmask] - self._gap_f))
+            np.maximum(g, 0.0, out=g)                       # проекция r ≥ 0
+            g[~self.fmask] = 0.0
+            f = g - r                                       # невязка неподвижной точки
+            g_hist.append(g)
+            f_hist.append(f)
+            if m_win == 0 or len(f_hist) == 1:
+                r_new = g                                   # чистый проекционный шаг (дефолт)
+            else:                                           # проекционный Андерсон (§4.1)
+                mk = min(m_win, len(f_hist) - 1)
+                dF = np.column_stack([f_hist[-j] - f_hist[-j - 1] for j in range(1, mk + 1)])
+                dG = np.column_stack([g_hist[-j] - g_hist[-j - 1] for j in range(1, mk + 1)])
+                gamma = np.linalg.lstsq(dF, f, rcond=None)[0]
+                r_new = g - dG @ gamma
+                np.maximum(r_new, 0.0, out=r_new)           # ПРОЕКЦИЯ после смешения
+                r_new[~self.fmask] = 0.0
+            if len(f_hist) > m_win + 1:                     # ограничить окно памяти
+                del g_hist[0], f_hist[0]
+            # ОТНОСИТЕЛЬНАЯ невязка НЕПОДВИЖНОЙ ТОЧКИ ‖F(r)−r‖ (не ‖r_new−r‖):
+            # честна и при Андерсоне (смешение не может её «обмануть»). При
+            # m_win=0 r_new=g ⇒ совпадает с прежней ‖r_new−r‖ число-в-число. Терпит
             # «мерцание» дискретной контактной границы у самого решения.
-            dr = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
-            r_scale = float(np.sqrt(np.sum(q.w * r_new ** 2)))
+            dr = float(np.sqrt(np.sum(q.w * f ** 2)))
+            r_scale = float(np.sqrt(np.sum(q.w * g ** 2)))
             res = dr / r_scale if r_scale > 0.0 else dr
             hist.append(res)
             r = r_new
@@ -223,19 +247,39 @@ class NonlinearContactMOR:
         hist: list[float] = []
         converged = False
         it = 0
+        m_win = int(getattr(self.cfg, "mor_anderson", 0))   # проекц. Андерсон по r (0 — выкл.)
+        g_hist: list[np.ndarray] = []
+        f_hist: list[np.ndarray] = []
         for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
             w_old = c @ solver._psi
             b_level = solver._load_vector(q0 - r)           # нагрузка при текущей реакции
             c, _forces = solver._picard_map(c, b_level, theta)  # ОДИН шаг Пикара
             u_c = self._face_deflection(c)
-            r_new = r.copy()
-            r_new[self.fmask] = (r[self.fmask]
-                                 + self.beta_eff * (u_c[self.fmask] - self._gap_f))
-            np.maximum(r_new, 0.0, out=r_new)
-            r_new[~self.fmask] = 0.0
-            # совместная сходимость: реакция И прогиб стабилизировались
-            dr = float(np.sqrt(np.sum(q.w * (r_new - r) ** 2)))
-            r_scale = float(np.sqrt(np.sum(q.w * r_new ** 2)))
+            g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
+            g[self.fmask] = (r[self.fmask]
+                             + self.beta_eff * (u_c[self.fmask] - self._gap_f))
+            np.maximum(g, 0.0, out=g)
+            g[~self.fmask] = 0.0
+            f = g - r
+            g_hist.append(g)
+            f_hist.append(f)
+            if m_win == 0 or len(f_hist) == 1:
+                r_new = g                                   # чистый проекционный шаг (дефолт)
+            else:                                           # проекционный Андерсон (§4.1)
+                mk = min(m_win, len(f_hist) - 1)
+                dF = np.column_stack([f_hist[-j] - f_hist[-j - 1] for j in range(1, mk + 1)])
+                dG = np.column_stack([g_hist[-j] - g_hist[-j - 1] for j in range(1, mk + 1)])
+                gamma = np.linalg.lstsq(dF, f, rcond=None)[0]
+                r_new = g - dG @ gamma
+                np.maximum(r_new, 0.0, out=r_new)
+                r_new[~self.fmask] = 0.0
+            if len(f_hist) > m_win + 1:
+                del g_hist[0], f_hist[0]
+            # совместная сходимость: реакция И прогиб стабилизировались. Невязка
+            # реакции — по неподвижной точке ‖F(r)−r‖ (честна при Андерсоне;
+            # при m_win=0 совпадает с прежней ‖r_new−r‖).
+            dr = float(np.sqrt(np.sum(q.w * f ** 2)))
+            r_scale = float(np.sqrt(np.sum(q.w * g ** 2)))
             res_r = dr / r_scale if r_scale > 0.0 else dr
             w_new = c @ solver._psi
             wn = float(np.sqrt(np.sum(q.w * w_new ** 2)))

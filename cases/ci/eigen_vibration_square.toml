@@ -1,0 +1,27 @@
+# CI: свободные колебания квадратной пластины SSSS (собственные частоты, v0.6.4).
+# Эталон Кирхгофа: λ_mn = ω·a²·√(ρh/D) = π²(m²+n²) ⇒ λ1 = 2π² = 19.74.
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[bc]
+type = "soft_hinge"        # шарнирное опирание (SSSS)
+
+[model]
+h = 0.01
+
+[eigen]
+kind = "vibration"
+n_modes = 6
+rho_h = 1.0               # погонная масса ρh
+
+[discretization]
+p = 10
+Q = 64
+grid_n = 16
+
+[output]
+dir = "results/ci/eigen_vibration_square"

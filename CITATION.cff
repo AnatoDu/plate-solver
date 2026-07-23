@@ -15,8 +15,8 @@ authors:
     given-names: Anatoly A.
     orcid: "https://orcid.org/0009-0009-9118-4629"
     affiliation: "Pitirim Sorokin Syktyvkar State University"
-version: 0.6.3
-date-released: 2026-07-22
+version: 0.6.4
+date-released: 2026-07-23
 repository-code: "https://github.com/AnatoDu/plate-solver"
 url: "https://doi.org/10.5281/zenodo.21218627"
 doi: 10.5281/zenodo.21218627

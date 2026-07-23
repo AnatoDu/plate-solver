@@ -14,7 +14,7 @@
   см. docs/CASE_SCHEMA.md#секция».
 - Спецификации секций: `GeometrySpec`, `BCSpec`, `LoadSpec`, `ModelSpec`,
   `ContactSpec`, `GapSpec`, `Plate2Spec`, `DiscretizationSpec`,
-  `VerifySpec`, `OutputSpec`.
+  `VerifySpec`, `OutputSpec`, `EigenSpec`.
 - Реестры и константы: `GEOMETRY_KINDS`, `GAP_KINDS`, `MIN_ZONE_NODES`,
   `validate_compose_tree` (ограда мини-языка compose).
 
@@ -186,6 +186,25 @@ Exit-код 0 ⇔ все случаи воспроизвелись.
   Пресет `karman` = `KarmanPlate`, `ktn_full` = `KTNPlate` (машинно); морфинг α —
   единственный путь исполнения Карман↔полная КТН.
 
+## Собственные задачи: устойчивость и колебания (`eigenmodes.py`, v0.6.4)
+
+Переиспользуют линейную сборку структурного Ритца (изгибная жёсткость,
+геометрическая матрица, матрица масс) — те же матрицы, что в задаче изгиба.
+
+- `eigenmodes.linear_plate(domain, cfg, *, bc_type, inplane_bc)` — собрать
+  линейный решатель (`KarmanPlate`) для собственных задач.
+- `eigenmodes.buckling(plate, *, Nx=-1, Ny=0, Nxy=0, n_modes=6)` — потеря
+  устойчивости под равномерным мембранным усилием-эталоном `N⁰` (сжатие —
+  отрицательный знак): `(K + λ K_geo(N⁰))φ = 0`; `EigenPair.values` — критические
+  множители `λ_cr` (критическая нагрузка = `λ_cr·N⁰`).
+- `eigenmodes.natural_frequencies(plate, *, rho_h=1, n_modes=6)` — свободные
+  колебания `Kφ = ω²Mφ` (`M = ρh∫ψψ`); `values` — частоты `ω`.
+- `eigenmodes.EigenPair` — результат (`values`, `modes`, `mode_on_grid(i, grid_n)`).
+- `viz.plot_modes(eigen, n)` — сетка первых `n` собственных форм (контуры).
+
+Верификация — классические эталоны Кирхгофа (квадрат SSSS `k=4`, CCCC `k=10.07`;
+круг CCCC `N_cr·a²/D=14.68`; частоты `λ=ω·a²·√(ρh/D)`), см. `tests/test_eigenmodes.py`.
+
 ## Лицевые величины первым классом (`faces.py`, v0.5.0)
 
 Самостоятельный, переиспользуемый слой лицевых величин для ЛЮБОЙ теории
@@ -318,8 +337,10 @@ print("сертификат пройден:", all(abs(v) <= 1e-8
   `Strip1DResult`, `solve_strip_1d`), синус-нагрузка (`rect_sin_load`,
   `rect_sin_exact`, `rect_sin_wmax`), ряд Навье (`navier_uniform`,
   `navier_uniform_center`), MMS (`mms_load_and_exact`,
-  `mms_clamped_rect_w`, `mms_clamped_disk_w`), моменты RFM-решения
-  (`bending_moments`, `bending_moments_full`).
+  `mms_clamped_rect_w`, `mms_clamped_disk_w`; `mms_ktn_load_and_exact` —
+  изготовленное решение ПОЛНОЙ КТН при замороженных усилиях, обращает сильную
+  форму `D Δ²w − (I−h_ψ²Δ)L(w) = (I−h_*²Δ)q` с точным полиномиальным `q`),
+  моменты RFM-решения (`bending_moments`, `bending_moments_full`).
 - `verify_fem` — независимый МКЭ (scikit-fem): сетки (`lshape_mesh`,
   `annulus_mesh`, `rect_mesh`), решатели (`solve_plate_fem` —
   Кирхгоф-Морли/Marcus-P2, `solve_rect_fem_mixed` — смешанные стороны,

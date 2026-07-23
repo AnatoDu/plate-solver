@@ -1,0 +1,37 @@
+# CI: Карман, защемлённый круг, УСКОРЕНИЕ НЬЮТОНА (v0.6.4).
+# Тот же геометрически-нелинейный изгиб, что karman_circle_clamped_immovable,
+# но через согласованный касательный оператор (karman_method="newton"):
+# квадратичная сходимость ~5–7 итераций вместо десятков у Пикара (то же решение).
+# Ворота — сквозной вход case-файл → диспетчер → Ньютон, exit 0. Безразмерно
+# E=h=a=1 ⇒ P̄ = q0 = 6.0 (w/h ≈ 0.8, солидно нелинейный режим).
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 6.0
+
+[model]
+theory = "karman"
+inplane_bc = "immovable"
+E = 1.0
+nu = 0.3
+h = 1.0
+karman_method = "newton"   # согласованный касательный + линейный поиск (§5.4)
+karman_tol = 1.0e-9
+karman_max_iter = 60
+
+[discretization]
+p = 10
+Q = 128
+grid_n = 24
+
+[verify]
+reference = "none"         # эталоны Кармана — benchmarks.py в тестах; здесь — маршрут
+
+[output]
+dir = "results/ci/karman_circle_clamped_newton"

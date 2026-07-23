@@ -50,21 +50,45 @@ _SCHEMA_DOC = "docs/CASE_SCHEMA.md"
 #  Геометрия: спецификация → Domain (реестр v0.2)
 # --------------------------------------------------------------------------- #
 def build_domain(spec: GeometrySpec) -> geometry.Domain:
-    """Построить Domain по спецификации из case-файла (реестр геометрий)."""
-    if spec.kind == "circle":
-        return geometry.make_circle(spec.a)
-    if spec.kind == "rectangle":
-        return geometry.make_rectangle(spec.x1, spec.x2, spec.y1, spec.y2)
-    if spec.kind == "L":
-        return geometry.make_L(spec.side, spec.cut)
-    if spec.kind == "annulus":
-        return geometry.make_annulus(spec.a, spec.b)
-    if spec.kind == "ellipse":
-        return geometry.make_ellipse(spec.a, spec.b)
-    if spec.kind == "compose":
-        return geometry.make_compose(spec.tree)
-    raise CaseError(f"geometry.kind: получено {spec.kind!r}, ожидалось значение "
-                    f"реестра v0.2, см. {_SCHEMA_DOC}#geometry")
+    """Построить Domain по спецификации из case-файла (реестр геометрий).
+
+    Compose-операции union|intersect|difference могут дать ВЫРОЖДЕННУЮ область
+    (пустое пересечение bbox, difference с поглощением, пустая внутренность) —
+    структурный валидатор (`_validate_compose_node`) их не ловит. Такие случаи
+    отклоняются ЗДЕСЬ понятной `CaseError` (иначе — деление на ноль в сборке и
+    падение LAPACK на NaN).
+    """
+    try:
+        if spec.kind == "circle":
+            dom = geometry.make_circle(spec.a)
+        elif spec.kind == "rectangle":
+            dom = geometry.make_rectangle(spec.x1, spec.x2, spec.y1, spec.y2)
+        elif spec.kind == "L":
+            dom = geometry.make_L(spec.side, spec.cut)
+        elif spec.kind == "annulus":
+            dom = geometry.make_annulus(spec.a, spec.b)
+        elif spec.kind == "ellipse":
+            dom = geometry.make_ellipse(spec.a, spec.b)
+        elif spec.kind == "compose":
+            dom = geometry.make_compose(spec.tree)
+        else:
+            raise CaseError(f"geometry.kind: получено {spec.kind!r}, ожидалось "
+                            f"значение реестра v0.2, см. {_SCHEMA_DOC}#geometry")
+    except CaseError:
+        raise
+    except ValueError as e:                    # напр. пустое пересечение bbox в compose
+        raise CaseError(f"geometry.{spec.kind}: вырожденная область — {e}; "
+                        f"см. {_SCHEMA_DOC}#geometry") from e
+    # непустота внутренности: difference/intersect могут дать пустое множество
+    x0, x1, y0, y1 = dom.bbox
+    gx, gy = np.linspace(x0, x1, 129), np.linspace(y0, y1, 129)
+    XX, YY = np.meshgrid(gx, gy)
+    if not np.any(dom.omega(XX, YY) > 0.0):
+        raise CaseError(
+            f"geometry.{spec.kind}: ПУСТАЯ область — нет внутренних точек "
+            f"(compose difference/intersect не должны давать пустое множество); "
+            f"см. {_SCHEMA_DOC}#geometry")
+    return dom
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +124,8 @@ class Result:
     # чистый изгиб
     w_nodes: np.ndarray | None = None  # прогиб в узлах квадратуры
     w_max_classic: float | None = None  # классический w_max (когда theory=ktn)
+    # собственная задача (§eigen v0.6.4): EigenPair (значения λ_cr/ω + формы)
+    eigen: object | None = None
 
     def scalars(self) -> dict:
         """Скалярная сводка (то, что уходит в result.json и таблицы)."""
@@ -126,6 +152,9 @@ class Result:
                 "n_contact": int((c.r_nodes > 0).sum()),
                 "n_quad": int(c.r_nodes.size),
             })
+        if self.eigen is not None:
+            out.update({"eigen_kind": self.eigen.kind,
+                        "eigen_values": [float(v) for v in self.eigen.values]})
         return out
 
     def save(self, out_dir: str | Path | None = None,
@@ -386,6 +415,11 @@ class Result:
         from . import viz
 
         stem = Path(self.problem.source).stem
+        if self.eigen is not None:                       # собственные формы (§eigen)
+            for fmt in formats:
+                viz.plot_modes(self.eigen, n=len(self.eigen.values),
+                               save=str(out / f"{stem or 'eigen'}_modes.{fmt}"))
+            return
         paths = viz.replot(out, formats=formats, surface=surface)
         if stem and stem != "<dict>":
             for old in paths:
@@ -557,6 +591,15 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
 
+    if problem.eigen is not None:                         # собственная задача (§eigen)
+        t_build = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        result = _solve_eigen(problem, cfg, dom)
+        object.__setattr__(result, "timings",
+                           {"build": t_build, "solve": time.perf_counter() - t0})
+        object.__setattr__(result, "eps_eff", None)
+        return result
+
     nonlinear_contact = (problem.contact.enabled
                          and problem.model.theory in ("karman", "ktn_full"))
     if nonlinear_contact:                                 # нелинейный контакт МОР+КТН (v0.6.3)
@@ -621,6 +664,40 @@ def _grid_fields(dom, cfg: Config, evaluate) -> tuple[np.ndarray, np.ndarray, np
     W = np.full(Xg.shape, np.nan)
     W[inside] = evaluate(Xg[inside], Yg[inside])
     return Xg, Yg, W
+
+
+def _solve_eigen(problem, cfg, dom) -> Result:
+    r"""Собственная задача (§eigen, v0.6.4): устойчивость или колебания.
+
+    Линейный решатель (:func:`~plate_solver.eigenmodes.linear_plate`) собирает
+    изгибную жёсткость / геометрическую матрицу / матрицу масс; ``buckling`` или
+    ``natural_frequencies`` дают значения (λ_cr / ω) и формы. Первая форма (норм.
+    на max|·|=1) кладётся в ``w_grid`` для фигуры; ``Result.eigen`` несёт весь
+    :class:`~plate_solver.eigenmodes.EigenPair`.
+    """
+    from .eigenmodes import buckling, linear_plate, natural_frequencies
+
+    spec = problem.eigen
+    plate = linear_plate(dom, cfg, bc_type=problem.bc.type,
+                         inplane_bc=problem.model.inplane_bc)
+    if spec.kind == "buckling":
+        eig = buckling(plate, Nx=spec.Nx, Ny=spec.Ny, Nxy=spec.Nxy, n_modes=spec.n_modes)
+    else:
+        eig = natural_frequencies(plate, rho_h=spec.rho_h, n_modes=spec.n_modes)
+    warn: list[str] = []
+    if eig.values.size == 0:
+        raise CaseError("eigen: собственных значений не найдено — увеличьте p/Q "
+                        f"или проверьте постановку, см. {_SCHEMA_DOC}#eigen")
+    if eig.values.size < spec.n_modes:
+        warn.append(f"eigen: найдено {eig.values.size} мод из запрошенных "
+                    f"{spec.n_modes} (ограничение базиса/дискретизации)")
+    Xg, Yg, W = eig.mode_on_grid(0, cfg.grid_n)
+    res = Result(problem=problem, config=cfg, w_max=float(eig.values[0]),
+                 cond=float(np.linalg.cond(plate.D * plate._S_bend)),
+                 Xg=Xg, Yg=Yg, w_grid=W, warnings=tuple(warn), eigen=eig)
+    object.__setattr__(res, "_plate_ref", plate)
+    object.__setattr__(res, "_c_ref", eig.modes[0])
+    return res
 
 
 def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:

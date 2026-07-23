@@ -219,6 +219,39 @@ def test_compose_fence():
     _expect_error(_case(geometry={"kind": "compose", "tree": bad}), "union | intersect")
 
 
+def test_compose_degenerate_region_rejected():
+    """ВЫРОЖДЕННАЯ compose-область (пустая внутренность) — понятная CaseError, не падение.
+
+    Структурный валидатор пропускает геометрически пустые деревья (difference с
+    поглощением, intersect непересекающихся); их ловит `dispatch.build_domain`
+    (иначе — деление на ноль в сборке и падение LAPACK на NaN, аудит v0.6.4).
+    """
+    import math
+
+    from plate_solver import dispatch
+
+    # difference: вычитаемое поглощает уменьшаемое ⇒ пусто
+    engulf = {"op": "difference", "children": [
+        {"kind": "circle", "a": 1.0, "cx": 0.0, "cy": 0.0},
+        {"kind": "circle", "a": 2.0, "cx": 0.0, "cy": 0.0}]}
+    with pytest.raises(CaseError, match="ПУСТАЯ область"):
+        dispatch.solve(Problem.from_dict(_case(geometry={"kind": "compose", "tree": engulf})))
+
+    # intersect непересекающихся примитивов ⇒ пустое пересечение bbox
+    disjoint = {"op": "intersect", "children": [
+        {"kind": "circle", "a": 0.5, "cx": -3.0, "cy": 0.0},
+        {"kind": "circle", "a": 0.5, "cx": 3.0, "cy": 0.0}]}
+    with pytest.raises(CaseError, match="вырожденная область"):
+        dispatch.solve(Problem.from_dict(_case(geometry={"kind": "compose", "tree": disjoint})))
+
+    # контроль: валидная compose-область с непустой внутренностью решается
+    ok = {"op": "difference", "children": [
+        {"kind": "rectangle", "x1": -1.0, "x2": 1.0, "y1": -1.0, "y2": 1.0},
+        {"kind": "circle", "a": 0.4, "cx": 0.0, "cy": 0.0}]}
+    r = dispatch.solve(Problem.from_dict(_case(geometry={"kind": "compose", "tree": ok})))
+    assert math.isfinite(r.w_max)
+
+
 def test_file_errors(tmp_path):
     with pytest.raises(CaseError, match="не найден"):
         Problem.from_toml(tmp_path / "нет_такого.toml")

@@ -297,6 +297,8 @@ def _mms_reference(problem: Problem, cfg) -> Reference:
     else:
         _fail("verify.reference", "mms",
               "rectangle | circle (MMS-поля лестницы, NOTES §14)")
+    if problem.model.theory == "ktn_full":
+        return _mms_ktn_reference(cfg, dom, w_expr, g)
     q_func, w_func = mms_load_and_exact(w_expr, cfg.D)
     cp = ClampedPlate.from_config(dom, cfg)
     qn = cp.quad
@@ -304,6 +306,36 @@ def _mms_reference(problem: Problem, cfg) -> Reference:
     w_num = float(np.max(np.abs(cp.deflection(c, qn.x, qn.y))))
     w_ex = float(np.max(np.abs(w_func(qn.x, qn.y))))
     return Reference(name=f"mms (изготовленное решение, {g.kind}, clamped)",
+                     kind="mms", w_max=w_ex, gated=True, value=w_num)
+
+
+def _mms_ktn_reference(cfg, dom, w_expr, g) -> Reference:
+    r"""MMS-эталон ПОЛНОЙ КТН при ЗАМОРОЖЕННЫХ усилиях (§3.4/§3.5, fixed-N).
+
+    Заморозка ``N`` линеаризует оператор КТН; изготовленная нагрузка
+    (`ladder.mms_ktn_load_and_exact`) обращает сильную форму
+    ``D Δ²w − (I−h_ψ²Δ)L(w) = (I−h_*²Δ)q``, и линейный решатель КТН
+    (`KTNPlate.solve_fixed_forces`) на ТОЙ ЖЕ дискретизации обязан
+    воспроизвести ``w_MMS`` — сертификат ВСЕХ членов сборки (изгиб,
+    геометрическая жёсткость, член B ``h_ψ²``, член A ``h_*²``). Прямоугольник
+    с полиномиальной ω ⇒ машинная точность; круг ⇒ остаток маски ~1/Q.
+    Каноническое поле ``N̄`` берётся ∝ ``D/L²`` (сбалансированная обусловленность).
+    """
+    from .ktn_full import KTNPlate
+    from .ladder import mms_ktn_load_and_exact
+
+    plate = KTNPlate.from_config(dom, cfg, bc_type="clamped", include_ktn_terms=True)
+    x1, x2, y1, y2 = dom.bbox
+    n_ref = cfg.D / max(x2 - x1, y2 - y1) ** 2            # мембранный масштаб
+    N = (0.8 * n_ref, 0.5 * n_ref, -0.3 * n_ref)          # каноническое замороженное поле
+    q_func, lap_q_func, w_func = mms_ktn_load_and_exact(
+        w_expr, cfg.D, N, plate._h_psi_sq, plate._h_star_sq)
+    qn = plate.quad
+    c = plate.solve_fixed_forces(q_func(qn.x, qn.y), *N,
+                                 lap_q=lap_q_func(qn.x, qn.y))
+    w_num = float(np.max(np.abs(plate.deflection(c, qn.x, qn.y))))
+    w_ex = float(np.max(np.abs(w_func(qn.x, qn.y))))
+    return Reference(name=f"mms-КТН (фикс. N, {g.kind}, clamped)",
                      kind="mms", w_max=w_ex, gated=True, value=w_num)
 
 
@@ -436,10 +468,20 @@ def vf_annulus_mesh(a: float, b: float):
 #  Резолвер и отчёт
 # --------------------------------------------------------------------------- #
 def _is_axisym_contact_case(problem) -> bool:
-    """Поддержан ли осесимметричный контактный эталон (круг, шарнир, классика)."""
+    r"""Поддержан ли осесимметричный контактный эталон.
+
+    Круг + равномерная нагрузка + основание со скалярным зазором; кромка
+    ``soft_hinge`` | ``clamped``; теория ``classic``. ``ktn_linear`` в контакте
+    ЭТАЛОНА НЕ ИМЕЕТ: КТН-поправка входит в лицевое условие Синьорини (реакция
+    гонится прогибом НИЖНЕЙ лицевой ``u_c = w + c_curv·Δw + …``, ktn.py), из-за
+    чего сходящаяся реакция и БАЗОВОЕ поле отклоняются от кирхгофовского с ростом
+    толщины — сертифицированное (классическое) решение не годится (гейт был бы
+    ложно-положителен лишь в тонком пределе). Для ``ktn_linear`` контакта —
+    ворота инвариантов (``reference = none``).
+    """
     c = problem.contact
     return (problem.geometry.kind == "circle"
-            and problem.bc.type == "soft_hinge"
+            and problem.bc.type in ("soft_hinge", "clamped")
             and problem.model.theory == "classic"
             and problem.load.type == "uniform"
             and c.target == "foundation"
@@ -449,26 +491,28 @@ def _is_axisym_contact_case(problem) -> bool:
 
 
 def _axisym_contact_reference(problem, cfg) -> Reference:
-    r"""Эталон: круг, мягкий шарнир, контакт с плоским основанием (Кирхгоф).
+    r"""Эталон: круг, контакт с плоским основанием (Кирхгоф); кромка по ``bc``.
 
     ``w_max = Δ`` тривиален (пластина ложится на основание в зоне контакта),
     поэтому гейт — прогиб ВНЕ контактной зоны, в точке ``r = (c + a)/2`` (где
     ``w < Δ``), против сертифицированного ``axisym_contact_solution``
     (центральная плоская зона + кольцевая реакция Кирхгофа, §analytic_auto).
+    Только ``classic`` (см. :func:`_is_axisym_contact_case`).
     """
     from .analytic_auto import FactoryError, axisym_contact_solution
 
     a = float(cfg.a)
     gap = float(problem.contact.gap)
+    bc = problem.bc.type
     try:
-        sol = axisym_contact_solution(a=a, D=cfg.D, q0=cfg.q0, gap=gap)
+        sol = axisym_contact_solution(a=a, D=cfg.D, q0=cfg.q0, gap=gap, bc=bc)
     except FactoryError as e:
         _fail("contact.gap", gap,
               f"0 < Δ < w_free(0) для осесимметричного эталона контакта ({e})")
     c_star = float(sol.meta["c"])
     r_gate = 0.5 * (c_star + a)                 # середина между кромкой зоны и краем
     w_ref = float(sol.w(r_gate, 0.0))
-    return Reference(name="analytic-контакт (circle, soft_hinge, Кирхгоф)",
+    return Reference(name=f"analytic-контакт (circle, {bc}, Кирхгоф)",
                      kind="analytic", w_max=w_ref, gated=True, point=(r_gate, 0.0))
 
 
@@ -490,9 +534,10 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
             refs.append(_axisym_contact_reference(problem, cfg))
             return refs
         _fail("verify.reference", v.reference,
-              "none, либо analytic для circle + soft_hinge + classic + основание "
-              "со скалярным зазором (осесимметричный эталон контакта Кирхгофа); "
-              "прочий контакт — ворота инвариантов (r≥0, комплементарность, зона)")
+              "none, либо analytic для circle + (soft_hinge|clamped) + classic "
+              "+ основание со скалярным зазором (осесимметричный эталон контакта "
+              "Кирхгофа); ktn_linear/ktn_full и прочий контакт — ворота "
+              "инвариантов (r≥0, комплементарность, зона)")
     if v.reference == "analytic":
         ref_val = _analytic_wmax(problem, cfg)
         point = None

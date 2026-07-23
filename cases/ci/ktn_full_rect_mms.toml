@@ -1,0 +1,35 @@
+# CI: MMS-сертификат ПОЛНОЙ КТН при замороженных усилиях (fixed-N, v0.6.4).
+# Изготовленное решение w_MMS обращает сильную форму
+#   D Δ²w − (I − h_ψ²Δ) L(w) = (I − h_*²Δ) q   (L = N:∇∇w, N̄ = const),
+# и линейный решатель КТН (solve_fixed_forces) на полиномиальной ω воспроизводит
+# w_MMS МАШИННО — единый сертификат сборки: изгиб + геом. жёсткость + член B (h_ψ²)
+# + член A (h_*²). Гейт reference=mms сравнивает fixed-N прогон с точным решением.
+[geometry]
+kind = "rectangle"
+x1 = -1.0
+x2 = 1.0
+y1 = -0.6
+y2 = 0.6
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 1.0
+
+[model]
+theory = "ktn_full"
+h = 0.1
+
+[discretization]
+p = 10
+Q = 64
+grid_n = 16
+
+[verify]
+reference = "mms"       # изготовленное решение КТН (fixed-N), машинная точность
+tol = 1.0e-9
+
+[output]
+dir = "results/ci/ktn_full_rect_mms"

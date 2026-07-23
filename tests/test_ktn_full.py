@@ -7,6 +7,11 @@ r"""Ворота полной нелинейной КТН (ktn_full.py, веха
 * Gate R1 — КТН → Карман при выключенных КТН-членах (машинная точность):
   прямая проверка, что члены (A), (B) собраны без ошибок знака/множителя.
 * Gate R2 — КТН → Кирхгоф (тонкая пластина, малый прогиб).
+* Gate R3 — 1D↔2D: НЕЗАВИСИМЫЙ осесимметричный радиальный решатель
+  (`radial_ktn.RadialKTN`, иная дискретизация) воспроизводит 2D-решение
+  `KTNPlate` на круге; проверяет ПОЛНУЮ нелинейную связь ``N(w)`` (сильнее MMS
+  с замороженным ``N``). Согласие дискретизационно-ограничено (убывает с ростом
+  2D-``p``), редукция ТОЧНА.
 * Gate R4 — гашение поправки O(h²/L²): эффект ∝ h², → 0 при h/L → 0.
 * Gate R5 — лицевые ktn_full при малом прогибе ≈ ktn_linear (смыкание реализаций).
 * Подпись КТН и ограничение мягкого шарнира.
@@ -74,6 +79,100 @@ def test_gate_r2_reduces_to_kirchhoff():
     ref = bm.kirchhoff_clamped_circle(0.05, 0.3) * 0.05   # w/h → w_max (·h)
     assert abs(r.w_max - ref) / ref < 1e-2          # совпал с классикой (дискретизация)
     assert abs(r.w_max - r.w_max_classic) / r.w_max_classic < 5e-4  # КТН-поправка мала
+
+
+# --------------------------------------------------------------------------- #
+#  Gate R3 — 1D↔2D: независимый радиальный решатель ↔ 2D KTNPlate на круге
+# --------------------------------------------------------------------------- #
+#  Дискретизационный пол согласия на быстрой сетке (2D p=14): rel(w_max) и
+#  поточечная невязка ≤ ~4·10⁻³, УБЫВАЮТ с ростом 2D-p (см. big-тест ниже) —
+#  редукция точна, невязку задаёт 2D-RFM. Допуск 8·10⁻³ (пол + запас на BLAS);
+#  НЕ ослаблять: при расхождении искать ошибку в методе (CLAUDE.md).
+from plate_solver.radial_ktn import RadialKTN  # noqa: E402
+
+_R3_TOL = 8e-3
+
+
+def _radial(h, P_bar, *, include_ktn=True, bc="clamped", p=12, nq=700):
+    rad = RadialKTN(1.0, 1.0, 0.3, h, p=p, pm=p, nq=nq, include_ktn=include_ktn, bc=bc)
+    return rad, rad.solve(P_bar * h**4)
+
+
+def _two_d(h, P_bar, *, ktn, bc="clamped", p=14, Q=160):
+    # Ньютон (§5.4) — быстрая сходимость 2D-стороны (особенно мягкий шарнир)
+    method = {"ktn_method": "newton"} if ktn else {"karman_method": "newton"}
+    cfg = Config(E=1.0, h=h, nu=0.3, a=1.0, q0=P_bar * h**4, p=p, Q=Q,
+                 n_load_steps=3, karman_tol=1e-10, karman_max_iter=400, **method)
+    Cls = KTNPlate if ktn else KarmanPlate
+    plate = Cls.from_config(_DOM, cfg, bc_type=bc, inplane_bc="immovable")
+    return plate, plate.solve_uniform()
+
+
+def _profile_mismatch(rad, r1, plate, r2):
+    """Максимум |w_1D − w_2D| / w_max по радиусу (2D берётся вдоль +x)."""
+    rs = np.linspace(0.0, 0.97, 20)
+    w1 = rad.deflection(r1.cw, rs)
+    w2 = np.array([float(plate.deflection(r2.cw, x, 0.0)) for x in rs])
+    return float(np.max(np.abs(w1 - w2)) / r1.w_max)
+
+
+def test_gate_r3_reduction_1d_ktn_off_is_karman():
+    """Контроль редукции 1D: радиальная КТН при выключенных членах = радиальный Карман."""
+    _, r_off = _radial(0.1, 6.0, include_ktn=False)
+    _, r_on = _radial(0.1, 6.0, include_ktn=True)
+    # выключённая КТН ≡ Карман (по построению); ВКЛючённая — отличается (члены активны)
+    assert r_off.converged and r_on.converged
+    assert abs(r_on.w_max - r_off.w_max) / r_off.w_max > 1e-3
+
+
+@pytest.mark.parametrize("bc,h", [("clamped", 0.1), ("clamped", 0.2),
+                                  ("soft_hinge", 0.1)])
+def test_gate_r3_karman_1d_matches_2d(bc, h):
+    """Gate R3 (Карман): независимый радиальный решатель ↔ 2D KarmanPlate (обе кромки)."""
+    rad, r1 = _radial(h, 6.0, include_ktn=False, bc=bc)
+    plate, r2 = _two_d(h, 6.0, ktn=False, bc=bc)
+    assert abs(r1.w_max - r2.w_max) / r2.w_max < _R3_TOL
+    assert _profile_mismatch(rad, r1, plate, r2) < _R3_TOL
+
+
+@pytest.mark.parametrize("bc,h", [("clamped", 0.1), ("clamped", 0.2),
+                                  ("soft_hinge", 0.1)])
+def test_gate_r3_ktn_1d_matches_2d(bc, h):
+    """Gate R3 (ПОЛНАЯ КТН): независимый радиальный решатель ↔ 2D KTNPlate (обе кромки).
+
+    Ядро R3: сходятся ДВЕ независимые дискретизации полной нелинейной КТН с живой
+    связью ``N(w)`` — сертификат корректности метода без литературного эталона. На
+    мягком шарнире свёртка включает граничный член §3.5 (в осесимметрии — вырожден,
+    ниже дискретизационного пола; §3.5 отдельно сверен тождеством Грина).
+    """
+    rad, r1 = _radial(h, 6.0, include_ktn=True, bc=bc)
+    plate, r2 = _two_d(h, 6.0, ktn=True, bc=bc)
+    assert abs(r1.w_max - r2.w_max) / r2.w_max < _R3_TOL
+    assert _profile_mismatch(rad, r1, plate, r2) < _R3_TOL
+
+
+def test_gate_r3_ktn_correction_consistent_1d_2d():
+    """КТН-поправка (относительно Кармана) согласована 1D↔2D: не только величина, но и ФИЗИКА."""
+    _, r1k = _radial(0.1, 6.0, include_ktn=False)
+    _, r1t = _radial(0.1, 6.0, include_ktn=True)
+    _, r2k = _two_d(0.1, 6.0, ktn=False)
+    _, r2t = _two_d(0.1, 6.0, ktn=True)
+    ratio_1d = r1t.w_max / r1k.w_max                 # КТН/Карман (1D)
+    ratio_2d = r2t.w_max / r2k.w_max                 # КТН/Карман (2D)
+    assert ratio_1d < 1.0 and ratio_2d < 1.0         # КТН жёстче Кармана (эффект члена B)
+    assert abs(ratio_1d - ratio_2d) < 2e-3           # отношение совпало (согласованная поправка)
+
+
+@pytest.mark.big
+def test_gate_r3_convergence_1d_2d():
+    """Gate R3 (сходимость): невязка 1D↔2D УБЫВАЕТ с ростом 2D-p ⇒ редукция точна."""
+    rad, r1 = _radial(0.1, 6.0, include_ktn=True, p=16, nq=1000)   # ~точный оракул
+    rels = []
+    for p, Q in [(12, 140), (14, 180), (16, 220)]:
+        plate, r2 = _two_d(0.1, 6.0, ktn=True, p=p, Q=Q)
+        rels.append(abs(r1.w_max - r2.w_max) / r2.w_max)
+    assert rels[0] > rels[1] > rels[2]               # монотонно к нулю (дискретизация 2D)
+    assert rels[-1] < 3e-3
 
 
 # --------------------------------------------------------------------------- #
@@ -155,12 +254,21 @@ def test_ktn_full_soft_hinge_solves():
     assert r_sh.w_max > r_cl.w_max                        # шарнир податливее защемления
 
 
-def test_ktn_method_newton_not_implemented():
-    """Ньютон для КТН (§5.4) — задел (§14 cut): явный NotImplementedError."""
-    cfg = Config(E=1.0, h=0.1, nu=0.3, a=1.0, q0=1e-4, p=8, Q=64, ktn_method="newton")
-    kp = KTNPlate.from_config(_DOM, cfg, bc_type="clamped", inplane_bc="immovable")
-    with pytest.raises(NotImplementedError, match="newton"):
-        kp.solve_uniform()
+def test_ktn_method_newton_matches_picard():
+    """Ньютон для КТН (§5.4, v0.6.4): то же решение, что Пикар, меньше итераций.
+
+    Подробные проверки касательного (конечные разности, мягкий шарнир) —
+    ``tests/test_newton.py``; здесь фиксируем эквивалентность в контексте КТН.
+    """
+    cfg_n = Config(E=1.0, h=1.0, nu=0.3, a=1.0, q0=6.0, p=10, Q=128,
+                   karman_tol=1e-8, karman_max_iter=300, ktn_method="newton")
+    cfg_p = Config(E=1.0, h=1.0, nu=0.3, a=1.0, q0=6.0, p=10, Q=128,
+                   karman_tol=1e-8, karman_max_iter=300, ktn_method="picard")
+    rn = KTNPlate.from_config(_DOM, cfg_n, bc_type="clamped").solve_uniform()
+    rp = KTNPlate.from_config(_DOM, cfg_p, bc_type="clamped").solve_uniform()
+    assert rn.converged
+    assert abs(rn.w_max - rp.w_max) / rp.w_max < 1e-3
+    assert rn.n_iter < rp.n_iter
 
 
 # --------------------------------------------------------------------------- #

@@ -376,3 +376,46 @@ Q = 64
     p.write_text(text, encoding="utf-8")
     with pytest.raises(CaseError, match="scheme"):
         Problem.from_toml(str(p))
+
+
+# --------------------------------------------------------------------------- #
+#  Ускорение Андерсона внешнего цикла МОР (mor_anderson, v0.6.4)
+# --------------------------------------------------------------------------- #
+def _nested_mor(mor_anderson, *, q0=0.02, h=0.1, p=7, Q=80, tol=1.0e-3):
+    """Вложенный МОР (полная КТН, круг) с заданным окном Андерсона; вернуть результат."""
+    from plate_solver.config import Config
+    from plate_solver.contact_nl import NonlinearContactMOR
+    from plate_solver.geometry import make_circle
+    from plate_solver.ktn_solver import KTNSolver
+
+    dom = make_circle(1.0)
+    cfg = Config(E=1.0, nu=0.3, h=h, q0=q0, a=1.0, p=p, Q=Q, n_load_steps=2,
+                 karman_tol=1e-7, karman_max_iter=200, beta=1.2, tol=tol,
+                 max_iter=3000, mor_anderson=mor_anderson)
+    free = KTNSolver.from_theory_name(dom, cfg, "ktn_full", bc_type="clamped",
+                                      inplane_bc="immovable")
+    gap = 0.5 * free.solve(np.full(free.quad.x.size, q0)).w_max
+    solver = KTNSolver.from_theory_name(dom, cfg, "ktn_full", bc_type="clamped",
+                                        inplane_bc="immovable")
+    return NonlinearContactMOR(solver, cfg, gap=gap, scheme="nested").solve()
+
+
+@pytest.mark.big
+def test_mor_anderson_accelerates_nested():
+    """Проекционный Андерсон ускоряет ВНЕШНИЙ цикл МОР: то же решение, меньше шагов.
+
+    Каждый внешний шаг вложенной схемы — ПОЛНЫЙ нелинейный КТН-решатель, поэтому
+    сокращение числа шагов реакции = прямая экономия. Неподвижная точка та же
+    (проекция r ≥ 0 после смешения; сходимость по ‖F(r)−r‖).
+    """
+    r0 = _nested_mor(0)
+    r5 = _nested_mor(5)
+    assert r0.converged and r5.converged
+    assert abs(r5.w_max - r0.w_max) / r0.w_max < 3e-3     # та же неподвижная точка (±мерцание)
+    assert r5.iters < 0.6 * r0.iters                      # ощутимо меньше внешних шагов
+
+
+def test_mor_anderson_default_off_unchanged():
+    """mor_anderson=0 (дефолт) — прежний проекционный шаг число-в-число (регресс не сдвинут)."""
+    from plate_solver.config import Config
+    assert Config().mor_anderson == 0                     # выключено по умолчанию

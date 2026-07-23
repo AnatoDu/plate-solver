@@ -76,3 +76,31 @@ def test_mms_rejections():
     with pytest.raises(CaseError, match="rectangle | circle"):
         resolve_reference(_problem(geometry={"kind": "L", "side": 1.0, "cut": 0.5},
                                    verify={"reference": "mms"}))
+
+
+# --------------------------------------------------------------------------- #
+#  MMS полной КТН при замороженных усилиях (fixed-N, v0.6.4)
+# --------------------------------------------------------------------------- #
+_KTN = {"model": {"theory": "ktn_full", "h": 0.1}}
+
+
+def test_gate_mms_ktn_rectangle_machine_precision():
+    """ВОРОТА: MMS-КТН (fixed-N) на прямоугольнике — машинная точность (все члены сборки)."""
+    refs = resolve_reference(_problem(**_KTN,
+                                      discretization={"p": 10, "Q": 64, "grid_n": 16}))
+    assert len(refs) == 1 and refs[0].kind == "mms"
+    assert "КТН" in refs[0].name
+    rel = abs(refs[0].value - refs[0].w_max) / refs[0].w_max
+    assert rel < 1e-9, rel
+
+
+def test_gate_mms_ktn_circle_mask_floor():
+    """Круг+КТН: остаток задаёт маска ~1/Q — проверяем уровень и убывание с Q."""
+    rels = []
+    for Q in (128, 256):
+        refs = resolve_reference(_problem(
+            **_KTN, geometry={"kind": "circle", "a": 1.0},
+            discretization={"p": 8, "Q": Q, "grid_n": 16},
+            verify={"reference": "mms", "tol": 5.0e-2}))
+        rels.append(abs(refs[0].value - refs[0].w_max) / refs[0].w_max)
+    assert rels[0] < 5e-2 and rels[1] < rels[0]   # ~1/Q, убывает

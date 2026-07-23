@@ -1,0 +1,25 @@
+# CI: потеря устойчивости защемлённого круга под радиальным сжатием (v0.6.4).
+# Эталон Тимошенко: N_cr·a²/D = 14.68 (первая осесимметричная форма).
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[model]
+h = 0.01
+
+[eigen]
+kind = "buckling"
+Nx = -1.0                # равномерное радиальное сжатие (эталон), Nx = Ny < 0
+Ny = -1.0
+n_modes = 4
+
+[discretization]
+p = 10
+Q = 64
+grid_n = 16
+
+[output]
+dir = "results/ci/eigen_buckling_circle"

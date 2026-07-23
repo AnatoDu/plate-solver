@@ -67,6 +67,8 @@ STOP_CRITERIA = ("dr", "comp")
 # итераций (§4.2) и нормировка усиления оператора (теорема 4, §4.1).
 CONTACT_SCHEMES = ("nested", "merged")
 CONTACT_GAINS = ("secant", "linear")
+# Собственные задачи (eigenmodes.py, v0.6.4): устойчивость | колебания.
+EIGEN_KINDS = ("buckling", "vibration")
 
 # Минимум узлов квадратуры в зоне (нагрузки или контакта) — защита от
 # «зоны без узлов»: интеграл по маске теряет смысл.
@@ -311,6 +313,25 @@ class OutputSpec:
 
 
 @dataclass(frozen=True)
+class EigenSpec:
+    """Собственная задача (``[eigen]``, v0.6.4): устойчивость или колебания.
+
+    ``kind = buckling`` — потеря устойчивости под равномерным мембранным
+    усилием-эталоном ``(Nx, Ny, Nxy)`` (сжатие — отрицательный знак); критические
+    множители ``λ_cr``. ``kind = vibration`` — свободные колебания; частоты ``ω``,
+    ``rho_h`` — погонная масса ``ρh``. Анализ ЛИНЕЙНЫЙ (изгибная жёсткость
+    Кирхгофа), поэтому ``[load]``/``[contact]`` не нужны и запрещены.
+    """
+
+    kind: str = "vibration"
+    n_modes: int = 6
+    Nx: float = -1.0                # buckling: эталонное усилие (сжатие < 0)
+    Ny: float = 0.0
+    Nxy: float = 0.0
+    rho_h: float = 1.0              # vibration: погонная масса ρh
+
+
+@dataclass(frozen=True)
 class Problem:
     """Неизменяемая постановка задачи (провалидированный case-файл)."""
 
@@ -323,6 +344,7 @@ class Problem:
     discretization: DiscretizationSpec = field(default_factory=DiscretizationSpec)
     verify: VerifySpec = field(default_factory=VerifySpec)
     output: OutputSpec = field(default_factory=OutputSpec)
+    eigen: EigenSpec | None = None   # собственная задача (§eigen, v0.6.4)
     source: str = "<dict>"          # путь case-файла (для сообщений и result.json)
 
     # -- фабрики ---------------------------------------------------------- #
@@ -345,25 +367,34 @@ class Problem:
         if not isinstance(data, dict):
             _fail("case", type(data).__name__, "таблица секций TOML", "схема")
         _require_keys("case", data, {"geometry", "bc", "load", "model", "contact",
-                                     "plate2", "discretization", "verify", "output"},
+                                     "plate2", "discretization", "verify", "output",
+                                     "eigen"},
                       "схема")
-        for sec in ("geometry", "bc", "load"):
+        if "eigen" in data and any(s in data for s in ("load", "contact", "plate2")):
+            _fail("eigen", "present",
+                  "без секций [load]/[contact]/[plate2] — собственная задача "
+                  "линейная, без поперечной нагрузки и контакта", "eigen")
+        # [load] обязателен, кроме собственной задачи ([eigen] — без нагрузки).
+        req = ("geometry", "bc") if "eigen" in data else ("geometry", "bc", "load")
+        for sec in req:
             if sec not in data:
                 _fail(sec, None, f"обязательная секция [{sec}]", sec)
 
         geometry = _parse_geometry("geometry", data["geometry"])
         bc = _parse_bc(data["bc"])
-        load = _parse_load(data["load"])
+        load = (_parse_load(data["load"]) if "load" in data
+                else LoadSpec(type="uniform", q0=0.0))
         model = _parse_model(data.get("model", {}))
         contact = _parse_contact(data.get("contact", {}))
         plate2 = _parse_plate2(data["plate2"]) if "plate2" in data else None
         disc = _parse_discretization(data.get("discretization", {}))
         verify = _parse_verify(data.get("verify", {}))
         output = _parse_output(data.get("output", {}))
+        eigen = _parse_eigen(data["eigen"]) if "eigen" in data else None
 
         problem = cls(geometry=geometry, bc=bc, load=load, model=model, contact=contact,
                       plate2=plate2, discretization=disc, verify=verify, output=output,
-                      source=source)
+                      eigen=eigen, source=source)
         _validate_cross(problem)
         return problem
 
@@ -854,10 +885,43 @@ def _parse_output(data) -> OutputSpec:
     return OutputSpec(dir=d, figures=_boolean("output", data, "figures", "output", default=False))
 
 
+def _parse_eigen(data) -> EigenSpec:
+    if not isinstance(data, dict):
+        _fail("eigen", data, "таблица (секция TOML)", "eigen")
+    _require_keys("eigen", data, {"kind", "n_modes", "Nx", "Ny", "Nxy", "rho_h"}, "eigen")
+    kind = data.get("kind", "vibration")
+    if kind not in EIGEN_KINDS:
+        _fail("eigen.kind", kind, " | ".join(EIGEN_KINDS), "eigen")
+    n_modes = _integer("eigen", data, "n_modes", "eigen", minimum=1)
+    rho_h = _number("eigen", data, "rho_h", "eigen", positive=True)
+    nx = _number("eigen", data, "Nx", "eigen")
+    ny = _number("eigen", data, "Ny", "eigen")
+    nxy = _number("eigen", data, "Nxy", "eigen")
+    return EigenSpec(
+        kind=kind,
+        n_modes=6 if n_modes is None else n_modes,
+        Nx=-1.0 if nx is None else nx,
+        Ny=0.0 if ny is None else ny,
+        Nxy=0.0 if nxy is None else nxy,
+        rho_h=1.0 if rho_h is None else rho_h)
+
+
 # --------------------------------------------------------------------------- #
 #  Перекрёстная валидация (несовместимости v0.2)
 # --------------------------------------------------------------------------- #
 def _validate_cross(p: Problem) -> None:
+    if p.eigen is not None:
+        # Собственная задача (устойчивость/колебания) — ЛИНЕЙНАЯ, изгиб Кирхгофа;
+        # структура ω^m ⇒ КУ clamped | soft_hinge; поперечная нагрузка/контакт нет.
+        if p.bc.type not in ("clamped", "soft_hinge"):
+            _fail("bc.type", p.bc.type,
+                  "clamped | soft_hinge для собственной задачи [eigen] "
+                  "(структура ω^m; смешанные КУ — направление развития)", "eigen")
+        if p.verify.reference != "none":
+            _fail("verify.reference", p.verify.reference,
+                  "none для [eigen] (верификация классическими эталонами — "
+                  "tests/test_eigenmodes.py)", "eigen")
+        return
     if p.bc.type == "mixed":
         if p.geometry.kind != "rectangle":
             _fail("bc.type", "mixed",
@@ -961,6 +1025,22 @@ def _validate_cross(p: Problem) -> None:
         _fail("verify.cross_1d", True,
               "false — сверка с 1D-Ритцем по радиусу доступна только для "
               "осесимметричных постановок (circle | annulus, равномерная нагрузка)", "verify")
+    # Эталон верификации — СТРУКТУРНАЯ применимость (fail-fast на этапе разбора,
+    # а не лениво в resolve_reference; аудит устойчивости v0.6.4).
+    ref = p.verify.reference
+    if p.contact.enabled and ref == "analytic":
+        from . import references as _refs  # ленивый импорт (references → Problem)
+        if not _refs._is_axisym_contact_case(p):
+            _fail("verify.reference", "analytic",
+                  "none — сертифицированный контактный эталон существует только для "
+                  "circle + (soft_hinge | clamped) + classic + основание со скалярным "
+                  "зазором; прочий контакт (ktn_linear/ktn_full, не круг) — ворота "
+                  "инвариантов (reference = none)", "verify")
+    if ref == "mms" and (p.bc.type != "clamped"
+                         or p.geometry.kind not in ("rectangle", "circle")):
+        _fail("verify.reference", "mms",
+              "clamped-постановка на rectangle | circle (изготовленное решение —"
+              " MMS-ступени лестницы; для ktn_full — MMS полной КТН при фикс. N)", "verify")
 
 
 __all__ = [
@@ -975,6 +1055,7 @@ __all__ = [
     "VerifySpec",
     "OutputSpec",
     "Plate2Spec",
+    "EigenSpec",
     "GEOMETRY_KINDS",
     "GAP_KINDS",
     "GapSpec",

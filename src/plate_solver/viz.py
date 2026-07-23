@@ -225,6 +225,7 @@ __all__ = [
     "plot_convergence",
     "plot_contact_summary",
     "plot_pair_summary",
+    "plot_modes",
     "replot",
     "surface3d",
     "stress_maps",
@@ -379,6 +380,35 @@ def surface3d(X, Y, W, *, elev: float = 28.0, azim: float = -60.0,
     ax.set_ylabel("y")
     ax.set_zlabel("w")
     ax.set_title(title)
+    if save:
+        fig.savefig(save, dpi=dpi, bbox_inches="tight")
+    return _finish(fig, None, show)
+
+
+def plot_modes(eigen, n: int = 6, *, grid_n: int = 80, save: str | None = None,
+               show: bool = False, dpi: int = 300):
+    """Сетка первых ``n`` собственных форм (контуры); значения — в заголовках.
+
+    ``eigen`` — :class:`~plate_solver.eigenmodes.EigenPair` (устойчивость или
+    колебания). Формы нормированы на max|·|=1 (:meth:`EigenPair.mode_on_grid`).
+    """
+    import matplotlib.pyplot as plt
+
+    n = min(int(n), len(eigen.values))
+    ncol = min(3, n)
+    nrow = (n + ncol - 1) // ncol
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.5 * ncol, 4.0 * nrow), squeeze=False)
+    label = "λ_cr" if eigen.kind == "buckling" else "ω"
+    for k, ax in enumerate(axes.ravel()):
+        if k < n:
+            Xg, Yg, W = eigen.mode_on_grid(k, grid_n)
+            ax.contourf(Xg, Yg, np.ma.masked_invalid(W), levels=20, cmap="RdBu_r")
+            ax.set_aspect("equal")
+            ax.set_title(f"Форма {k + 1}: {label} = {eigen.values[k]:.4g}")
+        else:
+            ax.axis("off")
+    kind = "устойчивость" if eigen.kind == "buckling" else "колебания"
+    fig.suptitle(f"Собственные формы ({kind})")
     if save:
         fig.savefig(save, dpi=dpi, bbox_inches="tight")
     return _finish(fig, None, show)
