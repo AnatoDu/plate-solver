@@ -104,15 +104,16 @@ figures = true
 | contact.max_iter | int | дефолт Config | ≥ 1 | contact.py |
 | contact.tol | float | дефолт Config | > 0 | contact.py |
 | contact.stop | str | дефолт Config ("dr") | dr, comp | contact.py |
-| contact.scheme | str | дефолт Config ("merged") | nested, merged (нелин. контакт КТН, v0.6.3) | contact_nl.py |
+| contact.scheme | str | дефолт Config ("merged") | nested, merged (нелин. контакт КТН, v0.6.3); пара — только merged | contact_nl.py |
 | contact.gain | str | дефолт Config ("secant") | secant, linear (нелин. контакт КТН, v0.6.3) | contact_nl.py |
+| contact.mor_anderson | int | дефолт Config (0) | 0..20 — окно проекц. Андерсона внешнего цикла МОР (0 — выкл., оптимум 3–8; > 20 отклоняется — вырожденный МНК разваливает итерацию; v0.6.5) | contact_nl.py |
 | contact.zone | таблица | вся Ω | геометрия зоны препятствия | dispatch.py |
 | [contact.gap] kind | str | — | const, plane, paraboloid, steps (поле Δ(x,y), v0.3) | dispatch.py |
 | contact.gap.value | float | — | > 0 (const: алиас скалярного gap) | dispatch.py |
 | contact.gap.a, b, c | float | — | plane: Δ = a·x + b·y + c (>0 на основании) | dispatch.py |
 | contact.gap.r_curv, cx, cy, apex | float | cx=cy=0 | paraboloid: Δ = apex + ((x−cx)²+(y−cy)²)/(2·r_curv) | dispatch.py |
 | contact.gap.base, [[zones]] | float, массив | — | steps: base + зоны (геометрия + value > 0) | dispatch.py |
-| contact.force | float | — | > 0: силовой штамп, ∫r dΩ = force (v0.3) | dispatch.py |
+| contact.force | float | — | > 0: силовой режим ∫r dΩ = force — штамп (v0.3) или нелинейная ПАРА (прижатие, ищется начальный зазор z; v0.6.5) | dispatch.py |
 | contact.target | str | "foundation" | foundation, plate2 (пара пластин, v0.3) | dispatch.py |
 | [plate2] bc, load | секции | — (обяз. при target=plate2) | как у первой пластины | dispatch.py |
 | [plate2] geometry, model, discretization | секции | от первой | как у первой пластины | dispatch.py |
@@ -142,9 +143,9 @@ figures = true
 | Комбинация | Решение |
 |---|---|
 | theory = ktn_full + bc.type = soft_hinge + kind ∉ {circle, ellipse, rectangle, annulus} | ошибка: граничный член §3.5 — квадратура ∂Ω; область с входящим углом (L/compose) — v0.7 |
-| contact.enabled + theory = ktn_full/karman + bc = soft_hinge (пара или kind ∉ {circle,ellipse,rectangle,annulus}) | ошибка: контакт на шарнире — одиночная пластина без входящего угла (§4) |
+| contact.enabled + theory = ktn_full/karman + bc = soft_hinge + kind ∉ {circle,ellipse,rectangle,annulus} | ошибка: контакт на шарнире — без входящего угла (§4); пара на шарнире (звёздная область) ПОДДЕРЖАНА (v0.6.5) |
 | contact.enabled + theory = ktn_full/karman + load.type ≠ uniform | ошибка: нелинейный контакт — равномерная нагрузка (§4) |
-| contact.enabled + theory = ktn_full/karman + force + target = plate2 | ошибка: силовое управление ПАРОЙ — v0.7 (одиночная пластина — поддержано) |
+| contact.force + target = plate2 + классическая пара | ошибка: силовое управление парой — только нелинейная пара karman \| ktn_full (v0.6.5); для неё force = суммарное усилие прижатия ∫r, ищется начальный зазор z (z < 0 — натяг); рабочая область — умеренное прижатие (глубокий натяг — понятный отказ) |
 | contact.scheme / contact.gain без нелинейного контакта | ошибка: ключи осмысленны только при theory = karman/ktn_full + contact |
 | verify.reference = analytic + geometry.kind = compose | ошибка: используйте mms \| fem \| none |
 | verify.cross_1d + неосесимметричная постановка | ошибка: cross_1d — только circle/annulus с равномерной нагрузкой |
@@ -163,9 +164,9 @@ figures = true
 `compose` — конструктор (см. #compose). Граница всюду задаётся R-функцией
 ω(x, y): ω > 0 внутри, ω = 0 на границе.
 
-Замечание по контакту на эллипсе: линейные теории (`classic`, `ktn_linear`)
-допускают `clamped` И `soft_hinge` (в т.ч. контакт); полная КТН (`ktn_full`) и
-нелинейный контакт — только `clamped` (см. §model, §contact). `ellipse` — вид
+Замечание по контакту на эллипсе: ВСЕ теории допускают `clamped` И `soft_hinge`
+(эллипс — звёздная область, граничный член §3.5 полной КТН собирается; в т.ч.
+нелинейный контакт и пара, см. §model, §contact). `ellipse` — вид
 ВЕРХНЕГО уровня, не примитив `compose` (ограда compose-языка неизменна).
 
 ## compose
@@ -211,8 +212,14 @@ kind = rectangle): каждой стороне x1|x2|y1|y2 назначаетс�
 обобщённая перерезывающая Кирхгофа V_n = 0 — естественные условия).
 Правило жёстких смещений: набор сторон обязан исключать ядро {1, x, y} —
 не менее ОДНОЙ clamped либо не менее ДВУХ hinge; FFFF и SFFF отклоняются
-валидатором. Контакт и КТН-теории (`ktn_linear`/`ktn_full`) при mixed
-(в т.ч. free) — направление развития (валидатор отклоняет с пояснением).
+валидатором. Теории: `classic` (линейный Кирхгоф, v0.3; стороны clamped |
+hinge | free) и **`karman`** (геометрически-нелинейный, v0.6.5 — структура
+`∏(сторона)^{2|1}·Φ` + мембранная связь Фёппля–Кармана; линейный предел
+совпадает с классическим рядом Леви машинно; стороны только clamped | hinge —
+free-стороны нелинейной теории не верифицированы и отклоняются, аудит v0.6.5).
+`ktn_full` со смешанными КУ (граничный член §3.5 на шарнирных сторонах) и
+КОНТАКТ при mixed — направление развития v0.7+ (валидатор отклоняет
+с пояснением).
 
 ```toml
 [bc]
@@ -305,8 +312,9 @@ L, кольцо, compose); изгибные КУ `clamped`/`soft_hinge`. Пол�
 (квадратура ∂Ω) и реализована для `circle`/`ellipse`/`rectangle`/`annulus`
 (область с входящим углом L/compose — v0.7). Контакт для нелинейных теорий:
 одиночная пластина — на защемлении (любая R-область) ИЛИ мягком шарнире
-(вышеуказанные формы), позиционный ИЛИ силовой (`force`); пара — на защемлении,
-позиционный; равномерная нагрузка (v0.6.3, §contact).
+(вышеуказанные формы), позиционный ИЛИ силовой (`force`); пара — защемление
+ЛИБО мягкий шарнир (звёздные формы), позиционная ЛИБО силовая (`force` —
+прижатие ∫r = P, v0.6.5); равномерная нагрузка (§contact).
 
 **CLI-переопределение.** Флаги `plate-solve`/`plate-verify` `--theory`
 (`classic | karman | ktn_linear | ktn_full`) и `--inplane-bc`
@@ -420,14 +428,20 @@ gain = "secant"
 реакция приходит на нижнюю грань (q⁻₁ = r), у нижней — на верхнюю (q⁺₂ = r);
 fields.npz содержит обе шестёрки σ (вторая — с суффиксом «2»).
 
-**Нелинейная пара МОР+КТН (v0.6.3).** При `theory = karman | ktn_full` (ОБЕ
-пластины — одна нелинейная теория) пара маршрутизируется в
-`contact_nl.NonlinearTwoPlateMOR`: реакция определяется СОВМЕСТНО двумя
-нелинейными решателями, условие непроникания — на ЛИЦЕВЫХ прогибах
-`u_c1 − u_c2 ≤ z` (§9.2). Требуется ОБЩАЯ квадратура (одна планформа, один Q),
-защемление и равномерная нагрузка обеих пластин; без `force`. Смешанные
-(`{classic, ktn_full}`) и `ktn_linear` пары — направление развития v0.7.
-Силовое управление парой — тоже v0.7.
+**Нелинейная пара МОР+КТН (v0.6.3; расширена v0.6.5).** При
+`theory = karman | ktn_full` (ОБЕ пластины — одна нелинейная теория) пара
+маршрутизируется в `contact_nl.NonlinearTwoPlateMOR`: реакция определяется
+СОВМЕСТНО двумя нелинейными решателями, условие непроникания — на ЛИЦЕВЫХ
+прогибах `u_c1 − u_c2 ≤ z` (§9.2). Требуется ОБЩАЯ квадратура (одна планформа,
+один Q) и равномерная нагрузка обеих пластин. Кромки: защемление (любая
+R-область) либо МЯГКИЙ ШАРНИР (звёздные circle/ellipse/rectangle/annulus;
+`[plate2.bc]` уважается, v0.6.5). СИЛОВОЕ управление парой (`force = P`,
+v0.6.5): P — суммарное усилие прижатия ∫r; ищется НАЧАЛЬНЫЙ зазор `z`
+(`z < 0` — натяг) продолжением по `z` с тёплым стартом + brentq;
+`Result.force_total`/`Result.level` заполняются. Рабочая область — умеренное
+прижатие (`z*` вблизи касания); глубокий натяг — понятный отказ с советом
+уменьшить `force`. Смешанные (`{classic, ktn_full}`) и `ktn_linear` пары —
+направление развития v0.7.
 
 ```toml
 [contact]

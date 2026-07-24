@@ -53,7 +53,8 @@ def test_plate2_schema():
     p = Problem.from_dict(d)
     assert p.contact.target == "plate2" and p.plate2.bc.type == "clamped"
     assert p.contact.gap == 0.0                       # Δ=0 — касание, допустимо
-    # [plate2] без target — ошибка; target без секции — ошибка; force — отложен
+    # [plate2] без target — ошибка; target без секции — ошибка; force для
+    # КЛАССИЧЕСКОЙ пары — ошибка (нелинейная пара поддержана, v0.6.5)
     bad = copy.deepcopy(d)
     bad["contact"]["target"] = "foundation"
     with pytest.raises(CaseError, match="plate2"):
@@ -65,7 +66,7 @@ def test_plate2_schema():
     bad3 = copy.deepcopy(d)
     bad3["contact"]["force"] = 0.5
     del bad3["contact"]["gap"]
-    with pytest.raises(CaseError, match="направление развития"):
+    with pytest.raises(CaseError, match="КЛАССИЧЕСКОЙ"):
         Problem.from_dict(bad3)
 
 

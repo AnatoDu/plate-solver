@@ -114,6 +114,10 @@ class Domain:
     def __init__(self, omega_expr: sp.Expr, bbox: BBox):
         self.omega_expr: sp.Expr = sp.sympify(omega_expr)
         self.bbox: BBox = tuple(map(float, bbox))
+        # ТОЧНЫЙ полигон границы (кортеж вершин CCW/CW) — задаётся фабриками
+        # полигональных областей (make_L); None ⇒ граница не полигональная.
+        # Используется пореберной квадратурой ∂Ω (ktn_full._polygon_boundary_quad).
+        self.polygon: tuple | None = None
         self.dx_expr: sp.Expr = sp.diff(self.omega_expr, x)
         self.dy_expr: sp.Expr = sp.diff(self.omega_expr, y)
         # Компиляция в numpy (точный символьный градиент → быстрые функции).
@@ -219,7 +223,13 @@ def make_L(side: float = 1.0, cut: float = 0.5) -> Domain:
         raise ValueError("Требуется 0 < cut < side.")
     r1 = rectangle_expr(0.0, side, 0.0, cut)   # нижняя полоса
     r2 = rectangle_expr(0.0, cut, 0.0, side)   # левая полоса
-    return Domain(r_or(r1, r2), (0.0, side, 0.0, side))
+    dom = Domain(r_or(r1, r2), (0.0, side, 0.0, side))
+    # ТОЧНЫЙ полигон границы (CCW; входящий угол — (cut, cut)): точная
+    # пореберная квадратура ∂Ω для граничного члена §3.5 (ktn_full.py) —
+    # контурная квадратура у реентрантного угла не сходится (NOTES §9).
+    dom.polygon = ((0.0, 0.0), (side, 0.0), (side, cut),
+                   (cut, cut), (cut, side), (0.0, side))
+    return dom
 
 
 # --------------------------------------------------------------------------- #

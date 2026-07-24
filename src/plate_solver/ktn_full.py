@@ -43,7 +43,7 @@ import scipy.linalg as sla
 
 from .basis import ChebyshevBasis
 from .faces import FaceParams
-from .membrane import KarmanPlate, _w_structure
+from .membrane import KarmanPlate
 from .quadrature import interior_nodes
 
 
@@ -121,13 +121,56 @@ def _contour_boundary_quad(domain, ngrid: int = 800):
     return Xb, Yb, ds, -gxv / gn, -gyv / gn
 
 
-def _boundary_quad(domain):
-    r"""Квадратура по ∂Ω граничного члена §3.5: звёздная (быстрая) ИЛИ контурная.
+def _polygon_boundary_quad(polygon, n_per_edge: int = 48, eps: float = 1e-8):
+    r"""ТОЧНАЯ пореберная квадратура ∂Ω полигональной области (§3.5, v0.6.5).
 
-    Центр bbox в материале (``ω > 0``) ⇒ область звёздная от центра
+    Гаусс–Лежандр НА КАЖДОМ ребре полигона с ТОЧНЫМИ нормалями (константа на
+    ребре) и точным элементом длины. Узлы никогда не попадают в вершины
+    (в т.ч. во входящий угол) — подынтегральное выражение кусочно-гладко по
+    рёбрам, квадратура сходится спектрально. Контурная квадратура (contourpy)
+    у РЕЕНТРАНТНОГО угла не сходится (~5 % дрейфа вклада §3.5 при измельчении;
+    NOTES §9) — точный полигон снимает проблему (тождество Грина на L:
+    7.8e-2 → ~2e-4, пол внутренней квадратуры).
+
+    Точки вычисления сдвигаются ВНУТРЬ на ``eps·diam`` вдоль нормали:
+    производные R-функции ω имеют устранимые 0/0 РОВНО на линиях границы
+    (сдвиг обходит их; подынтегральное выражение непрерывно до границы,
+    погрешность O(eps)). ``ds`` и нормали — точные (без сдвига).
+    """
+    verts = np.asarray(polygon, float)
+    x_, y_ = verts[:, 0], verts[:, 1]
+    if np.sum(x_ * np.roll(y_, -1) - np.roll(x_, -1) * y_) < 0.0:
+        verts = verts[::-1]                                  # ориентация CCW
+    diam = float(np.max(verts.max(axis=0) - verts.min(axis=0)))
+    t, wt = np.polynomial.legendre.leggauss(n_per_edge)
+    Xb, Yb, ds, nx, ny = [], [], [], [], []
+    for a, b in zip(verts, np.roll(verts, -1, axis=0), strict=True):
+        e = b - a
+        ln = float(np.hypot(e[0], e[1]))
+        tang = e / ln
+        n = (tang[1], -tang[0])                              # CCW ⇒ внешняя нормаль
+        s = 0.5 * (t + 1.0) * ln
+        Xb.append(a[0] + tang[0] * s - eps * diam * n[0])
+        Yb.append(a[1] + tang[1] * s - eps * diam * n[1])
+        ds.append(0.5 * ln * wt)
+        nx.append(np.full(n_per_edge, n[0]))
+        ny.append(np.full(n_per_edge, n[1]))
+    return (np.concatenate(Xb), np.concatenate(Yb), np.concatenate(ds),
+            np.concatenate(nx), np.concatenate(ny))
+
+
+def _boundary_quad(domain):
+    r"""Квадратура по ∂Ω граничного члена §3.5: полигон | звёздная | контурная.
+
+    Точный полигон границы (``domain.polygon``, напр. L-форма) ⇒ пореберная
+    квадратура (единственная сходящаяся у входящего угла). Иначе: центр bbox
+    в материале (``ω > 0``) ⇒ область звёздная от центра
     (круг/эллипс/прямоугольник) — быстрая бисекция; иначе (кольцо,
     многосвязная) — общая контурная квадратура.
     """
+    poly = getattr(domain, "polygon", None)
+    if poly is not None:
+        return _polygon_boundary_quad(poly)
     x0, x1, y0, y1 = domain.bbox
     cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
     if float(domain.omega(cx, cy)) > 0.0:
@@ -181,14 +224,15 @@ class KTNPlate(KarmanPlate):
     """
 
     def __init__(self, domain, basis, quad, cfg, *, bc_type="clamped",
-                 inplane_bc="immovable", include_ktn_terms=True):
-        super().__init__(domain, basis, quad, cfg, bc_type=bc_type, inplane_bc=inplane_bc)
+                 inplane_bc="immovable", include_ktn_terms=True, sides=None):
+        super().__init__(domain, basis, quad, cfg, bc_type=bc_type,
+                         inplane_bc=inplane_bc, sides=sides)
         self._include_ktn = bool(include_ktn_terms)
         self._faces = FaceParams(E=cfg.E, nu=cfg.nu, h=cfg.h)
         self._h_psi_sq = self._faces.h_psi_sq
         self._h_star_sq = self._faces.h_star_sq
         # вторые производные структуры прогиба (для члена B) — в узлах квадратуры
-        _, _, _, pxx, pyy, pxy = _w_structure(domain, basis, quad.x, quad.y, self._power)
+        _, _, _, pxx, pyy, pxy = self._wstruct(quad.x, quad.y)
         self._pxx, self._pyy, self._pxy = pxx, pyy, pxy
         self._lap_psi = pxx + pyy
         self._lap_q = None                           # Δq для члена (A); см. set_load_laplacian
@@ -199,8 +243,7 @@ class KTNPlate(KarmanPlate):
         self._bnd = None
         if self._soft_hinge_bnd:
             Xb, Yb, ds_b, nx_b, ny_b = _boundary_quad(domain)
-            _, psx_b, psy_b, pxx_b, pyy_b, pxy_b = _w_structure(
-                domain, basis, Xb, Yb, self._power)
+            _, psx_b, psy_b, pxx_b, pyy_b, pxy_b = self._wstruct(Xb, Yb)
             self._bnd = {
                 "Xb": Xb, "Yb": Yb, "ds": ds_b,
                 "pxx": pxx_b, "pyy": pyy_b, "pxy": pxy_b,
@@ -228,12 +271,12 @@ class KTNPlate(KarmanPlate):
 
     @classmethod
     def from_config(cls, domain, cfg, *, bc_type="clamped", inplane_bc="immovable",
-                    include_ktn_terms=True):
+                    include_ktn_terms=True, sides=None):
         """Собрать решатель: базис степени ``cfg.p``, квадратура ``cfg.Q``."""
         basis = ChebyshevBasis(cfg.p, domain.bbox)
         quad = interior_nodes(domain, cfg.Q)
         return cls(domain, basis, quad, cfg, bc_type=bc_type, inplane_bc=inplane_bc,
-                   include_ktn_terms=include_ktn_terms)
+                   include_ktn_terms=include_ktn_terms, sides=sides)
 
     def _ktn_regularization(self, Nx, Ny, Nxy) -> np.ndarray:
         r"""Матрица члена (B): ``M_2[j,i] = ∫ (N:∇∇ψ_i)·Δψ_j dA`` (несимметрична)."""

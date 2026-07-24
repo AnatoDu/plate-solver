@@ -433,15 +433,39 @@ class NonlinearTwoPlateMOR:
             return w
         return w + c_curv * (cw @ solver._lap_psi)
 
-    def solve(self) -> NonlinearTwoPlateResult:
-        """Совмещённый МОР для пары пластин (§9.2): по одному шагу Пикара на пластину."""
+    def set_gap(self, gap) -> None:
+        r"""Обновить зазор ``z`` БЕЗ пересборки решателей (силовой режим, §9.2).
+
+        Свободные решения и усиление ``β_eff`` от ``z`` не зависят — при
+        поиске уровня прижатия (brentq по ``z``) объект строится ОДИН раз,
+        между уровнями меняется только зазор (+ тёплый старт ``solve``).
+        """
+        q = self.s1.quad
+        if np.ndim(gap) == 0:
+            self._gap_f = float(gap)
+        else:
+            g = np.asarray(gap, dtype=float)
+            if g.shape != (q.x.size,):
+                raise ValueError("Поле зазора: ожидается массив длины числа узлов квадратуры.")
+            self._gap_f = g[self.fmask]
+
+    def solve(self, *, c1_0=None, c2_0=None, r0=None) -> NonlinearTwoPlateResult:
+        """Совмещённый МОР для пары пластин (§9.2): по одному шагу Пикара на пластину.
+
+        ``c1_0, c2_0, r0`` — тёплый старт (прогибы и реакция предыдущего
+        уровня зазора в силовом режиме); ``None`` ⇒ свободные решения и r=0.
+        """
         q = self.s1.quad
         theta = float(self.cfg.karman_relax)
-        c1, c2 = self._free1.cw.copy(), self._free2.cw.copy()
-        r = np.zeros(q.x.size)
+        c1 = self._free1.cw.copy() if c1_0 is None else np.asarray(c1_0, float).copy()
+        c2 = self._free2.cw.copy() if c2_0 is None else np.asarray(c2_0, float).copy()
+        r = np.zeros(q.x.size) if r0 is None else np.asarray(r0, float).copy()
         hist: list[float] = []
         converged = False
         it = 0
+        m_win = int(getattr(self.cfg, "mor_anderson", 0))   # проекц. Андерсон по r (0 — выкл.)
+        g_hist: list[np.ndarray] = []
+        f_hist: list[np.ndarray] = []
         for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
             w1_old, w2_old = c1 @ self.s1._psi, c2 @ self.s2._psi
             b1 = self.s1._load_vector(self.f1 - r)          # пластина 1: f₁ − r
@@ -451,12 +475,31 @@ class NonlinearTwoPlateMOR:
             u1 = self._face(self.s1, c1, self._c1)
             u2 = self._face(self.s2, c2, self._c2)
             u = u1 - u2                                     # сближение лицевых
-            r_new = r.copy()
-            r_new[self.fmask] = r[self.fmask] + self.beta_eff * (u[self.fmask] - self._gap_f)
-            np.maximum(r_new, 0.0, out=r_new)               # проекция r ≥ 0
-            r_new[~self.fmask] = 0.0
-            # совместная сходимость: реакция И оба прогиба стабилизировались
-            res = max(_rel_change(q.w, r_new, r),
+            g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
+            g[self.fmask] = r[self.fmask] + self.beta_eff * (u[self.fmask] - self._gap_f)
+            np.maximum(g, 0.0, out=g)                       # проекция r ≥ 0
+            g[~self.fmask] = 0.0
+            f = g - r
+            g_hist.append(g)
+            f_hist.append(f)
+            if m_win == 0 or len(f_hist) == 1:
+                r_new = g
+            else:                                           # проекционный Андерсон (§4.1)
+                mk = min(m_win, len(f_hist) - 1)
+                dF = np.column_stack([f_hist[-j] - f_hist[-j - 1] for j in range(1, mk + 1)])
+                dG = np.column_stack([g_hist[-j] - g_hist[-j - 1] for j in range(1, mk + 1)])
+                gamma = np.linalg.lstsq(dF, f, rcond=None)[0]
+                r_new = g - dG @ gamma
+                np.maximum(r_new, 0.0, out=r_new)
+                r_new[~self.fmask] = 0.0
+            if len(f_hist) > m_win + 1:
+                del g_hist[0], f_hist[0]
+            # совместная сходимость: реакция (по неподвижной точке ‖F(r)−r‖) И оба
+            # прогиба стабилизировались. При m_win=0 совпадает с прежней ‖r_new−r‖.
+            g_scale = float(np.sqrt(np.sum(q.w * g**2)))
+            res_r = (float(np.sqrt(np.sum(q.w * f**2))) / g_scale
+                     if g_scale > 0.0 else float(np.sqrt(np.sum(q.w * f**2))))
+            res = max(res_r,
                       _rel_change(q.w, c1 @ self.s1._psi, w1_old),
                       _rel_change(q.w, c2 @ self.s2._psi, w2_old))
             hist.append(res)

@@ -26,7 +26,15 @@ import sympy as sp
 from plate_solver import theory
 from plate_solver.config import Config
 from plate_solver.contact_nl import NonlinearContactMOR
-from plate_solver.geometry import make_annulus, make_circle, make_ellipse, make_rectangle, x, y
+from plate_solver.geometry import (
+    make_annulus,
+    make_circle,
+    make_ellipse,
+    make_L,
+    make_rectangle,
+    x,
+    y,
+)
 from plate_solver.ktn_full import KTNPlate, _boundary_quad, _star_boundary_quad
 from plate_solver.ktn_solver import KTNSolver
 from plate_solver.membrane import KarmanPlate
@@ -65,12 +73,17 @@ def _green_identity_residual(dom, Q=300):
 
 @pytest.mark.parametrize("dom", [make_circle(1.0), make_ellipse(1.5, 1.0),
                                  make_rectangle(-1.0, 1.0, -0.7, 0.7),
-                                 make_annulus(1.0, 0.4)])
+                                 make_annulus(1.0, 0.4),
+                                 make_L(1.0, 0.5)])
 def test_green_identity_boundary_term_correct_and_necessary(dom):
     """Граничный член верен (с ним ~ точность квадратуры) и НЕОБХОДИМ (без него ~50%).
 
-    Проверено на круге, эллипсе, прямоугольнике (выпуклые углы) И кольце
-    (МНОГОСВЯЗНАЯ, контурная квадратура ловит оба контура ω=0).
+    Проверено на круге, эллипсе, прямоугольнике (выпуклые углы), кольце
+    (МНОГОСВЯЗНАЯ, контурная квадратура) и L-ФОРМЕ (входящий угол — ТОЧНАЯ
+    пореберная полигонная квадратура, v0.6.5; контурная там давала ~8 %).
+    Тождество — с ГЛАДКИМИ полями; сингулярность структуры ω¹ у реентрантного
+    угла — отдельный вопрос (NOTES §9), из-за которого ktn_full+soft_hinge на L
+    остаётся закрытым валидатором.
     """
     rel_with, rel_without = _green_identity_residual(dom)
     assert rel_with < 5e-3                                # держится до точности квадратуры
@@ -83,7 +96,7 @@ def test_boundary_normal_derivative_zero_for_clamped():
     dom = make_circle(1.0)
     ktn = KTNPlate.from_config(dom, _cfg(), bc_type="clamped")
     Xb, Yb, _ds, nx, ny = _star_boundary_quad(dom, 1000)
-    from plate_solver.ktn_full import _w_structure
+    from plate_solver.membrane import _w_structure
     _, psx, psy, *_ = _w_structure(dom, ktn.basis, Xb, Yb, 2)   # power = 2 (защемление)
     dpsidn = psx * nx + psy * ny
     assert np.max(np.abs(dpsidn)) < 1e-9
@@ -213,3 +226,50 @@ def test_boundary_quad_dispatch_star_vs_contour():
     Xb, _Yb, ds, _nx, _ny = _boundary_quad(ann)
     assert Xb.size > 0
     assert abs(ds.sum() - 2 * np.pi * (1.0 + 0.4)) / (2 * np.pi * 1.4) < 5e-3
+
+
+# --------------------------------------------------------------------------- #
+#  Полигонная квадратура ∂Ω (v0.6.5): сертификация §3.5 на выпуклых углах
+# --------------------------------------------------------------------------- #
+def test_polygon_quadrature_certifies_rectangle_boundary_term():
+    """§3.5 на прямоугольнике: полигонная квадратура = звёздная (выпуклые углы сходятся).
+
+    ТОЧНАЯ пореберная квадратура кладёт узлы Гаусса сколь угодно близко к углам —
+    совпадение со звёздной (др. распределение узлов) сертифицирует, что вклад
+    §3.5 у ВЫПУКЛЫХ углов сходится (у РЕЕНТРАНТНОГО угла L — расходится, поэтому
+    ktn_full+soft_hinge на L закрыт валидатором; NOTES §9).
+    """
+    cfg = _cfg(h=0.1, q0=6.0 * 0.1**4, p=8, Q=96)
+    dom_star = make_rectangle(-1.0, 1.0, -0.6, 0.6)
+    r_star = KTNPlate.from_config(dom_star, cfg, bc_type="soft_hinge",
+                                  inplane_bc="immovable").solve_uniform()
+    dom_poly = make_rectangle(-1.0, 1.0, -0.6, 0.6)
+    dom_poly.polygon = ((-1.0, -0.6), (1.0, -0.6), (1.0, 0.6), (-1.0, 0.6))
+    r_poly = KTNPlate.from_config(dom_poly, cfg, bc_type="soft_hinge",
+                                  inplane_bc="immovable").solve_uniform()
+    assert abs(r_star.w_max - r_poly.w_max) / r_star.w_max < 1e-6
+
+
+def test_polygon_quadrature_stable_under_refinement_on_rectangle():
+    """§3.5 (прямоугольник) стабилен при измельчении пореберной квадратуры.
+
+    Узлы n/edge = 16 → 96 приближаются к углам в 36 раз — эффект §3.5 не дрейфует
+    (7 значащих цифр в прототипе; здесь ворота 1e-5). Контраст: у входящего угла
+    L дрейф ~5 % — доказательство, что проблема L в СЛАБОЙ ФОРМЕ, не в квадратуре.
+    """
+    import plate_solver.ktn_full as kf
+
+    cfg = _cfg(h=0.1, q0=6.0 * 0.1**4, p=8, Q=96)
+    orig = kf._polygon_boundary_quad
+    vals = []
+    try:
+        for n in (16, 96):
+            dom = make_rectangle(-1.0, 1.0, -0.6, 0.6)
+            dom.polygon = ((-1.0, -0.6), (1.0, -0.6), (1.0, 0.6), (-1.0, 0.6))
+            kf._polygon_boundary_quad = (
+                lambda poly, n_per_edge=n, eps=1e-8: orig(poly, n_per_edge, eps))
+            vals.append(KTNPlate.from_config(dom, cfg, bc_type="soft_hinge",
+                                             inplane_bc="immovable").solve_uniform().w_max)
+    finally:
+        kf._polygon_boundary_quad = orig
+    assert abs(vals[1] - vals[0]) / vals[0] < 1e-5

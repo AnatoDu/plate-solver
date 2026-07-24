@@ -8,7 +8,7 @@ tests/test_doc_matrix.py).
 
 | секция.ключ | описано | покрыто (cases) |
 |---|---|---|
-| bc.sides | CASE_SCHEMA.md | rect_cfff.toml, rect_cfff.toml, rect_levy.toml |
+| bc.sides | CASE_SCHEMA.md | karman_rect_mixed.toml, rect_cfff.toml, rect_cfff.toml |
 | bc.type | API.md, CASE_SCHEMA.md, README.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.bc | API.md, CASE_SCHEMA.md, MIGRATION.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.contact | ALGORITHMS.md, API.md, ARCHITECTURE.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
@@ -18,18 +18,19 @@ tests/test_doc_matrix.py).
 | case.load | ALGORITHMS.md, API.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.model | CASE_SCHEMA.md, MIGRATION.md, THEORY.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | case.output | CASE_SCHEMA.md, THEORY.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
-| case.plate2 | CASE_SCHEMA.md | ktn_full_two_plates_contact.toml, two_plates_equal.toml, two_plates_equal.toml |
+| case.plate2 | CASE_SCHEMA.md | ktn_full_two_plates_contact.toml, ktn_full_two_plates_force.toml, ktn_full_two_plates_soft_hinge.toml |
 | case.verify | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | contact.beta | ALGORITHMS.md, API.md, CASE_SCHEMA.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
 | contact.enabled | CASE_SCHEMA.md, dispatch_flow.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
-| contact.force | ALGORITHMS.md, API.md, CASE_SCHEMA.md | ktn_full_rect_mms.toml, lshape_stamp_force.toml, lshape_stamp_force.toml |
+| contact.force | ALGORITHMS.md, API.md, CASE_SCHEMA.md | ktn_full_rect_mms.toml, ktn_full_two_plates_force.toml, lshape_stamp_force.toml |
 | contact.gain | ALGORITHMS.md, API.md, ARCHITECTURE.md | ellipse_soft_hinge_ktn_full_contact.toml, karman_circle_clamped_contact.toml, ktn_full_circle_clamped_contact.toml |
 | contact.gap | API.md, CASE_SCHEMA.md, README.md | annulus_soft.toml, annulus_soft.toml, annulus_soft_contact.toml |
 | contact.gap_factor | CASE_SCHEMA.md, dispatch_flow.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
 | contact.max_iter | API.md, CASE_SCHEMA.md, NOTES.md | annulus_soft_contact.toml, circle_clamped_contact.toml, circle_clamped_contact.toml |
+| contact.mor_anderson | CASE_SCHEMA.md | ktn_full_two_plates_force.toml, ktn_full_two_plates_soft_hinge.toml |
 | contact.scheme | ALGORITHMS.md, API.md, CASE_SCHEMA.md | ellipse_clamped_ktn_full_contact.toml, ellipse_soft_hinge_ktn_full_contact.toml, karman_circle_clamped_contact.toml |
 | contact.stop | API.md, CASE_SCHEMA.md, THEORY.md | test_contact.py, test_contact_face.py, test_doc_policy.py |
-| contact.target | CASE_SCHEMA.md | ktn_full_two_plates_contact.toml, two_plates_equal.toml, two_plates_equal.toml |
+| contact.target | CASE_SCHEMA.md | ktn_full_two_plates_contact.toml, ktn_full_two_plates_force.toml, ktn_full_two_plates_soft_hinge.toml |
 | contact.tol | ALGORITHMS.md, API.md, CASE_SCHEMA.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | contact.zone | API.md, CASE_SCHEMA.md, dispatch_flow.md | lshape_stamp.toml, lshape_stamp.toml, lshape_stamp_force.toml |
 | discretization.Q | API.md, CASE_SCHEMA.md, NOTES.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
@@ -54,7 +55,7 @@ tests/test_doc_matrix.py).
 | model.inplane_bc | API.md, CASE_SCHEMA.md, MIGRATION.md | karman_circle_clamped_immovable.toml, karman_circle_clamped_newton.toml, karman_circle_hencky_limit.toml |
 | model.karman_max_iter | CASE_SCHEMA.md | ellipse_clamped_ktn_full_contact.toml, ellipse_soft_hinge_ktn_full.toml, ellipse_soft_hinge_ktn_full_contact.toml |
 | model.karman_method | CASE_SCHEMA.md | karman_circle_clamped_newton.toml |
-| model.karman_relax | CASE_SCHEMA.md | karman_circle_hencky_limit.toml |
+| model.karman_relax | CASE_SCHEMA.md | karman_circle_hencky_limit.toml, ktn_full_two_plates_force.toml, ktn_full_two_plates_soft_hinge.toml |
 | model.karman_tol | CASE_SCHEMA.md | ellipse_clamped_ktn_full_contact.toml, ellipse_soft_hinge_ktn_full.toml, ellipse_soft_hinge_ktn_full_contact.toml |
 | model.ktn_method | CASE_SCHEMA.md | ktn_full_circle_clamped_newton.toml |
 | model.n_load_steps | ALGORITHMS.md, API.md, CASE_SCHEMA.md | ellipse_clamped_ktn_full_contact.toml, ellipse_soft_hinge_ktn_full.toml, ellipse_soft_hinge_ktn_full_contact.toml |
@@ -163,7 +164,7 @@ tests/test_doc_matrix.py).
 | contact | `TwoPlateResult` | API.md | __init__.py, contact.py, contact_nl.py |
 | contact | `sample_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `sample_pair_fields_on_grid` | API.md | contact.py, dispatch.py |
-| contact | `solve_contact` | API.md, README.md | test_analytic_factory.py, test_face_deflection.py |
+| contact | `solve_contact` | API.md, README.md | test_analytic_factory.py, test_contact_nonlinear.py, test_face_deflection.py |
 | contact_nl | `NonlinearContactMOR` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, test_contact_face.py |
 | contact_nl | `NonlinearContactResult` | API.md | __init__.py, contact_nl.py, dispatch.py |
 | contact_nl | `NonlinearTwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py |
@@ -186,7 +187,7 @@ tests/test_doc_matrix.py).
 | geometry | `Domain` | API.md | run_ladder_mms.py, test_mms_ktn.py, test_stresses.py |
 | geometry | `circle_expr` | API.md | test_geometry_registry.py |
 | geometry | `ellipse_expr` | API.md | geometry.py |
-| geometry | `make_L` | API.md, README.md | run_clamped_lshape.py, run_ktn.py, run_lshape_contact.py |
+| geometry | `make_L` | API.md, NOTES.md, README.md | run_clamped_lshape.py, run_ktn.py, run_lshape_contact.py |
 | geometry | `make_annulus` | API.md | test_geometry_registry.py, test_multiply_connected.py, test_soft_hinge_ktn.py |
 | geometry | `make_circle` | API.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
 | geometry | `make_compose` | API.md | test_geometry_registry.py |

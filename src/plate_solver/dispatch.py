@@ -619,8 +619,9 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     elif problem.model.theory == "karman":                # геометрическая нелинейность (v0.4)
         from .membrane import KarmanPlate
 
+        sides = dict(problem.bc.sides) if problem.bc.type == "mixed" else None
         solver = KarmanPlate.from_config(dom, cfg, bc_type=problem.bc.type,
-                                         inplane_bc=problem.model.inplane_bc)
+                                         inplane_bc=problem.model.inplane_bc, sides=sides)
     elif problem.bc.type == "clamped":
         solver = ClampedPlate.from_config(dom, cfg)
     elif problem.bc.type == "mixed":                       # mixed (v0.3)
@@ -1046,6 +1047,18 @@ def _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings) -> Resul
 
     st = {"nres": None, "iters": 0, "calls": 0}
 
+    # Андерсон в силовом режиме ОТКЛЮЧАЕТСЯ: смешение истории делает останов
+    # МОР полусошедшимся квазислучайно ⇒ скаляр F(level) = ∫r − P зашумлён
+    # (~7–10 % P) и brentq садится мимо цели МОЛЧА (аудит v0.6.5). Каждый
+    # уровень здесь — свежий холодный прогон, Андерсон выигрыша и не давал.
+    if int(getattr(cfg, "mor_anderson", 0)) > 0:
+        import dataclasses
+
+        warn.append("contact.mor_anderson: отключён в силовом режиме одиночного "
+                    "штампа — смешение Андерсона зашумляет F(level) = ∫r − P и "
+                    "срывает точность brentq (аудит v0.6.5)")
+        cfg = dataclasses.replace(cfg, mor_anderson=0)
+
     def F(level: float) -> float:
         gap_val = (level + shape) if np.ndim(shape) else float(level + shape)
         nres = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
@@ -1124,8 +1137,11 @@ def _plate2_solver(problem: Problem, cfg: Config, dom, *, nonlinear_theory=None)
         from .ktn_solver import KTNSolver
 
         inplane2 = model2.inplane_bc if model2 is not None else "immovable"
+        # изгибная кромка второй пластины — из [plate2.bc] (по умолч. как у первой);
+        # для мягкого шарнира пара живёт на ОБЩЕЙ (звёздной) области, §9.2.
+        bc2 = p2.bc.type if p2.bc is not None else problem.bc.type
         solver2 = KTNSolver.from_theory_name(dom2, cfg2, nonlinear_theory,
-                                             bc_type="clamped", inplane_bc=inplane2)
+                                             bc_type=bc2, inplane_bc=inplane2)
         return solver2, cfg2, dom2
     if p2.bc.type == "clamped":
         return ClampedPlate.from_config(dom2, cfg2), cfg2, dom2
@@ -1230,6 +1246,13 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
                                advice="увеличьте Q или пересечение")
         fmask = lambda X, Y: zone_mask                          # noqa: E731
 
+    force_total = None
+    level_star = None
+    if c.force is not None:
+        if c.gap is not None or c.gap_factor is not None or c.gap_field is not None:
+            warn.append("contact.gap: зазор игнорируется в силовом режиме пары "
+                        "(force) — начальный зазор z ищется из условия ∫r = P")
+        gap_val = 0.0                               # силовой режим: z — искомый уровень
     try:
         mor = NonlinearTwoPlateMOR(solver, solver2, cfg, gap=gap_val,
                                    f1=np.full(q1.x.size, float(cfg.q0)),
@@ -1237,7 +1260,82 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
                                    gain_mode=cfg.contact_gain)
     except ValueError as e:
         raise CaseError(f"contact.target: {e} см. {_SCHEMA_DOC}#plate2") from None
-    nres = mor.solve()
+    if c.force is not None:
+        # СИЛОВОЕ управление парой (v0.6.5): задано суммарное усилие прижатия P;
+        # ищется НАЧАЛЬНЫЙ зазор z (z < 0 — натяг) из F(z) = ∫r − P = 0
+        # (монотонно убывает по z). Объект МОР строится ОДИН раз (set_gap),
+        # каждый уровень стартует ТЁПЛО с предыдущего (c1, c2, r) — иначе
+        # каждый вызов F был бы полным парным МОР с нуля (минуты вместо секунд).
+        from scipy.optimize import brentq
+
+        P = float(c.force)
+        u_free = (mor._face(solver, free1.cw, mor._c1)
+                  - mor._face(solver2, free2.cw, mor._c2))    # свободное сближение
+        fm = zone_mask if zone_mask is not None else np.ones(q1.x.size, dtype=bool)
+        z_hi = float(np.max(u_free[fm])) * (1.0 + 1e-9) + 1e-30   # касание: ∫r → 0
+        scale = max(w_scale, 1e-12)
+        state: dict = {}
+
+        def F(z: float) -> float:
+            mor.set_gap(z)
+            res_z = mor.solve(c1_0=state.get("c1"), c2_0=state.get("c2"),
+                              r0=state.get("r"))
+            if not res_z.converged:                   # затхлый тёплый старт? — холодный повтор
+                res_z = mor.solve()
+            if not res_z.converged:
+                # несошедшийся внутренний МОР сделал бы F(z) мусором и сломал
+                # brentq МОЛЧА — честный отказ с советом
+                last = (float(res_z.residual_history[-1])
+                        if res_z.residual_history.size else float("nan"))
+                raise CaseError(
+                    f"contact.force: внутренний парный МОР не сошёлся на уровне "
+                    f"z = {z:.3e} (невязка {last:.2e}). Рабочая область силового "
+                    f"режима пары — умеренное прижатие (z* вблизи касания); при "
+                    f"ГЛУБОКОМ натяге совмещённая схема не сходится — УМЕНЬШИТЕ "
+                    f"force (вторично: contact.max_iter / mor_anderson), "
+                    f"см. {_SCHEMA_DOC}#contact")
+            state.update(c1=res_z.cw1, c2=res_z.cw2, r=res_z.r_nodes, res=res_z)
+            return float(np.sum(q1.w * res_z.r_nodes)) - P
+
+        # ПРОДОЛЖЕНИЕ по z вниз (натяг растёт постепенно): каждый уровень стартует
+        # тёпло с СОСЕДНЕГО (дёшево и надёжно; дальние прыжки срывают МОР). Шаг
+        # адаптивен по секущей ∫r(z); мост найден — узкий brentq внутри него.
+        z_prev, F_prev = z_hi, -P                     # касание: ∫r = 0 (без прогона)
+        step = 0.5 * scale
+        z = z_hi - step
+        bracket = None
+        for _ in range(60):
+            F_z = F(z)
+            if F_z > 0.0:
+                bracket = (z, z_prev)
+                break
+            if F_z > F_prev:                          # секущая: расстояние до нуля
+                slope = (F_z - F_prev) / (z_prev - z)
+                need = F_z / slope if slope > 0.0 else step
+                step = min(2.0 * step, max(0.5 * step, 1.2 * abs(need)))
+            z_prev, F_prev = z, F_z
+            if z_hi - z > 50.0 * scale:               # защитный потолок натяга
+                break
+            z = z - step
+        if bracket is None:
+            raise CaseError(
+                f"contact.force: получено P = {P:g} — прижатие не достигается при "
+                f"натяге до 50·w_scale (уменьшите force), см. {_SCHEMA_DOC}#contact")
+        level_star = brentq(F, bracket[0], bracket[1], xtol=1e-7 * scale)
+        F(level_star)
+        nres = state["res"]
+        gap_val = float(level_star)                  # для комплементарности/вывода
+        force_total = float(np.sum(q1.w * nres.r_nodes))
+        # Паре Андерсон НЕОБХОДИМ (без него совмещённый цикл не сходится), но его
+        # смешение зашумляет F(z) — контролируем фактическое замыкание ∫r = P
+        # и честно предупреждаем при отклонении (аудит v0.6.5).
+        if abs(force_total - P) / P > 2e-2:
+            warn.append(
+                f"contact.force: замыкание ∫r = P с точностью "
+                f"{abs(force_total - P) / P:.1%} (шум смешения Андерсона в F(z)); "
+                "для точнее — уменьшите contact.tol или mor_anderson")
+    else:
+        nres = mor.solve()
     if not nres.converged:
         last = float(nres.residual_history[-1]) if nres.residual_history.size else float("nan")
         warn.append(
@@ -1264,7 +1362,8 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
     res = Result(problem=problem, config=cfg, w_max=float(nres.w1_max),
                  cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w1g,
                  warnings=tuple(warn), contact=cres, delta=delta_repr,
-                 w_free_max=w_free1, w_max_classic=float(nres.w1_max))
+                 w_free_max=w_free1, w_max_classic=float(nres.w1_max),
+                 force_total=force_total, level=level_star)
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", nres.cw1)
     object.__setattr__(res, "_plate2_ref", solver2)

@@ -163,8 +163,12 @@ def test_force_nonlinear_contact_supported_single(tmp_path):
     _case(tmp_path, theory="ktn_full", gap="", force="force = 1.0e-3")   # валидация проходит
 
 
-def test_reject_force_nonlinear_pair(tmp_path):
-    """Силовое управление ПАРОЙ пластин — направление развития (отказ)."""
+def test_force_nonlinear_pair_validates(tmp_path):
+    """Силовое управление НЕЛИНЕЙНОЙ парой — ПОДДЕРЖАНО (v0.6.5, снят задел v0.7).
+
+    Валидация проходит; счёт и замыкание ∫r = P — ``test_force_pair_reaches_target``.
+    Классическая пара с force остаётся отклонённой (``test_force_pair_classic_rejected``).
+    """
     text = """
 [geometry]
 kind = "circle"
@@ -196,8 +200,8 @@ Q = 48
 """
     p = tmp_path / "case.toml"
     p.write_text(text, encoding="utf-8")
-    with pytest.raises(CaseError, match="force"):
-        Problem.from_toml(str(p))
+    prob = Problem.from_toml(str(p))                    # валидация ПРОХОДИТ
+    assert prob.contact.force == pytest.approx(1.0e-3)
 
 
 @pytest.mark.big
@@ -345,9 +349,51 @@ def test_reject_mixed_theory_pair(tmp_path):
         _pair(tmp_path, theory="ktn_full", theory2="classic")
 
 
-def test_reject_soft_hinge_pair(tmp_path):
-    with pytest.raises(CaseError, match="clamped"):
-        _pair(tmp_path, theory="ktn_full", bc2="soft_hinge")
+def test_soft_hinge_pair_supported_on_star(tmp_path):
+    """Пара на МЯГКОМ ШАРНИРЕ (звёздная область) — ПОДДЕРЖАНА (v0.6.5, снят задел v0.7)."""
+    res = dispatch.solve(_pair(tmp_path, theory="ktn_full", bc2="soft_hinge"))
+    c = res.contact
+    assert (c.r_nodes >= -1e-9).all() and c.r_nodes.max() > 0.0   # инвариант r ≥ 0
+
+
+def test_reject_soft_hinge_pair_on_reentrant(tmp_path):
+    """Пара на мягком шарнире на области с ВХОДЯЩИМ углом (L) — отклонена (§3.5 — v0.7)."""
+    text = """
+[geometry]
+kind = "L"
+side = 1.0
+cut = 0.5
+[bc]
+type = "soft_hinge"
+[load]
+type = "uniform"
+q0 = 0.01
+[model]
+theory = "ktn_full"
+h = 0.2
+[contact]
+enabled = true
+target = "plate2"
+gap = 0.0
+[plate2]
+[plate2.bc]
+type = "soft_hinge"
+[plate2.load]
+type = "uniform"
+q0 = 0.0
+[plate2.model]
+theory = "ktn_full"
+[discretization]
+p = 8
+Q = 64
+grid_n = 16
+[verify]
+reference = "none"
+"""
+    p = tmp_path / "pair_L.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(CaseError, match="circle | ellipse | rectangle | annulus"):
+        Problem.from_toml(str(p))
 
 
 def test_reject_scheme_without_nonlinear_contact(tmp_path):
@@ -419,3 +465,235 @@ def test_mor_anderson_default_off_unchanged():
     """mor_anderson=0 (дефолт) — прежний проекционный шаг число-в-число (регресс не сдвинут)."""
     from plate_solver.config import Config
     assert Config().mor_anderson == 0                     # выключено по умолчанию
+
+
+# --------------------------------------------------------------------------- #
+#  Силовое управление ПАРОЙ пластин (v0.6.5, снят задел v0.7)
+# --------------------------------------------------------------------------- #
+_FORCE_PAIR = """
+[geometry]
+kind = "circle"
+a = 1.0
+[bc]
+type = "clamped"
+[load]
+type = "uniform"
+q0 = 0.01
+[model]
+theory = "{theory}"
+E = 1.0
+nu = 0.3
+h = 0.2
+n_load_steps = 2
+karman_max_iter = 80
+karman_tol = 1.0e-6
+karman_relax = 0.7
+[contact]
+enabled = true
+target = "plate2"
+force = {force}
+scheme = "merged"
+beta = 1.5
+max_iter = 4000
+tol = 3.0e-4
+mor_anderson = 5
+[plate2]
+[plate2.bc]
+type = "clamped"
+[plate2.load]
+type = "uniform"
+q0 = 0.0
+[plate2.model]
+theory = "{theory2}"
+{e2}
+[discretization]
+p = 7
+Q = 48
+grid_n = 16
+[verify]
+reference = "none"
+"""
+
+
+def _force_pair(tmp_path, *, force, theory="ktn_full", theory2=None, e2=""):
+    text = _FORCE_PAIR.format(theory=theory, theory2=theory2 or theory,
+                              force=force, e2=e2)
+    p = tmp_path / "force_pair.toml"
+    p.write_text(text, encoding="utf-8")
+    return dispatch.solve(Problem.from_toml(str(p)))
+
+
+def test_force_pair_reaches_target(tmp_path):
+    """Силовая пара: ∫r = P (поиск начального зазора z продолжением + brentq).
+
+    Умеренное прижатие (рабочая область силового режима, z* вблизи касания);
+    глубокий натяг — за пределами совмещённой схемы (честный CaseError).
+    """
+    P = 2.0e-3
+    res = _force_pair(tmp_path, force=P)
+    assert res.force_total is not None and res.level is not None
+    assert abs(res.force_total - P) / P < 3e-2            # ∫r = P (допуск brentq+МОР)
+    assert res.contact.r_nodes.max() > 0.0                # прижатие реально
+    assert (res.contact.r_nodes >= -1e-12).all()          # инвариант r ≥ 0
+
+
+@pytest.mark.big
+def test_force_pair_rigid_second_reduces_to_single_stamp(tmp_path):
+    """Редукция: жёсткая 2-я пластина ⇒ силовая пара = силовой одиночный штамп.
+
+    Та же сила P, плоский интерфейс: прогиб и найденный уровень совпадают с
+    одиночным силовым режимом (`_solve_contact_force_nonlinear`) до остаточной
+    податливости жёсткой пластины (< 2 %).
+    """
+    P = 3.0e-3
+    rp = _force_pair(tmp_path, force=P, e2="E = 1.0e12")
+    single = f"""
+[geometry]
+kind = "circle"
+a = 1.0
+[bc]
+type = "clamped"
+[load]
+type = "uniform"
+q0 = 0.01
+[model]
+theory = "ktn_full"
+E = 1.0
+nu = 0.3
+h = 0.2
+n_load_steps = 2
+karman_max_iter = 80
+karman_tol = 1.0e-6
+karman_relax = 0.7
+[contact]
+enabled = true
+force = {P}
+scheme = "merged"
+beta = 1.5
+max_iter = 4000
+tol = 3.0e-4
+mor_anderson = 5
+[discretization]
+p = 7
+Q = 48
+grid_n = 16
+[verify]
+reference = "none"
+"""
+    p = tmp_path / "single_force.toml"
+    p.write_text(single, encoding="utf-8")
+    rs = dispatch.solve(Problem.from_toml(str(p)))
+    assert abs(rp.w_max - rs.w_max) / rs.w_max < 2e-2
+    assert abs(rp.level - rs.level) / abs(rs.level) < 2e-2
+
+
+def test_force_pair_classic_rejected(tmp_path):
+    """Силовое управление КЛАССИЧЕСКОЙ парой — не поддержано (ясная ошибка)."""
+    text = _FORCE_PAIR.format(theory="classic", theory2="classic",
+                              force=1.0e-3, e2="")
+    text = text.replace("n_load_steps = 2\n", "").replace(
+        "karman_max_iter = 80\n", "").replace("karman_tol = 1.0e-6\n", "").replace(
+        "karman_relax = 0.7\n", "").replace('scheme = "merged"\n', "").replace(
+        "mor_anderson = 5\n", "")
+    p = tmp_path / "classic_force_pair.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(CaseError, match="КЛАССИЧЕСКОЙ"):
+        Problem.from_toml(str(p))
+
+
+# --------------------------------------------------------------------------- #
+#  Ограждения аудита v0.6.5: mor_anderson-потолок, nested-пара, plate2-mixed
+# --------------------------------------------------------------------------- #
+def test_mor_anderson_cap_and_anchor(tmp_path):
+    """Окно Андерсона > 20 — отказ (большие окна разваливают МОР, аудит v0.6.5);
+    misuse-ошибка анкерована на реально заданный ключ."""
+    d = {
+        "geometry": {"kind": "circle", "a": 1.0},
+        "bc": {"type": "clamped"},
+        "load": {"type": "uniform", "q0": 0.01},
+        "model": {"theory": "karman", "h": 0.2},
+        "contact": {"enabled": True, "gap_factor": 0.5, "mor_anderson": 50},
+        "discretization": {"p": 6, "Q": 48, "grid_n": 16},
+        "verify": {"reference": "none"},
+    }
+    with pytest.raises(CaseError, match="mor_anderson"):
+        Problem.from_dict(d)                               # потолок 20
+    d["contact"]["mor_anderson"] = 5
+    d["model"]["theory"] = "classic"
+    with pytest.raises(CaseError, match="contact.mor_anderson"):
+        Problem.from_dict(d)                               # анкер — заданный ключ
+
+
+def test_nested_scheme_rejected_for_pair(tmp_path):
+    """scheme = nested для ПАРЫ — отказ (пара реализована только совмещённым циклом)."""
+    text = _PAIR.format(theory="ktn_full", theory2="ktn_full", bc2="clamped",
+                        e2="").replace('scheme = "merged"', 'scheme = "nested"')
+    p = tmp_path / "pair_nested.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(CaseError, match="merged"):
+        Problem.from_toml(str(p))
+
+
+def test_plate2_mixed_bc_rejected(tmp_path):
+    """[plate2.bc] mixed — отказ (сторонние sides молча игнорировались бы, аудит v0.6.5)."""
+    d = {
+        "geometry": {"kind": "rectangle", "x1": -1.0, "x2": 1.0, "y1": -0.6, "y2": 0.6},
+        "bc": {"type": "clamped"},
+        "load": {"type": "uniform", "q0": 1.0},
+        "model": {"theory": "classic"},
+        "contact": {"enabled": True, "target": "plate2", "gap": 0.0},
+        "plate2": {"bc": {"type": "mixed", "sides": [
+            {"side": "x1", "type": "hinge"}, {"side": "x2", "type": "hinge"},
+            {"side": "y1", "type": "clamped"}, {"side": "y2", "type": "clamped"}]},
+            "load": {"type": "uniform", "q0": 0.0}},
+        "discretization": {"p": 6, "Q": 48, "grid_n": 16},
+        "verify": {"reference": "none"},
+    }
+    with pytest.raises(CaseError, match="plate2.bc"):
+        Problem.from_dict(d)
+
+
+@pytest.mark.big
+def test_force_stamp_anderson_disabled_and_closure_kept(tmp_path):
+    """Силовой штамп + mor_anderson: Андерсон отключается (шумит F(level)) — замыкание машинное.
+
+    Аудит v0.6.5: с Андерсоном brentq садился мимо цели на 7–11 % МОЛЧА;
+    теперь ∫r = P восстановлено + честное предупреждение.
+    """
+    P = 8.0e-4
+    text = f"""
+[geometry]
+kind = "circle"
+a = 1.0
+[bc]
+type = "clamped"
+[load]
+type = "uniform"
+q0 = 0.01
+[model]
+theory = "ktn_full"
+h = 0.2
+n_load_steps = 2
+karman_max_iter = 80
+karman_tol = 1e-6
+[contact]
+enabled = true
+force = {P}
+scheme = "merged"
+gain = "linear"
+beta = 1.5
+max_iter = 1500
+tol = 3e-4
+mor_anderson = 5
+[discretization]
+p = 6
+Q = 48
+grid_n = 16
+[verify]
+reference = "none"
+"""
+    p = tmp_path / "case.toml"
+    p.write_text(text, encoding="utf-8")
+    res = dispatch.solve(Problem.from_toml(str(p)))
+    assert abs(res.force_total - P) / P < 1e-3            # замыкание НЕ зашумлено
+    assert any("mor_anderson" in w for w in res.warnings)  # честное предупреждение

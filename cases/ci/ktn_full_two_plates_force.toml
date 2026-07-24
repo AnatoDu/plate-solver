@@ -1,0 +1,54 @@
+# CI: СИЛОВОЕ управление нелинейной парой пластин (v0.6.5, снят задел v0.7).
+# Задано суммарное усилие прижатия P = ∫r; ищется начальный зазор z (z < 0 —
+# натяг) продолжением по z с тёплым стартом + brentq. Рабочая область —
+# умеренное прижатие (z* вблизи касания); глубокий натяг отклоняется с советом.
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 0.01
+
+[model]
+theory = "ktn_full"
+E = 1.0
+nu = 0.3
+h = 0.2
+n_load_steps = 2
+karman_max_iter = 80
+karman_tol = 1.0e-6
+karman_relax = 0.7
+
+[contact]
+enabled = true
+target = "plate2"
+force = 2.0e-3            # P = ∫r — суммарное усилие прижатия пары
+scheme = "merged"
+beta = 1.5
+max_iter = 4000
+tol = 3.0e-4
+mor_anderson = 5          # ускорение внешнего цикла (силовой режим = много решений)
+
+[plate2]
+[plate2.bc]
+type = "clamped"
+[plate2.load]
+type = "uniform"
+q0 = 0.0
+[plate2.model]
+theory = "ktn_full"
+
+[discretization]
+p = 7
+Q = 48
+grid_n = 16
+
+[verify]
+reference = "none"        # замыкание ∫r = P — tests/test_contact_nonlinear.py
+
+[output]
+dir = "results/ci/ktn_full_two_plates_force"

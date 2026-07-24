@@ -99,6 +99,15 @@ def _w_structure(domain, basis: ChebyshevBasis, X, Y, power: int):
         g, gx, gy, gxx, gyy, gxy = om, omx, omy, omxx, omyy, omxy
     else:                                                    # pragma: no cover
         raise ValueError(f"power структуры w: ожидалось 1 | 2, получено {power}")
+    return _psi_from_g(basis, X, Y, g, gx, gy, gxx, gyy, gxy)
+
+
+def _psi_from_g(basis: ChebyshevBasis, X, Y, g, gx, gy, gxx, gyy, gxy):
+    r"""Собрать ``ψ = g·T`` и производные из полей структуры ``g`` и базиса ``T``.
+
+    Общая часть для ЛЮБОЙ структуры (``g = ω^m`` защемления/шарнира ЛИБО
+    произведение сторон ``∏ω_c²·∏ω_h`` смешанных КУ) — правило Лейбница.
+    """
     T = basis.values(X, Y)
     Tx, Ty = basis.grads(X, Y)
     lapT = _basis_second_derivs(basis, X, Y)                 # T_xx + T_yy
@@ -117,6 +126,54 @@ def _w_structure(domain, basis: ChebyshevBasis, X, Y, power: int):
     psi_yy = gyy * T + 2.0 * gy * Ty + g * Tyy
     psi_xy = gxy * T + gx * Ty + gy * Tx + g * Txy
     return psi, psi_x, psi_y, psi_xx, psi_yy, psi_xy
+
+
+# --------------------------------------------------------------------------- #
+#  Смешанные КУ прямоугольника: структура w = ∏ (сторона)^{2|1|0} · T (v0.6.5)
+# --------------------------------------------------------------------------- #
+_MIXED_POWER = {"clamped": 2, "hinge": 1, "free": 0}
+
+
+def _mixed_g_scalar(bbox, sides, X, Y) -> np.ndarray:
+    r"""Множитель структуры ``g = ∏ (сторона)^{2|1|0}`` смешанных КУ в точках.
+
+    Стороны прямоугольника: ``clamped`` → фактор², ``hinge`` → фактор¹,
+    ``free`` → без фактора. При всех clamped ``g = ω²`` (защемление), при всех
+    hinge ``g = ω`` (мягкий шарнир) — редукции ТОЧНЫ по построению.
+    """
+    x1, x2, y1, y2 = bbox
+    X = np.asarray(X, float)
+    Y = np.asarray(Y, float)
+    g = np.ones_like(X + Y)
+    for side, base in (("x1", X - x1), ("x2", x2 - X), ("y1", Y - y1), ("y2", y2 - Y)):
+        g = g * base ** _MIXED_POWER[sides[side]]
+    return g
+
+
+def _w_structure_mixed(basis: ChebyshevBasis, X, Y, sides):
+    r"""Структура ``ψ = g·T`` смешанных КУ прямоугольника (``g`` — символьно, §20)."""
+    import sympy as sp
+
+    from .geometry import x as sx
+    from .geometry import y as sy
+
+    x1, x2, y1, y2 = basis.bbox
+    factors = {"x1": sx - x1, "x2": x2 - sx, "y1": sy - y1, "y2": y2 - sy}
+    g_expr = sp.Integer(1)
+    for side, f in factors.items():
+        g_expr *= f ** _MIXED_POWER[sides[side]]
+    X = np.asarray(X, float)
+    Y = np.asarray(Y, float)
+
+    def ev(expr):
+        v = np.asarray(sp.lambdify((sx, sy), expr, "numpy")(X, Y), float)
+        return v if v.shape == X.shape else np.broadcast_to(v, X.shape).astype(float)
+
+    g = ev(g_expr)
+    gx, gy = ev(sp.diff(g_expr, sx)), ev(sp.diff(g_expr, sy))
+    gxx, gyy = ev(sp.diff(g_expr, sx, 2)), ev(sp.diff(g_expr, sy, 2))
+    gxy = ev(sp.diff(g_expr, sx, sy))
+    return _psi_from_g(basis, X, Y, g, gx, gy, gxx, gyy, gxy)
 
 
 def _disp_structure(domain, basis: ChebyshevBasis, X, Y, immovable: bool):
@@ -220,20 +277,28 @@ class KarmanPlate:
     """
 
     def __init__(self, domain, basis, quad, cfg, *, bc_type="clamped",
-                 inplane_bc="immovable"):
-        if bc_type not in _W_POWER:
-            raise ValueError(f"bc_type: ожидалось {' | '.join(_W_POWER)}, получено {bc_type!r}")
+                 inplane_bc="immovable", sides=None):
+        if bc_type == "mixed":
+            if sides is None:
+                raise ValueError("bc_type='mixed' требует sides "
+                                 "(словарь {x1,x2,y1,y2: clamped|hinge|free})")
+            self._power = None
+        elif bc_type not in _W_POWER:
+            raise ValueError(f"bc_type: ожидалось {' | '.join((*_W_POWER, 'mixed'))}, "
+                             f"получено {bc_type!r}")
+        else:
+            self._power = _W_POWER[bc_type]
         if inplane_bc not in ("immovable", "movable"):
             raise ValueError(f"inplane_bc: ожидалось immovable | movable, получено {inplane_bc!r}")
         self.domain, self.basis, self.quad, self.cfg = domain, basis, quad, cfg
         self.bc_type, self.inplane_bc = bc_type, inplane_bc
+        self.sides = dict(sides) if sides is not None else None
         self.D = float(cfg.D)
         self.nu = float(cfg.nu)
-        self._power = _W_POWER[bc_type]
         X, Y, W = quad.x, quad.y, quad.w
         self._W = W
         # -- структура прогиба и билинейная форма изгиба (полная, NOTES §20) -- #
-        psi, psi_x, psi_y, pxx, pyy, pxy = _w_structure(domain, basis, X, Y, self._power)
+        psi, psi_x, psi_y, pxx, pyy, pxy = self._wstruct(X, Y)
         self._psi, self._psi_x, self._psi_y = psi, psi_x, psi_y
         lap = pxx + pyy
         S = (lap * W) @ lap.T - (1.0 - self.nu) * (
@@ -267,11 +332,13 @@ class KarmanPlate:
         self._n = n
 
     @classmethod
-    def from_config(cls, domain, cfg, *, bc_type="clamped", inplane_bc="immovable"):
+    def from_config(cls, domain, cfg, *, bc_type="clamped", inplane_bc="immovable",
+                    sides=None):
         """Собрать решатель: базис степени ``cfg.p``, квадратура ``cfg.Q``."""
         basis = ChebyshevBasis(cfg.p, domain.bbox)
         quad = interior_nodes(domain, cfg.Q)
-        return cls(domain, basis, quad, cfg, bc_type=bc_type, inplane_bc=inplane_bc)
+        return cls(domain, basis, quad, cfg, bc_type=bc_type, inplane_bc=inplane_bc,
+                   sides=sides)
 
     # -- подзадачи итерации ------------------------------------------------- #
     def _membrane_forces(self, wx, wy):
@@ -555,20 +622,32 @@ class KarmanPlate:
         """Число обусловленности линейного оператора изгиба ``cond(D·S_bend)``."""
         return float(np.linalg.cond(self.D * self._S_bend))
 
+    def _wstruct(self, X, Y):
+        """Структура ``ψ`` и производные: ``ω^m`` (clamped/soft_hinge) или ∏сторон (mixed)."""
+        if self.bc_type == "mixed":
+            return _w_structure_mixed(self.basis, X, Y, self.sides)
+        return _w_structure(self.domain, self.basis, X, Y, self._power)
+
+    def _gscalar(self, X, Y) -> np.ndarray:
+        """Множитель структуры ``g`` (только он — для восстановления прогиба)."""
+        if self.bc_type == "mixed":
+            return _mixed_g_scalar(self.basis.bbox, self.sides, X, Y)
+        return self.domain.omega(X, Y) ** self._power
+
     def deflection(self, c, X, Y) -> np.ndarray:
-        """Прогиб ``w = ω^m·Σ c_k T_k`` в точках (X, Y)."""
+        """Прогиб ``w = g·Σ c_k T_k`` в точках (X, Y) (``g`` — множитель структуры)."""
         Phi = self.basis.values(X, Y)
         v = np.tensordot(np.asarray(c, float), Phi, axes=(0, 0))
-        return self.domain.omega(X, Y) ** self._power * v
+        return self._gscalar(X, Y) * v
 
     def deflection_at_quad(self, c) -> np.ndarray:
         """Прогиб в узлах квадратуры через кэш структуры ψ (один GEMV)."""
         return np.tensordot(np.asarray(c, float), self._psi, axes=(0, 0))
 
     def structure_at(self, X, Y) -> np.ndarray:
-        """Матрица структуры ψ_k = ω^m·T_k в произвольных точках: (N, len(X))."""
+        """Матрица структуры ψ_k = g·T_k в произвольных точках: (N, len(X))."""
         Phi = self.basis.values(X, Y)
-        return self.domain.omega(X, Y) ** self._power * Phi
+        return self._gscalar(X, Y) * Phi
 
     def moments_at(self, c, X, Y):
         r"""Изгибные моменты (Mx, My, Mxy) в точках (§6: поле для viz).
@@ -579,9 +658,7 @@ class KarmanPlate:
         (:attr:`KarmanResult.Nx` …); здесь — изгибная составляющая напряжений.
         """
         c = np.asarray(c, float)
-        _, _, _, pxx, pyy, pxy = _w_structure(self.domain, self.basis,
-                                               np.asarray(X, float),
-                                               np.asarray(Y, float), self._power)
+        _, _, _, pxx, pyy, pxy = self._wstruct(np.asarray(X, float), np.asarray(Y, float))
         wxx = np.tensordot(c, pxx, axes=(0, 0))
         wyy = np.tensordot(c, pyy, axes=(0, 0))
         wxy = np.tensordot(c, pxy, axes=(0, 0))
@@ -599,9 +676,7 @@ class KarmanPlate:
         immovable = self._membrane_immovable
         _, Px, Py = _disp_structure(self.domain, self.basis, np.asarray(X, float),
                                     np.asarray(Y, float), immovable)
-        _, wx_s, wy_s, _, _, _ = _w_structure(self.domain, self.basis,
-                                              np.asarray(X, float),
-                                              np.asarray(Y, float), self._power)
+        _, wx_s, wy_s, _, _, _ = self._wstruct(np.asarray(X, float), np.asarray(Y, float))
         cu = np.asarray(cu, float)
         cv = np.asarray(cv, float)
         cw = np.asarray(cw, float)

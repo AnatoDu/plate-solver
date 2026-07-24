@@ -1,0 +1,49 @@
+# CI: геометрически-нелинейный Карман со СМЕШАННЫМИ КУ прямоугольника (v0.6.5).
+# Структура w = ∏(сторона)^{2|1|0}·Φ обобщает защемление/шарнир на смешанные кромки
+# (здесь x-стороны шарнир, y-стороны защемление — SCSC/Леви). Линейный предел =
+# классический ряд Леви машинно (tests/test_mixed_karman.py); тут — нелинейный режим.
+[geometry]
+kind = "rectangle"
+x1 = -1.0
+x2 = 1.0
+y1 = -0.6
+y2 = 0.6
+
+[bc]
+type = "mixed"
+[[bc.sides]]
+side = "x1"
+type = "hinge"
+[[bc.sides]]
+side = "x2"
+type = "hinge"
+[[bc.sides]]
+side = "y1"
+type = "clamped"
+[[bc.sides]]
+side = "y2"
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 3.0                 # P̄ = 3 ⇒ умеренно большой прогиб (мембранное ужесточение)
+
+[model]
+theory = "karman"
+inplane_bc = "immovable"
+E = 1.0
+nu = 0.3
+h = 1.0
+karman_tol = 1.0e-8
+karman_max_iter = 200
+
+[discretization]
+p = 10
+Q = 140
+grid_n = 24
+
+[verify]
+reference = "none"       # эталон — классический mixed (Леви) в тесте; здесь маршрут
+
+[output]
+dir = "results/ci/karman_rect_mixed"

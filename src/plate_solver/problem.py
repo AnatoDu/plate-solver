@@ -267,6 +267,7 @@ class ContactSpec:
     # нелинейный контакт МОР+КТН (theory = karman | ktn_full, v0.6.3):
     scheme: str | None = None           # nested | merged (§4.2); None ⇒ дефолт Config
     gain: str | None = None             # secant | linear (§4.1); None ⇒ дефолт Config
+    mor_anderson: int | None = None     # окно проекц. Андерсона внешнего цикла (v0.6.5)
 
 
 @dataclass(frozen=True)
@@ -453,6 +454,8 @@ class Problem:
             kw["contact_scheme"] = self.contact.scheme
         if self.contact.gain is not None:
             kw["contact_gain"] = self.contact.gain
+        if self.contact.mor_anderson is not None:
+            kw["mor_anderson"] = self.contact.mor_anderson
         for attr in ("p", "Q", "grid_n"):
             v = getattr(self.discretization, attr)
             if v is not None:
@@ -784,7 +787,8 @@ def _parse_contact(data) -> ContactSpec:
         _fail("contact", data, "таблица (секция TOML)", "contact")
     _require_keys("contact", data,
                   {"enabled", "target", "gap", "gap_factor", "force", "beta",
-                   "max_iter", "tol", "stop", "zone", "scheme", "gain"},
+                   "max_iter", "tol", "stop", "zone", "scheme", "gain",
+                   "mor_anderson"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
     target = data.get("target", "foundation")
@@ -810,6 +814,14 @@ def _parse_contact(data) -> ContactSpec:
     gain = data.get("gain")
     if gain is not None and gain not in CONTACT_GAINS:
         _fail("contact.gain", gain, " | ".join(CONTACT_GAINS), "contact")
+    mor_anderson = _integer("contact", data, "mor_anderson", "contact", minimum=0)
+    if mor_anderson is not None and mor_anderson > 20:
+        # большие окна разваливают проекционный Андерсон (вырожденный МНК по
+        # почти коллинеарной истории ⇒ дикая экстраполяция; аудит v0.6.5:
+        # окно 50 РАСХОДИТСЯ там, где 0–20 сходятся). Рабочий диапазон 3–8.
+        _fail("contact.mor_anderson", mor_anderson,
+              "целое 0..20 (окно памяти проекционного Андерсона; оптимум 3–8, "
+              "большие окна вырождают МНК и разваливают итерацию)", "contact")
     zone = _parse_geometry("contact.zone", data["zone"]) if "zone" in data else None
     force = _number("contact", data, "force", "contact", positive=True)
     if enabled and force is None:
@@ -824,7 +836,7 @@ def _parse_contact(data) -> ContactSpec:
                        gap_factor=gap_factor,
                        gap_field=gap_field, force=force, beta=beta,
                        max_iter=max_iter, tol=tol, stop=stop, zone=zone,
-                       scheme=scheme, gain=gain)
+                       scheme=scheme, gain=gain, mor_anderson=mor_anderson)
 
 
 def _parse_plate2(data) -> Plate2Spec:
@@ -931,8 +943,12 @@ def _validate_cross(p: Problem) -> None:
             _fail("contact.enabled", True,
                   "false при bc.type = mixed (контакт при смешанных КУ — "
                   "направление развития)", "bc")
-        if p.model.theory == "ktn_linear":
-            _fail("model.theory", "ktn_linear", "classic при bc.type = mixed (v0.3)", "bc")
+        if p.model.theory in ("ktn_linear", "ktn_full"):
+            _fail("model.theory", p.model.theory,
+                  "classic или karman при bc.type = mixed (смешанные КУ: линейный "
+                  "Кирхгоф v0.3 либо геом.-нелинейный Карман v0.6.5; ktn_full со "
+                  "смешанными КУ — граничный член §3.5 на шарнирных сторонах, v0.7+)",
+                  "bc")
     if p.model.theory in NONLINEAR_THEORIES:
         # Рамки нелинейных теорий: любые области, включая неканонические и
         # МНОГОСВЯЗНЫЕ (L, кольцо, compose — R-операции над ω, §5). Изгибные КУ
@@ -944,10 +960,24 @@ def _validate_cross(p: Problem) -> None:
         # rectangle (звёздные) и annulus (многосвязная, контурная квадратура).
         # L/compose с вырезом — реентрантный угол рвёт точность (v0.7).
         star = p.geometry.kind in ("circle", "ellipse", "rectangle", "annulus")
-        if p.bc.type not in ("clamped", "soft_hinge"):
+        # Карман допускает и СМЕШАННЫЕ КУ (только rectangle — проверено выше);
+        # полная КТН — пока clamped | soft_hinge (§3.5 на шарнирных сторонах — v0.7+).
+        allowed_bc = (("clamped", "soft_hinge", "mixed") if th == "karman"
+                      else ("clamped", "soft_hinge"))
+        if p.bc.type not in allowed_bc:
             _fail("bc.type", p.bc.type,
-                  f"clamped | soft_hinge при theory = {th} (мембранная связь на "
-                  "смешанных КУ — направление развития)", "bc")
+                  f"{' | '.join(allowed_bc)} при theory = {th} (мембранная связь на "
+                  "смешанных КУ — Карман поддержан, ktn_full — v0.7+)", "bc")
+        if th == "karman" and p.bc.type == "mixed":
+            # СВОБОДНЫЕ стороны для нелинейного Кармана не верифицированы
+            # (глубоко-нелинейный режим free+movable не сходится Пикаром —
+            # аудит v0.6.5); поддержаны clamped | hinge (сертификат Леви).
+            free_sides = [s for s, t in p.bc.sides if t == "free"]
+            if free_sides:
+                _fail(f"bc.sides[{free_sides[0]}]", "free",
+                      "clamped | hinge при theory = karman (free-стороны "
+                      "нелинейной теории — направление развития; для free "
+                      "используйте theory = classic)", "bc")
         if th == "ktn_full" and p.bc.type == "soft_hinge" and not star:
             _fail("geometry.kind", p.geometry.kind,
                   "circle | ellipse | rectangle | annulus при theory = ktn_full и "
@@ -957,38 +987,53 @@ def _validate_cross(p: Problem) -> None:
             # Нелинейный контакт МОР+КТН (contact_nl.py): позиционный штамп/
             # основание. Защемление — любая R-область; мягкий шарнир — только
             # circle | ellipse (звёздная квадратура ∂Ω для граничного члена §3.5).
-            if p.bc.type == "soft_hinge" and (not star or p.contact.target == "plate2"):
+            if p.bc.type == "soft_hinge" and not star:
                 _fail("bc.type", p.bc.type,
-                      f"clamped при theory = {th} с контактом (мягкий шарнир — "
-                      "только одиночная пластина circle | ellipse | rectangle | "
-                      "annulus; пара и прочие — направление развития v0.7)", "bc")
-            if p.contact.force is not None and p.contact.target == "plate2":
-                _fail("contact.force", p.contact.force,
-                      f"отсутствие force при theory = {th} для ПАРЫ (силовое "
-                      "управление парой — направление развития v0.7)", "contact")
+                      f"clamped при theory = {th} с контактом на НЕзвёздной области "
+                      "(мягкий шарнир — circle | ellipse | rectangle | annulus, "
+                      "одиночная ИЛИ пара; область с входящим углом L/compose — "
+                      "направление развития v0.7)", "bc")
             if p.load.type != "uniform":
                 _fail("load.type", p.load.type,
                       f"uniform при theory = {th} с контактом (нелинейный контакт "
                       "МОР+КТН реализован для равномерной нагрузки, §4)", "load")
     # Ключи схемы/усиления осмысленны ТОЛЬКО для нелинейного контакта (§4).
-    if (p.contact.scheme is not None or p.contact.gain is not None) and not (
-            p.contact.enabled and p.model.theory in NONLINEAR_THEORIES):
-        _fail("contact.scheme", p.contact.scheme or p.contact.gain,
-              "заданы только при contact.enabled = true и theory = karman | "
-              "ktn_full (схема композиции / нормировка усиления нелинейного "
-              "контакта МОР+КТН, §4.1–4.2)", "contact")
+    _nl_keys = {"scheme": p.contact.scheme, "gain": p.contact.gain,
+                "mor_anderson": p.contact.mor_anderson}
+    _nl_given = {k: v for k, v in _nl_keys.items() if v is not None}
+    if _nl_given and not (p.contact.enabled and p.model.theory in NONLINEAR_THEORIES):
+        k0 = sorted(_nl_given)[0]                    # анкер — реально заданный ключ
+        _fail(f"contact.{k0}", _nl_given[k0],
+              "задан только при contact.enabled = true и theory = karman | "
+              "ktn_full (схема композиции / нормировка усиления / ускорение "
+              "Андерсона нелинейного контакта МОР+КТН, §4.1–4.2)", "contact")
     c = p.contact
     if c.target == "plate2" or p.plate2 is not None:
         if not (c.enabled and c.target == "plate2" and p.plate2 is not None):
             _fail("contact.target", c.target,
                   "plate2 вместе с секцией [plate2] (и contact.enabled=true)",
                   "plate2")
-        if c.force is not None:
-            _fail("contact.force", c.force,
-                  "отсутствие force — силовое управление парой пластин "
-                  "отложено (направление развития)", "plate2")
         theories = {p.model.theory,
                     p.plate2.model.theory if p.plate2.model is not None else "classic"}
+        # Силовое управление парой (∫r = P через поиск начального зазора z,
+        # v0.6.5) — только НЕЛИНЕЙНАЯ пара; классическая пара — позиционная.
+        if c.force is not None and not (theories <= {"karman"} or theories <= {"ktn_full"}):
+            _fail("contact.force", c.force,
+                  "отсутствие force для КЛАССИЧЕСКОЙ пары (силовое управление "
+                  "парой — нелинейная пара karman | ktn_full, v0.6.5)", "plate2")
+        if p.plate2.bc.type not in ("clamped", "soft_hinge"):
+            # mixed для ВТОРОЙ пластины не реализован ни в одном тракте пары:
+            # классический тихо игнорировал бы [[plate2.bc.sides]] (аудит v0.6.5)
+            _fail("plate2.bc", p.plate2.bc.type,
+                  "clamped | soft_hinge (смешанные КУ второй пластины пары — "
+                  "направление развития)", "plate2")
+        if c.scheme == "nested":
+            # пара реализована ТОЛЬКО совмещённым циклом (по шагу Пикара на
+            # пластину + шаг МОР); "nested" тихо игнорировался бы (аудит v0.6.5)
+            _fail("contact.scheme", "nested",
+                  "merged для пары пластин (вложенной схемы пары нет — "
+                  "совместная реакция определяется совмещённым циклом, §9.2)",
+                  "plate2")
         if theories == {"classic"}:
             pass                                    # классическая пара (v0.3)
         elif theories <= {"karman"} or theories <= {"ktn_full"}:
@@ -997,10 +1042,16 @@ def _validate_cross(p: Problem) -> None:
             # решатель, NonlinearTwoPlateMOR); защемление и равномерная нагрузка
             # (для первой — общий нелинейный блок выше). Условие непроникания —
             # на лицевых прогибах u_c1 − u_c2 ≤ z (§9.2).
-            if p.plate2.bc.type != "clamped":
+            star2 = p.geometry.kind in ("circle", "ellipse", "rectangle", "annulus")
+            if p.plate2.bc.type not in ("clamped", "soft_hinge"):
                 _fail("plate2.bc", p.plate2.bc.type,
-                      f"clamped при theory = {p.model.theory} (нелинейная пара "
-                      "МОР+КТН реализована на защемлении, §9.2)", "plate2")
+                      f"clamped | soft_hinge при theory = {p.model.theory} "
+                      "(нелинейная пара МОР+КТН, §9.2)", "plate2")
+            if p.plate2.bc.type == "soft_hinge" and not star2:
+                _fail("plate2.bc", p.plate2.bc.type,
+                      "clamped на НЕзвёздной области (мягкий шарнир пары — только "
+                      "circle | ellipse | rectangle | annulus; L/compose — v0.7)",
+                      "plate2")
             if p.plate2.load.type != "uniform":
                 _fail("plate2.load", p.plate2.load.type,
                       f"uniform при theory = {p.model.theory} (нелинейная пара — "
