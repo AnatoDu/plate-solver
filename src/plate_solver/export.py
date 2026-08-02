@@ -29,30 +29,57 @@ def forces_on_grid(result) -> dict[str, np.ndarray]:
     """
     Mx, My, Mxy = result.moments_on_grid()
     out: dict[str, np.ndarray] = {"Mx": Mx, "My": My, "Mxy": Mxy}
-    # мембранные усилия N — опционально (только решатели с сигнатурой (c, X, Y):
-    # единый KTNSolver; у KarmanPlate/KTNPlate сигнатура иная — тогда пропускаем).
+    # Мембранные усилия N (нелинейные теории): полный набор коэффициентов
+    # (cu, cv, cw) лежит в ``result._karman_ref`` (изгиб — KarmanResult;
+    # нелинейный контакт — снимок с восстановленной мембраной, v0.6.6);
+    # восстановление поля — membrane_forces_at(cu, cv, cw, X, Y).
     plate = getattr(result, "_plate_ref", None)
-    c = getattr(result, "_c_ref", None)
+    kr = getattr(result, "_karman_ref", None)
     mem = getattr(plate, "membrane_forces_at", None)
-    if mem is not None and c is not None:
+    cu = getattr(kr, "cu", None)
+    cv = getattr(kr, "cv", None)
+    cw = getattr(kr, "cw", None)
+    if mem is not None and cu is not None and cv is not None and cw is not None:
         Xg, Yg = result.Xg, result.Yg
         inside = _inside_mask(result)
-        try:
-            nx, ny, nxy = mem(c, Xg[inside], Yg[inside])
-        except (TypeError, ValueError):
-            nx = None                                    # иная сигнатура ⇒ N не экспортируем
-        if nx is not None:
-            Nx = np.full(Xg.shape, np.nan)
-            Ny = np.full(Xg.shape, np.nan)
-            Nxy = np.full(Xg.shape, np.nan)
-            Nx[inside], Ny[inside], Nxy[inside] = nx, ny, nxy
-            out["Nx"], out["Ny"], out["Nxy"] = Nx, Ny, Nxy
+        nx, ny, nxy = mem(cu, cv, cw, Xg[inside], Yg[inside])
+        Nx = np.full(Xg.shape, np.nan)
+        Ny = np.full(Xg.shape, np.nan)
+        Nxy = np.full(Xg.shape, np.nan)
+        Nx[inside], Ny[inside], Nxy[inside] = nx, ny, nxy
+        out["Nx"], out["Ny"], out["Nxy"] = Nx, Ny, Nxy
     # обобщённая реакция контакта — в спутнике result.contact
     contact = getattr(result, "contact", None)
     r_grid = getattr(contact, "r_grid", None) if contact is not None else None
     if r_grid is not None:
         out["r"] = np.asarray(r_grid, float)
     return out
+
+
+def shear_forces_on_grid(result) -> dict[str, np.ndarray]:
+    r"""Перерезывающие силы ``Qx, Qy`` на фоновой сетке из РАВНОВЕСИЯ моментов.
+
+    .. math:: Q_x = \partial M_x/\partial x + \partial M_{xy}/\partial y,\qquad
+              Q_y = \partial M_{xy}/\partial x + \partial M_y/\partial y.
+
+    Производные — конечные разности на фоновой сетке (``np.gradient``,
+    порядок O(Δ²)); поля моментов спектрально гладкие, поэтому точность
+    задаёт сетка ``grid_n`` (увеличивается ключом ``--grid``/``regrid``).
+    Верификация — точное осесимметричное равновесие ``Q_r = q·r/2`` при
+    равномерной нагрузке (не зависит от КУ; tests/test_fields_export.py).
+    Вне Ω (и в приграничном поясе шириной в шаг сетки, где разности
+    пересекают границу) — ``NaN``.
+    """
+    Mx, My, Mxy = result.moments_on_grid()
+    x = np.asarray(result.Xg[0, :], float)
+    y = np.asarray(result.Yg[:, 0], float)
+    dMx_dx = np.gradient(Mx, x, axis=1)
+    dMxy_dy = np.gradient(Mxy, y, axis=0)
+    dMxy_dx = np.gradient(Mxy, x, axis=1)
+    dMy_dy = np.gradient(My, y, axis=0)
+    Qx = dMx_dx + dMxy_dy
+    Qy = dMxy_dx + dMy_dy
+    return {"Qx": Qx, "Qy": Qy}
 
 
 def _inside_mask(result) -> np.ndarray:
@@ -104,4 +131,4 @@ def to_vtk(result, path) -> Path:
     return path
 
 
-__all__ = ["forces_on_grid", "to_vtk"]
+__all__ = ["forces_on_grid", "shear_forces_on_grid", "to_vtk"]

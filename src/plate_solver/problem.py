@@ -205,6 +205,7 @@ class ModelSpec:
     karman_tol: float | None = None         # нелин.: относит. порог останова
     karman_method: str | None = None        # karman: picard | newton
     ktn_method: str | None = None           # ktn_full: picard | newton
+    winkler: float | None = None            # упругое основание Винклера k_w ≥ 0 (v0.6.6)
 
 
 GAP_KINDS = ("const", "plane", "paraboloid", "steps")
@@ -307,10 +308,11 @@ class VerifySpec:
 
 @dataclass(frozen=True)
 class OutputSpec:
-    """Куда складывать result.json и фигуры."""
+    """Куда складывать result.json, фигуры и VTK-экспорт."""
 
     dir: str = "results"
     figures: bool = False
+    vtk: bool = False                       # + result.vtk для ParaView (v0.6.6)
 
 
 @dataclass(frozen=True)
@@ -330,6 +332,10 @@ class EigenSpec:
     Ny: float = 0.0
     Nxy: float = 0.0
     rho_h: float = 1.0              # vibration: погонная масса ρh
+    # ПРЕДНАПРЯЖЁННАЯ собственная задача (v0.6.6): поле N(w) из кармановского
+    # решения под [load] (theory = karman, равномерная нагрузка); анализ
+    # остаётся линейным вокруг напряжённого состояния: K_eff = K + K_geo(N(w))
+    prestress: bool = False
 
 
 @dataclass(frozen=True)
@@ -371,12 +377,21 @@ class Problem:
                                      "plate2", "discretization", "verify", "output",
                                      "eigen"},
                       "схема")
-        if "eigen" in data and any(s in data for s in ("load", "contact", "plate2")):
+        eigen_prestress = (isinstance(data.get("eigen"), dict)
+                           and bool(data["eigen"].get("prestress", False)))
+        if "eigen" in data and any(s in data for s in ("contact", "plate2")):
             _fail("eigen", "present",
-                  "без секций [load]/[contact]/[plate2] — собственная задача "
-                  "линейная, без поперечной нагрузки и контакта", "eigen")
-        # [load] обязателен, кроме собственной задачи ([eigen] — без нагрузки).
-        req = ("geometry", "bc") if "eigen" in data else ("geometry", "bc", "load")
+                  "без секций [contact]/[plate2] — собственная задача без "
+                  "контакта", "eigen")
+        if "eigen" in data and "load" in data and not eigen_prestress:
+            _fail("eigen", "present",
+                  "без секции [load] — собственная задача линейная; нагрузка "
+                  "осмысленна только при prestress = true (преднапряжение "
+                  "кармановским полем N(w), v0.6.6)", "eigen")
+        # [load] обязателен: для обычных постановок И для преднапряжённой
+        # собственной задачи (prestress = true — источник поля N(w)).
+        req = (("geometry", "bc", "load") if ("eigen" not in data or eigen_prestress)
+               else ("geometry", "bc"))
         for sec in req:
             if sec not in data:
                 _fail(sec, None, f"обязательная секция [{sec}]", sec)
@@ -435,7 +450,7 @@ class Problem:
                 kw[key] = v
         # параметры нелинейной итерации Кармана/КТН (§5.4/§5.5); None ⇒ дефолт Config
         for attr in ("n_load_steps", "karman_relax", "karman_max_iter",
-                     "karman_tol", "karman_method", "ktn_method"):
+                     "karman_tol", "karman_method", "ktn_method", "winkler"):
             v = getattr(self.model, attr)
             if v is not None:
                 kw[attr] = v
@@ -669,7 +684,7 @@ def _parse_model(data) -> ModelSpec:
     _require_keys("model", data,
                   {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
                    "karman_relax", "karman_max_iter", "karman_tol",
-                   "karman_method", "ktn_method"}, "model")
+                   "karman_method", "ktn_method", "winkler"}, "model")
     raw_theory = data.get("theory", "classic")
     if raw_theory in THEORY_ALIASES:
         # Депрекация-алиас (§4): "ktn" → "ktn_linear", поведение сохранено.
@@ -725,10 +740,15 @@ def _parse_model(data) -> ModelSpec:
     ktn_method = data.get("ktn_method")
     if ktn_method is not None and ktn_method not in KTN_METHODS:
         _fail("model.ktn_method", ktn_method, " | ".join(KTN_METHODS), "model")
+    winkler = _number("model", data, "winkler", "model")
+    if winkler is not None and winkler < 0.0:
+        _fail("model.winkler", winkler, "число ≥ 0 (жёсткость основания Винклера)",
+              "model")
     return ModelSpec(theory=theory, E=E, nu=nu, h=h, inplane_bc=inplane_bc,
                      n_load_steps=n_load_steps, karman_relax=karman_relax,
                      karman_max_iter=karman_max_iter, karman_tol=karman_tol,
-                     karman_method=karman_method, ktn_method=ktn_method)
+                     karman_method=karman_method, ktn_method=ktn_method,
+                     winkler=winkler)
 
 
 def _parse_gap_field(data: dict) -> GapSpec:
@@ -890,17 +910,20 @@ def _parse_verify(data) -> VerifySpec:
 def _parse_output(data) -> OutputSpec:
     if not isinstance(data, dict):
         _fail("output", data, "таблица (секция TOML)", "output")
-    _require_keys("output", data, {"dir", "figures"}, "output")
+    _require_keys("output", data, {"dir", "figures", "vtk"}, "output")
     d = data.get("dir", "results")
     if not isinstance(d, str) or not d:
         _fail("output.dir", d, "непустая строка (каталог)", "output")
-    return OutputSpec(dir=d, figures=_boolean("output", data, "figures", "output", default=False))
+    return OutputSpec(dir=d,
+                      figures=_boolean("output", data, "figures", "output", default=False),
+                      vtk=_boolean("output", data, "vtk", "output", default=False))
 
 
 def _parse_eigen(data) -> EigenSpec:
     if not isinstance(data, dict):
         _fail("eigen", data, "таблица (секция TOML)", "eigen")
-    _require_keys("eigen", data, {"kind", "n_modes", "Nx", "Ny", "Nxy", "rho_h"}, "eigen")
+    _require_keys("eigen", data, {"kind", "n_modes", "Nx", "Ny", "Nxy", "rho_h",
+                                  "prestress"}, "eigen")
     kind = data.get("kind", "vibration")
     if kind not in EIGEN_KINDS:
         _fail("eigen.kind", kind, " | ".join(EIGEN_KINDS), "eigen")
@@ -909,13 +932,20 @@ def _parse_eigen(data) -> EigenSpec:
     nx = _number("eigen", data, "Nx", "eigen")
     ny = _number("eigen", data, "Ny", "eigen")
     nxy = _number("eigen", data, "Nxy", "eigen")
+    prestress = _boolean("eigen", data, "prestress", "eigen", default=False)
+    if prestress and (nx is not None or ny is not None or nxy is not None):
+        _fail("eigen.Nx", data.get("Nx", data.get("Ny", data.get("Nxy"))),
+              "отсутствие Nx/Ny/Nxy при prestress = true (поле усилий берётся "
+              "из кармановского решения под [load], а не задаётся вручную)",
+              "eigen")
     return EigenSpec(
         kind=kind,
         n_modes=6 if n_modes is None else n_modes,
         Nx=-1.0 if nx is None else nx,
         Ny=0.0 if ny is None else ny,
         Nxy=0.0 if nxy is None else nxy,
-        rho_h=1.0 if rho_h is None else rho_h)
+        rho_h=1.0 if rho_h is None else rho_h,
+        prestress=prestress)
 
 
 # --------------------------------------------------------------------------- #
@@ -933,7 +963,38 @@ def _validate_cross(p: Problem) -> None:
             _fail("verify.reference", p.verify.reference,
                   "none для [eigen] (верификация классическими эталонами — "
                   "tests/test_eigenmodes.py)", "eigen")
+        if p.eigen.prestress:
+            # преднапряжённая собственная задача (v0.6.6): источник поля N(w) —
+            # кармановское решение под [load]; сам анализ линеен вокруг него
+            if p.model.theory != "karman":
+                _fail("model.theory", p.model.theory,
+                      "karman при [eigen] prestress = true (поле N(w) — из "
+                      "нелинейного кармановского решения под [load])", "eigen")
+            if p.load.type != "uniform":
+                _fail("load.type", p.load.type,
+                      "uniform при [eigen] prestress = true (преднапряжение — "
+                      "под равномерной нагрузкой)", "eigen")
+        elif p.model.theory != "classic":
+            # раньше нелинейная теория при [eigen] принималась и МОЛЧА
+            # игнорировалась (анализ всегда линейный Кирхгоф) — честный отказ
+            # (аудит v0.6.6); преднапряжение N(w) — prestress = true
+            _fail("model.theory", p.model.theory,
+                  "classic при [eigen] (собственная задача линейна — Кирхгоф; "
+                  "преднапряжение полем N(w) — [eigen] prestress = true + "
+                  "[load] + theory = karman, v0.6.6)", "eigen")
         return
+    if (p.model.winkler is not None and p.model.winkler > 0.0
+            and p.model.theory in ("classic", "ktn_linear")
+            and p.bc.type != "clamped"):
+        # Винклер свёрнут в ПОЛНУЮ билинейную форму; классический мягкий шарнир
+        # решается РАСЩЕПЛЕНИЕМ (две Пуассоны) — основание расщепление ломает.
+        # Полная форма шарнира доступна нелинейным теориям (karman при малой
+        # нагрузке = линейный предел).
+        _fail("model.winkler", p.model.winkler,
+              "0 либо bc = clamped при theory = classic | ktn_linear (мягкий "
+              "шарнир классики — расщепление, несовместимое с основанием; "
+              "используйте theory = karman: его линейный предел — полная форма "
+              "шарнира)", "model")
     if p.bc.type == "mixed":
         if p.geometry.kind != "rectangle":
             _fail("bc.type", "mixed",

@@ -304,6 +304,12 @@ class KarmanPlate:
         S = (lap * W) @ lap.T - (1.0 - self.nu) * (
             (pxx * W) @ pyy.T + (pyy * W) @ pxx.T - 2.0 * (pxy * W) @ pxy.T)
         self._S_bend = 0.5 * (S + S.T)
+        kw = float(getattr(cfg, "winkler", 0.0))   # упругое основание Винклера (v0.6.6)
+        if kw > 0.0:
+            # D·Δ²w + k_w·w ⇒ D·(S_bend + (k_w/D)·∫ψψ): весь пайплайн (Пикар,
+            # Ньютон, собственные задачи, контакт) наследует член основания
+            M = (psi * W) @ psi.T
+            self._S_bend = self._S_bend + (kw / self.D) * 0.5 * (M + M.T)
         # -- мембранная жёсткость плоской задачи (от w не зависит) ----------- #
         C = cfg.E * cfg.h / (1.0 - self.nu**2)
         self._C = C

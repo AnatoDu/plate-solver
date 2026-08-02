@@ -188,16 +188,19 @@ class PlateMaterial:
 # --------------------------------------------------------------------------- #
 #  Напряжения на лицевых поверхностях (NOTES §19)
 # --------------------------------------------------------------------------- #
-def stresses_faces(Mx, My, Mxy, h: float, nu: float, q_top=0.0, q_bottom=0.0):
+def stresses_faces(Mx, My, Mxy, h: float, nu: float, q_top=0.0, q_bottom=0.0,
+                   Nx=0.0, Ny=0.0, Nxy=0.0):
     r"""Напряжения на лицевых поверхностях z = ±h/2 (канон Ермоленко–Туркова, b=0).
 
-    Формула (11) при нулевых мембранных усилиях (линейный изгиб относительно
-    срединной плоскости, T_ij ≡ 0, b = 0):
+    Формула (11) при b = 0 — суперпозиция мембранной и изгибной частей:
 
     .. math::
-        \sigma_{ii}^{\pm h/2} = \pm\,6 M_{ii}/h^2
+        \sigma_{ii}^{\pm h/2} = \frac{T_{ii}}{h} \pm\,6 M_{ii}/h^2
             + \frac{\nu}{1-\nu}\, q_n^{\pm}, \qquad
-        \sigma_{12}^{\pm h/2} = \pm\,6 M_{12}/h^2 .
+        \sigma_{12}^{\pm h/2} = \frac{T_{12}}{h} \pm\,6 M_{12}/h^2 .
+
+    ``Nx, Ny, Nxy`` — мембранные усилия ``T_ij`` (нелинейные теории; по
+    умолчанию 0 — линейный изгиб, T_ij ≡ 0, прежнее поведение число-в-число).
 
     Член ν/(1−ν)·q_n — вклад ПОПЕРЕЧНОГО ОБЖАТИЯ: q_n^{+} — нормальное
     давление на верхней лицевой (внешняя нагрузка, знаки NOTES §0: q > 0
@@ -216,14 +219,36 @@ def stresses_faces(Mx, My, Mxy, h: float, nu: float, q_top=0.0, q_bottom=0.0):
     Mxy = np.asarray(Mxy, float)
     k = 6.0 / h**2
     c = nu / (1.0 - nu)
+    # мембранная часть T_ij/h (формула (11) при T_ij ≠ 0, b = 0): постоянна по
+    # толщине ⇒ входит в ОБЕ лицевые с ОДНИМ знаком (v0.6.6; для линейных
+    # теорий N ≡ 0 — прежние числа не сдвигаются)
+    mNx = np.asarray(Nx, float) / h
+    mNy = np.asarray(Ny, float) / h
+    mNxy = np.asarray(Nxy, float) / h
     return {
-        "sx_top": -k * Mx + c * np.asarray(q_top, float),
-        "sx_bot": +k * Mx + c * np.asarray(q_bottom, float),
-        "sy_top": -k * My + c * np.asarray(q_top, float),
-        "sy_bot": +k * My + c * np.asarray(q_bottom, float),
-        "txy_top": -k * Mxy,
-        "txy_bot": +k * Mxy,
+        "sx_top": mNx - k * Mx + c * np.asarray(q_top, float),
+        "sx_bot": mNx + k * Mx + c * np.asarray(q_bottom, float),
+        "sy_top": mNy - k * My + c * np.asarray(q_top, float),
+        "sy_bot": mNy + k * My + c * np.asarray(q_bottom, float),
+        "txy_top": mNxy - k * Mxy,
+        "txy_bot": mNxy + k * Mxy,
     }
 
 
-__all__ = ["KTNParams", "PlateMaterial", "flexural_rigidity", "stresses_faces"]
+def von_mises(sx, sy, txy) -> np.ndarray:
+    r"""Эквивалентное напряжение фон Мизеса (плоское напряжённое состояние).
+
+    .. math:: \sigma_{vm} = \sqrt{\sigma_x^2 - \sigma_x\sigma_y + \sigma_y^2
+        + 3\,\tau_{xy}^2}
+
+    Тривиальная алгебра над уже посчитанной σ-шестёркой лицевых (v0.6.6) —
+    первый вопрос прочниста к любому расчёту.
+    """
+    sx = np.asarray(sx, float)
+    sy = np.asarray(sy, float)
+    txy = np.asarray(txy, float)
+    return np.sqrt(sx**2 - sx * sy + sy**2 + 3.0 * txy**2)
+
+
+__all__ = ["KTNParams", "PlateMaterial", "flexural_rigidity", "stresses_faces",
+           "von_mises"]

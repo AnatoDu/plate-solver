@@ -71,6 +71,10 @@ class NonlinearContactResult:
     residual_history: np.ndarray
     n_inner: int
     scheme: str
+    # мембрана СОШЕДШЕГОСЯ состояния (v0.6.6): коэффициенты плоской задачи —
+    # для восстановления поля N через membrane_forces_at(cu, cv, cw, X, Y)
+    cu: np.ndarray | None = None
+    cv: np.ndarray | None = None
 
 
 class NonlinearContactMOR:
@@ -298,6 +302,10 @@ class NonlinearContactMOR:
         q = self.solver.quad
         contact = r > 0.0
         peak = int(np.argmax(r)) if r.size else 0
+        # мембрана сошедшегося состояния: один дешёвый плоский подшаг от
+        # финального cw — иначе N после контакта невосстановимы (аудит v0.6.6)
+        cu, cv, *_ = self.solver._membrane_forces(cw @ self.solver._psi_x,
+                                                  cw @ self.solver._psi_y)
         return NonlinearContactResult(
             r_nodes=r, w_nodes=w, u_c_nodes=u_c, cw=cw,
             w_max=float(np.max(np.abs(w))), contact_mask=contact,
@@ -306,7 +314,8 @@ class NonlinearContactMOR:
             n_contact=int(contact.sum()),
             n_components=contact_components(q.x, q.y, contact),   # топология зоны (§8)
             iters=iters, converged=converged,
-            residual_history=np.array(hist), n_inner=n_inner, scheme=self.scheme)
+            residual_history=np.array(hist), n_inner=n_inner, scheme=self.scheme,
+            cu=cu, cv=cv)
 
 
 @dataclass

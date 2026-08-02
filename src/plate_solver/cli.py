@@ -19,6 +19,8 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from .problem import CaseError, Problem
 
 _TEMPLATE_KINDS = ("circle", "rectangle", "L", "annulus")
@@ -531,6 +533,92 @@ def main_ladder(argv: list[str] | None = None) -> int:
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"сводка: {out}")
     return 0 if all_ok else 1
+
+
+def main_replot(argv: list[str] | None = None) -> int:
+    """``plate-replot <dir>`` — перерисовать фигуры из fields.npz БЕЗ пересчёта.
+
+    Каталог результата (``[output] dir``) обязан содержать ``fields.npz``;
+    решатель не запускается — фигуры строятся из снимка полей (v0.6.6).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="plate-replot",
+        description="Перерисовка фигур из fields.npz без пересчёта")
+    parser.add_argument("dir", help="каталог результата с fields.npz")
+    parser.add_argument("--fig-format", default="png,pdf",
+                        help="форматы через запятую (по умолчанию png,pdf)")
+    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--surface", default="mid",
+                        choices=("mid", "top", "bottom"),
+                        help="поверхность w-фигуры (лицевые — NOTES §21)")
+    args = parser.parse_args(argv)
+    from .viz import replot
+
+    target = Path(args.dir)
+    if not (target / "fields.npz").exists():
+        print(f"plate-replot: в {target} нет fields.npz "
+              "(укажите каталог результата [output] dir)")
+        return 1
+    paths = replot(target, formats=tuple(args.fig_format.split(",")),
+                   dpi=args.dpi, surface=args.surface)
+    for p in paths:
+        print(p)
+    return 0
+
+
+def main_profile(argv: list[str] | None = None) -> int:
+    """``plate-profile <dir> [<dir2> …]`` — профиль поля вдоль сечения (v0.6.6).
+
+    Один каталог — профиль + CSV; несколько — НАЛОЖЕНИЕ (сравнение
+    теорий/кейсов вдоль одного сечения). Всё из fields.npz, без пересчёта.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="plate-profile",
+        description="Профиль поля вдоль сечения из fields.npz (без пересчёта); "
+                    "несколько каталогов — наложение кривых")
+    parser.add_argument("dirs", nargs="+", help="каталог(и) результатов с fields.npz")
+    parser.add_argument("--key", default="w",
+                        help="ключ поля (w, Mx, Qx, sx_bot, svm_top, r, …)")
+    parser.add_argument("--from", dest="p0", required=True,
+                        help="начало сечения: x0,y0")
+    parser.add_argument("--to", dest="p1", required=True,
+                        help="конец сечения: x1,y1")
+    parser.add_argument("-n", type=int, default=200, help="число точек")
+    parser.add_argument("--csv", default=None,
+                        help="записать CSV (s, значения по каталогам)")
+    parser.add_argument("--fig", default=None,
+                        help="записать фигуру (расширение задаёт формат)")
+    args = parser.parse_args(argv)
+    from .viz import overlay_profiles, section_profile
+
+    p0 = tuple(float(v) for v in args.p0.split(","))
+    p1 = tuple(float(v) for v in args.p1.split(","))
+    if len(p0) != 2 or len(p1) != 2:
+        print("plate-profile: --from/--to ожидают пару координат x,y")
+        return 1
+    curves = []
+    for d in args.dirs:
+        s, vals = section_profile(d, args.key, p0, p1, n=args.n)
+        curves.append((Path(d).name, s, vals))
+    if args.csv:
+        header = "s," + ",".join(name for name, _, _ in curves)
+        cols = [curves[0][1]] + [v for _, _, v in curves]
+        np.savetxt(args.csv, np.column_stack(cols), delimiter=",",
+                   header=header, comments="")
+        print(args.csv)
+    if args.fig:
+        overlay_profiles(args.dirs, args.key, p0, p1, n=args.n, save=args.fig)
+        print(args.fig)
+    if not args.csv and not args.fig:                    # по умолчанию — в консоль
+        s = curves[0][1]
+        for i in range(0, len(s), max(1, len(s) // 20)):
+            row = "  ".join(f"{v[i]:.6e}" for _, _, v in curves)
+            print(f"s={s[i]:.4f}  {row}")
+    return 0
 
 
 if __name__ == "__main__":

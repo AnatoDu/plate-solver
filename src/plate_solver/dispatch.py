@@ -32,6 +32,7 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -146,6 +147,9 @@ class Result:
                 "converged": c.converged,
                 "residual_first": float(c.residual_history[0]),
                 "residual_last": float(c.residual_history[-1]),
+                # полная история сходимости МОР — для самостоятельных графиков
+                # сходимости из result.json (v0.6.6)
+                "residual_history": [float(v) for v in c.residual_history],
                 "comp_residual": c.comp_residual,
                 "gap_overshoot": c.gap_overshoot,
                 "r_max": float(c.r_nodes.max()),
@@ -182,6 +186,10 @@ class Result:
         self.save_fields(out / "fields.npz")
         if self.problem.output.figures:
             self._save_figures(out, formats=fig_formats, surface=surface)
+        if getattr(self.problem.output, "vtk", False):   # ParaView-экспорт (v0.6.6)
+            from .export import to_vtk
+
+            to_vtk(self, out / "result.vtk")
         return out / "result.json"
 
     def moments_on_grid(self):
@@ -339,23 +347,32 @@ class Result:
         return new
 
     def save_fields(self, path) -> None:
-        """fields.npz (версия схемы полей = 2): w, моменты, σ-шестёрка, контакт.
+        """fields.npz (версия схемы полей = 3): w, усилия M/N, σ-шестёрка+σ_vm, контакт.
 
-        Схема 2 = схема 1 + прогибы лицевых поверхностей (w_top, w_bot,
-        dh — NOTES §21) + для пары пластин моменты и σ-шестёрка ВТОРОЙ
-        пластины (суффикс «2»; канон §19: у верхней q⁻ = r, у нижней
-        q⁺ = r). Всё необходимое для перерисовки фигур БЕЗ пересчёта —
-        :func:`plate_solver.viz.replot`.
+        Схема 3 = схема 2 + мембранные усилия ``Nx, Ny, Nxy`` (нелинейные
+        теории; входят и в лицевые σ мембранной частью ``N/h``) + эквивалентное
+        ``svm_top, svm_bot`` (фон Мизес). Схема 2 = схема 1 + прогибы лицевых
+        (w_top, w_bot, dh — NOTES §21) + для пары пластин поля ВТОРОЙ пластины
+        (суффикс «2»; канон §19: у верхней q⁻ = r, у нижней q⁺ = r). Полный
+        перечень ключей — docs/CASE_SCHEMA.md#output; всё необходимое для
+        перерисовки фигур БЕЗ пересчёта — :func:`plate_solver.viz.replot`.
         """
-        from .ktn import stresses_faces
+        from .export import forces_on_grid
+        from .ktn import stresses_faces, von_mises
 
-        Mx, My, Mxy = self.moments_on_grid()
+        forces = forces_on_grid(self)
+        Mx, My, Mxy = forces["Mx"], forces["My"], forces["Mxy"]
+        has_N = "Nx" in forces                          # нелинейные теории (v0.6.6)
+        Nz = np.zeros_like(Mx)
+        Nx = np.nan_to_num(forces["Nx"], nan=0.0) if has_N else Nz
+        Ny = np.nan_to_num(forces["Ny"], nan=0.0) if has_N else Nz
+        Nxy = np.nan_to_num(forces["Nxy"], nan=0.0) if has_N else Nz
         q_top, q_bot = self._q_faces_on_grid()
         s = stresses_faces(Mx, My, Mxy, h=self.config.h, nu=self.config.nu,
-                           q_top=q_top, q_bottom=q_bot)
+                           q_top=q_top, q_bottom=q_bot, Nx=Nx, Ny=Ny, Nxy=Nxy)
         w_top, w_bot, dh = self.faces_on_grid()
         payload = {
-            "fields_schema": np.int64(2),
+            "fields_schema": np.int64(3),
             "x": self.Xg[0, :], "y": self.Yg[:, 0],
             "w": self.w_grid, "Mx": Mx, "My": My, "Mxy": Mxy,
             "w_top": w_top, "w_bot": w_bot, "dh": dh,
@@ -364,6 +381,13 @@ class Result:
             "h": np.float64(self.config.h), "nu": np.float64(self.config.nu),
         }
         payload.update(s)
+        payload["svm_top"] = von_mises(s["sx_top"], s["sy_top"], s["txy_top"])
+        payload["svm_bot"] = von_mises(s["sx_bot"], s["sy_bot"], s["txy_bot"])
+        from .export import shear_forces_on_grid
+        payload.update(shear_forces_on_grid(self))       # Qx, Qy (равновесие, v0.6.6)
+        if has_N:
+            payload["Nx"], payload["Ny"], payload["Nxy"] = (
+                forces["Nx"], forces["Ny"], forces["Nxy"])
         if self.contact is not None:
             payload["r"] = np.nan_to_num(self.contact.r_grid, nan=0.0)
             payload["zone"] = self.contact.contact_zone
@@ -371,6 +395,13 @@ class Result:
             if w2 is not None:
                 payload["w2"] = w2
                 payload.update(self._second_plate_fields())
+        if self.eigen is not None:
+            # ВСЕ собственные формы (норм. max|·|=1) + значения — раньше в npz
+            # попадала только первая форма (w), остальные терялись (v0.6.6)
+            payload["eigen_values"] = np.asarray(self.eigen.values, float)
+            payload["eigen_modes"] = np.stack(
+                [self.eigen.mode_on_grid(i, grid_n=self.Xg.shape[1])[2]
+                 for i in range(len(self.eigen.values))])
         np.savez_compressed(path, **payload)
 
     def _second_plate_fields(self) -> dict:
@@ -404,6 +435,9 @@ class Result:
                             q_top=r_fld, q_bottom=0.0)
         out = {"Mx2": Mx2, "My2": My2, "Mxy2": Mxy2}
         out.update({k + "2": v for k, v in s2.items()})
+        from .ktn import von_mises
+        out["svm_top2"] = von_mises(s2["sx_top"], s2["sy_top"], s2["txy_top"])
+        out["svm_bot2"] = von_mises(s2["sx_bot"], s2["sy_bot"], s2["txy_bot"])
         return out
 
     def _save_figures(self, out: Path, formats: tuple = ("png", "pdf"),
@@ -681,11 +715,28 @@ def _solve_eigen(problem, cfg, dom) -> Result:
     spec = problem.eigen
     plate = linear_plate(dom, cfg, bc_type=problem.bc.type,
                          inplane_bc=problem.model.inplane_bc)
-    if spec.kind == "buckling":
-        eig = buckling(plate, Nx=spec.Nx, Ny=spec.Ny, Nxy=spec.Nxy, n_modes=spec.n_modes)
-    else:
-        eig = natural_frequencies(plate, rho_h=spec.rho_h, n_modes=spec.n_modes)
     warn: list[str] = []
+    prestress = None
+    if spec.prestress:
+        # преднапряжение (v0.6.6): кармановское решение под [load] даёт N(w);
+        # анализ линеен вокруг напряжённого состояния — K_eff = K + K_geo(N(w))
+        kr = plate.solve(np.full(plate.quad.x.size, float(cfg.q0)))
+        if not kr.converged:
+            warn.append("eigen.prestress: кармановское решение не достигло tol — "
+                        "поле N(w) полусошедшееся (увеличьте karman_max_iter)")
+        prestress = kr
+    try:
+        if spec.kind == "buckling":
+            if prestress is not None:
+                eig = buckling(plate, prestress=prestress, n_modes=spec.n_modes)
+            else:
+                eig = buckling(plate, Nx=spec.Nx, Ny=spec.Ny, Nxy=spec.Nxy,
+                               n_modes=spec.n_modes)
+        else:
+            eig = natural_frequencies(plate, rho_h=spec.rho_h, n_modes=spec.n_modes,
+                                      prestress=prestress)
+    except ValueError as e:                          # напр. НЕсжимающее преднапряжение
+        raise CaseError(f"eigen: {e} см. {_SCHEMA_DOC}#eigen") from e
     if eig.values.size == 0:
         raise CaseError("eigen: собственных значений не найдено — увеличьте p/Q "
                         f"или проверьте постановку, см. {_SCHEMA_DOC}#eigen")
@@ -998,6 +1049,9 @@ def _solve_contact_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
                  w_free_max=w_free, w_max_classic=float(free.w_max_classic))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", nres.cw)
+    if nres.cu is not None:                              # мембрана сошедшегося состояния
+        object.__setattr__(res, "_karman_ref",
+                           SimpleNamespace(cu=nres.cu, cv=nres.cv, cw=nres.cw))
     return res
 
 
@@ -1102,6 +1156,9 @@ def _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings) -> Resul
                  w_max_classic=float(free.w_max_classic))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", nres.cw)
+    if nres.cu is not None:                              # мембрана сошедшегося состояния
+        object.__setattr__(res, "_karman_ref",
+                           SimpleNamespace(cu=nres.cu, cv=nres.cv, cw=nres.cw))
     object.__setattr__(res, "_force_calls", st["calls"])
     object.__setattr__(res, "_force_iters_total", st["iters"])
     return res

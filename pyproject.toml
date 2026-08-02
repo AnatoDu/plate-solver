@@ -48,6 +48,10 @@ notebooks = ["jupyter", "ipympl"]   # интерактивные ноутбук�
 plate-solve = "plate_solver.cli:main"
 plate-verify = "plate_solver.cli:main_verify"
 plate-ladder = "plate_solver.cli:main_ladder"
+# v0.6.6: перерисовка фигур из fields.npz без пересчёта
+plate-replot = "plate_solver.cli:main_replot"
+# v0.6.6: профиль поля вдоль сечения (+ наложение нескольких результатов), CSV
+plate-profile = "plate_solver.cli:main_profile"
 
 [project.urls]
 Homepage = "https://github.com/AnatoDu/plate-solver"

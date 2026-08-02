@@ -97,6 +97,7 @@ figures = true
 | model.karman_tol | float | дефолт Config (1e-8) | > 0 (нелинейные теории) | membrane.py |
 | model.karman_method | str | дефолт Config ("picard") | picard, newton (только karman) | membrane.py |
 | model.ktn_method | str | дефолт Config ("picard") | picard, newton (только ktn_full) | ktn_full.py |
+| model.winkler | float | дефолт Config (0) | ≥ 0 — упругое основание Винклера `D·Δ²w + k_w·w = q` (все теории/тракты; classic\|ktn_linear — только clamped: шарнир классики — расщепление; v0.6.6, MMS-верификация) | clamped.py, membrane.py |
 | contact.enabled | bool | false | true, false | contact.py |
 | contact.gap | float | — | > 0 (абсолютный зазор Δ) | contact.py |
 | contact.gap_factor | float | — | > 0 (Δ = gap_factor·w_free) | dispatch.py |
@@ -126,10 +127,12 @@ figures = true
 | verify.model_gap | bool | false | true, false | references.py |
 | output.dir | str | "results" | непустая строка | dispatch.py |
 | output.figures | bool | false | true, false | viz.py |
+| output.vtk | bool | false | true, false — плюс result.vtk для ParaView (v0.6.6) | export.py |
 | eigen.kind | str | "vibration" | buckling, vibration (собственная задача, v0.6.4) | eigenmodes.py |
 | eigen.n_modes | int | 6 | ≥ 1 (сколько собственных значений/форм) | eigenmodes.py |
 | eigen.Nx, Ny, Nxy | float | −1, 0, 0 | эталонное мембранное усилие (buckling; сжатие < 0) | eigenmodes.py |
 | eigen.rho_h | float | 1.0 | > 0 (vibration: погонная масса ρh) | eigenmodes.py |
+| eigen.prestress | bool | false | true — преднапряжение полем N(w) из кармановского решения под [load] (требует theory = karman + [load] uniform; Nx/Ny/Nxy при этом запрещены; v0.6.6) | dispatch.py |
 
 Требование к зонам (`load.zone`, `contact.zone`, пятно `point`): пересечение
 зоны с Ω должно накрывать **не менее 20 узлов квадратуры**, иначе интеграл по
@@ -528,7 +531,8 @@ MMS полной КТН (`reference = "mms"` + `theory = "ktn_full"`, тольк
 ## output
 
 `dir` — каталог результатов (result.json: снимок Problem, git-hash, версии
-зависимостей, warnings; фигуры при `figures = true`). Каталог `results/`
+зависимостей, warnings; фигуры при `figures = true`; `vtk = true` — плюс
+`result.vtk` для ParaView, v0.6.6). Каталог `results/`
 не коммитится (кроме замороженного `results/golden/`).
 
 Управление фигурами и отчётом из CLI: `--figures` форсирует
@@ -539,11 +543,36 @@ MMS полной КТН (`reference = "mms"` + `theory = "ktn_full"`, тольк
 `report.md` (постановка, сводные числа, verify-таблица, фигуры);
 `--check` только валидирует постановку (ничего не считает).
 
-Набор фигур (`viz.replot` из `fields.npz`): `w_surface` (3D, выбор
-поверхности), `stress_faces` (σ на обеих лицевых), `moments` (карты `Mx, My,
-Mxy`), `compression` (карта обжатия `dh` — только при КТН, `dh ≠ 0`), а при
-контакте — `reaction` (реакция + зона + профиль σ) и `contact_summary`/
-`pair_summary`. Для собственной задачи (`[eigen]`) — `modes` (сетка форм).
+Набор фигур (`viz.replot` из `fields.npz`; CLI: `plate-replot <dir>` — без
+пересчёта, v0.6.6): `w_surface` (3D, выбор поверхности), `stress_faces` (σ на
+обеих лицевых), `moments` (карты `Mx, My, Mxy`), `membrane` (карты `Nx, Ny,
+Nxy` — нелинейные теории, v0.6.6), `shear` (карты `Qx, Qy`, v0.6.6),
+`von_mises` (σ_vm на лицевых, v0.6.6),
+`compression` (карта обжатия `dh` — только при КТН, `dh ≠ 0`), а при
+контакте — `reaction` (реакция + зона + профиль σ), `stress_faces2` (σ второй
+пластины пары, v0.6.6) и `contact_summary`/`pair_summary`. Для собственной
+задачи (`[eigen]`) — `modes` (сетка форм).
+
+**Схема `fields.npz` (версия 3, v0.6.6)** — полный перечень ключей для
+самостоятельной работы (все сеточные поля — форма `(grid_n, grid_n)`,
+`NaN` вне Ω, кроме особо отмеченных):
+
+| Ключ | Что это |
+|---|---|
+| fields_schema | версия схемы (int; 3) |
+| x, y | 1D-оси фоновой сетки (`X, Y = meshgrid(x, y)`) |
+| w | прогиб срединной поверхности |
+| w_top, w_bot, dh | прогибы лицевых `z = ∓h/2` и обжатие `dh = w_bot − w` (NOTES §21; classic/karman — совпадают с w) |
+| Mx, My, Mxy | изгибные моменты |
+| Nx, Ny, Nxy | мембранные усилия (ТОЛЬКО нелинейные теории karman/ktn_full; v0.6.6) |
+| Qx, Qy | перерезывающие силы из равновесия моментов `Qx = ∂Mx/∂x + ∂Mxy/∂y` (v0.6.6); точность задаёт квадратурный пол маски ~1/Q (растёт с `[discretization] Q`; на полиномиальной границе прямоугольника — существенно точнее) |
+| sx_top, sx_bot, sy_top, sy_bot, txy_top, txy_bot | напряжения на лицевых: `T/h ± 6M/h² + ν/(1−ν)·q±` (NOTES §19; мембранная часть — v0.6.6) |
+| svm_top, svm_bot | эквивалентное фон Мизеса на лицевых (v0.6.6) |
+| r, zone | контакт: реакция (0 вне зоны, БЕЗ NaN) и булева маска зоны |
+| w2, Mx2…, sx_top2…, svm_top2, svm_bot2 | пара пластин: те же поля ВТОРОЙ пластины (суффикс «2», канон §19) |
+| eigen_values, eigen_modes | собственная задача: значения и ВСЕ формы `(n_modes, grid_n, grid_n)`, норм. max|·|=1 (v0.6.6) |
+| problem_json | снимок постановки (JSON-строка) |
+| h, nu | толщина и коэффициент Пуассона (для пересборки σ) |
 
 ## eigen
 

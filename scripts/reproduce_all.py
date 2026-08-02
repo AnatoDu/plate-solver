@@ -67,7 +67,9 @@ def run_case(group: str, path: Path, *, artifacts: bool = False,
         row["geometry"] = problem.geometry.kind
         row["theory"] = getattr(problem.model, "theory", "")
         row["bc"] = getattr(problem.bc, "type", "")
-        row["contact"] = "да" if getattr(problem, "contact", None) is not None else ""
+        # contact-спека есть у ВСЕХ постановок (дефолт enabled=false) —
+        # колонку определяет ФЛАГ enabled, а не наличие объекта (фикс v0.6.6)
+        row["contact"] = "да" if problem.contact.enabled else ""
         result = solve(problem)
         sc = result.scalars()
         row["w_max"] = _fmt(sc.get("w_max"))

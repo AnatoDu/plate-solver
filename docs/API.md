@@ -109,8 +109,10 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 - `ktn.KTNParams` — коэффициенты поправок (сдвиг h_Ψ², обжатие h_*²);
   `contact_displacement` (= `w_face_bottom` — прогиб нижней лицевой,
   которым проверяется зазор), `corrected_deflection` (прогиб для w_max).
-- `ktn.stresses_faces(Mx, My, Mxy, h, nu, q_top, q_bottom)` — шестёрка
-  напряжений лицевых поверхностей (канон NOTES §19).
+- `ktn.stresses_faces(Mx, My, Mxy, h, nu, q_top, q_bottom, Nx, Ny, Nxy)` —
+  шестёрка напряжений лицевых поверхностей (канон NOTES §19); с v0.6.6 —
+  плюс мембранная часть `T/h` (нелинейные теории; по умолчанию 0).
+- `ktn.von_mises(sx, sy, txy)` — эквивалентное напряжение фон Мизеса (v0.6.6).
 - `ktn.PlateMaterial`, `ktn.flexural_rigidity` — классика.
 
 ## Нелинейный контакт МОР+КТН (`contact_nl.py`, v0.6.0)
@@ -157,7 +159,13 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 
 - `export.forces_on_grid(result)` — результирующие усилия на фоновой сетке единым
   словарём: изгибные моменты `Mx, My, Mxy` (всегда), обобщённая реакция `r` (для
-  контактных задач), мембранные усилия `Nx, Ny, Nxy` (когда решатель их отдаёт).
+  контактных задач), мембранные усилия `Nx, Ny, Nxy` (нелинейные теории —
+  восстановление из `_karman_ref`; с v0.6.6 работает и ПОСЛЕ нелинейного
+  контакта: мембрана сошедшегося состояния хранится в результате МОР).
+- `export.shear_forces_on_grid(result)` — перерезывающие `Qx, Qy` из
+  РАВНОВЕСИЯ моментов (`Qx = ∂Mx/∂x + ∂Mxy/∂y`; конечные разности фоновой
+  сетки; точность — квадратурный пол маски ~1/Q, верифицировано точным
+  осесимметричным `Q_r = q·r/2`; v0.6.6).
 - `export.to_vtk(result, path)` — запись сеточных полей (`w` + усилия) в
   LEGACY-VTK (STRUCTURED_POINTS, ASCII) без новых зависимостей; ParaView читает
   напрямую (независимая сверка топологии зоны контакта с МКЭ). Вне Ω — `NaN`.
@@ -350,8 +358,16 @@ print("сертификат пройден:", all(abs(v) <= 1e-8
 ## Графика
 
 - Из результата: `viz.replot(dir, formats, surface=mid|top|bottom)` —
-  фигуры из fields.npz БЕЗ пересчёта; `viz.surface3d(X, Y, W, elev,
+  фигуры из fields.npz БЕЗ пересчёта (с v0.6.6 — плюс карты `membrane`
+  (N), `shear` (Q), `von_mises` (σ_vm) и `stress_faces2` второй пластины
+  пары; CLI — `plate-replot <dir>`); `viz.surface3d(X, Y, W, elev,
   azim)`; `viz.stress_maps(X, Y, stresses, components)`.
+- Профили сечений (v0.6.6): `viz.section_profile(dir, key, p0, p1, n)` —
+  профиль ЛЮБОГО сеточного поля вдоль отрезка (билинейная интерполяция из
+  fields.npz); `viz.overlay_profiles([dirs], key, p0, p1)` — НАЛОЖЕНИЕ
+  кривых нескольких результатов (сравнение теорий/кейсов). CLI —
+  `plate-profile <dir> [<dir2> …] --key w --from x0,y0 --to x1,y1
+  [--csv out.csv] [--fig out.png]`.
 - Из объектов: `viz.plot_deflection_surface`, `viz.plot_deflection_contour`,
   `viz.plot_reaction`, `viz.plot_contact_zone`, `viz.plot_convergence`,
   `viz.plot_contact_summary` (планшет 2×2), `viz.plot_pair_summary`

@@ -236,13 +236,15 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 def replot(result_dir, formats=("png",), dpi: int = 300,
            surface: str = "mid") -> list:
-    """Перерисовать фигуры из ``<dir>/fields.npz`` (схема полей 1 или 2).
+    """Перерисовать фигуры из ``<dir>/fields.npz`` (схема полей 1, 2 или 3).
 
     Пересчёт не выполняется: всё берётся из снимка полей. Создаются
     w-поверхность (``surface`` = ``mid`` | ``top`` | ``bottom`` — срединная
     или лицевые, NOTES §21; лицевые доступны со схемы 2), карты лицевых
-    напряжений (σx±, σy±, τxy±) и — при наличии контакта — карта реакции
-    с зоной. Возвращает список путей.
+    напряжений (σx±, σy±, τxy±), моментов, а со схемы 3 — мембранных усилий
+    ``N`` (нелинейные теории), эквивалентного ``σ_vm`` и напряжений ВТОРОЙ
+    пластины пары (суффикс «2»); при контакте — карта реакции с зоной.
+    Возвращает список путей.
     """
     import json as _json
 
@@ -250,7 +252,7 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
 
     result_dir = Path(result_dir)
     data = np.load(result_dir / "fields.npz", allow_pickle=False)
-    if int(data["fields_schema"]) not in (1, 2):
+    if int(data["fields_schema"]) not in (1, 2, 3):
         raise ValueError(f"Неизвестная версия схемы полей: {int(data['fields_schema'])}")
     X, Y = np.meshgrid(data["x"], data["y"])
     out: list = []
@@ -362,7 +364,132 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
         fig.colorbar(pcm, ax=axes, label="M", shrink=0.8)
         fig.suptitle("Изгибные моменты Mx, My, Mxy")
         _save(fig, "moments")
+
+    # 6) мембранные усилия Nx, Ny, Nxy (нелинейные теории; схема 3, v0.6.6)
+    if "Nx" in data.files:
+        ncomps = [("Nx", "Nx"), ("Ny", "Ny"), ("Nxy", "Nxy")]
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.6))
+        vmax = max((float(np.nanmax(np.abs(data[k]))) for k, _ in ncomps),
+                   default=0.0) or 1.0
+        for ax, (key, title) in zip(axes.ravel(), ncomps, strict=True):
+            pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data[key]),
+                                cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+            ax.set_aspect("equal")
+            ax.set_title(title)
+        fig.colorbar(pcm, ax=axes, label="N", shrink=0.8)
+        fig.suptitle("Мембранные усилия Nx, Ny, Nxy (натяжение срединной)")
+        _save(fig, "membrane")
+
+    # 6б) перерезывающие силы Qx, Qy (равновесие моментов; схема 3, v0.6.6)
+    if "Qx" in data.files:
+        qcomps = [("Qx", "Qx"), ("Qy", "Qy")]
+        fig, axes = plt.subplots(1, 2, figsize=(11, 4.6))
+        vmax = max(float(np.nanmax(np.abs(data[k]))) for k, _ in qcomps) or 1.0
+        for ax, (key, title) in zip(axes.ravel(), qcomps, strict=True):
+            pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data[key]),
+                                cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+            ax.set_aspect("equal")
+            ax.set_title(title)
+        fig.colorbar(pcm, ax=axes, label="Q", shrink=0.8)
+        fig.suptitle("Перерезывающие силы Qx, Qy (из равновесия моментов)")
+        _save(fig, "shear")
+
+    # 7) эквивалентное напряжение фон Мизеса на лицевых (схема 3, v0.6.6)
+    if "svm_top" in data.files:
+        panels = [("svm_top", "σ_vm, верх"), ("svm_bot", "σ_vm, низ")]
+        if "svm_top2" in data.files:                    # пара: + вторая пластина
+            panels += [("svm_top2", "σ_vm, верх (пластина 2)"),
+                       ("svm_bot2", "σ_vm, низ (пластина 2)")]
+        ncols = 2
+        nrows = (len(panels) + 1) // 2
+        fig, axes = plt.subplots(nrows, ncols, figsize=(11, 4.6 * nrows),
+                                 squeeze=False)
+        vmax = max(float(np.nanmax(np.abs(data[k]))) for k, _ in panels) or 1.0
+        for ax, (key, title) in zip(axes.ravel(), panels, strict=False):
+            pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data[key]),
+                                cmap="magma", vmin=0.0, vmax=vmax, shading="auto")
+            ax.set_aspect("equal")
+            ax.set_title(title)
+        for ax in axes.ravel()[len(panels):]:
+            ax.axis("off")
+        fig.colorbar(pcm, ax=axes, label="σ_vm", shrink=0.8)
+        fig.suptitle("Эквивалентное напряжение фон Мизеса (лицевые поверхности)")
+        _save(fig, "von_mises")
+
+    # 8) напряжения ВТОРОЙ пластины пары (данные сохранялись со схемы 2,
+    #    фигура — v0.6.6): та же 2×3, что stress_faces
+    if "sx_top2" in data.files:
+        comps2 = [("sx_top2", "σx, верх"), ("sx_bot2", "σx, низ"),
+                  ("sy_top2", "σy, верх"), ("sy_bot2", "σy, низ"),
+                  ("txy_top2", "τxy, верх"), ("txy_bot2", "τxy, низ")]
+        fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+        vmax = max(float(np.nanmax(np.abs(data[k]))) for k, _ in comps2) or 1.0
+        for ax, (key, title) in zip(axes.ravel(), comps2, strict=True):
+            pcm = ax.pcolormesh(X, Y, np.ma.masked_invalid(data[key]),
+                                cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+            ax.set_aspect("equal")
+            ax.set_title(title)
+        fig.colorbar(pcm, ax=axes, label="σ", shrink=0.8)
+        fig.suptitle("Напряжения на лицевых ВТОРОЙ пластины пары (канон §19)")
+        _save(fig, "stress_faces2")
     return out
+
+def section_profile(result_dir, key: str, p0, p1, n: int = 200):
+    r"""Профиль поля ``key`` вдоль отрезка ``p0 → p1`` из ``fields.npz`` (v0.6.6).
+
+    Билинейная интерполяция сеточного поля на ``n`` точках отрезка; вне Ω —
+    ``NaN``. Возвращает ``(s, values)``: дуговая координата (0 в ``p0``) и
+    значения. Ключи — любые сеточные из fields.npz (см. CASE_SCHEMA#output):
+    ``w``, ``Mx``, ``Qx``, ``sx_bot``, ``svm_top``, ``r`` …
+    """
+    from scipy.interpolate import RegularGridInterpolator
+
+    result_dir = Path(result_dir)
+    data = np.load(result_dir / "fields.npz", allow_pickle=False)
+    if key not in data.files:
+        raise KeyError(f"section_profile: ключа {key!r} нет в fields.npz "
+                       f"(есть: {sorted(data.files)})")
+    field = np.asarray(data[key], float)
+    x, y = np.asarray(data["x"], float), np.asarray(data["y"], float)
+    if field.shape != (y.size, x.size):
+        raise ValueError(f"section_profile: {key!r} — не сеточное поле "
+                         f"(форма {field.shape})")
+    interp = RegularGridInterpolator((y, x), field, bounds_error=False,
+                                     fill_value=np.nan)
+    p0 = np.asarray(p0, float)
+    p1 = np.asarray(p1, float)
+    t = np.linspace(0.0, 1.0, int(n))
+    pts = p0[None, :] + t[:, None] * (p1 - p0)[None, :]
+    vals = interp(pts[:, ::-1])                     # (y, x)-порядок интерполятора
+    s = t * float(np.hypot(*(p1 - p0)))
+    return s, vals
+
+
+def overlay_profiles(result_dirs, key: str, p0, p1, *, labels=None, n: int = 200,
+                     save=None, dpi: int = 300):
+    r"""Наложение профилей одного поля из НЕСКОЛЬКИХ результатов (v0.6.6).
+
+    Сравнение теорий/кейсов вдоль одного сечения: по кривой на каталог
+    результата (``fields.npz``). Возвращает ``(fig, ax)``; ``save`` — путь
+    файла фигуры (расширение задаёт формат).
+    """
+    import matplotlib.pyplot as plt
+
+    dirs = list(result_dirs)
+    labels = list(labels) if labels is not None else [Path(d).name for d in dirs]
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for d, lab in zip(dirs, labels, strict=True):
+        s, vals = section_profile(d, key, p0, p1, n=n)
+        ax.plot(s, vals, "-", lw=1.6, label=lab)
+    ax.set_xlabel("s (вдоль сечения)")
+    ax.set_ylabel(key)
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=9)
+    ax.set_title(f"Профиль {key}: ({p0[0]:g},{p0[1]:g}) → ({p1[0]:g},{p1[1]:g})")
+    if save is not None:
+        fig.savefig(save, dpi=dpi, bbox_inches="tight")
+    return fig, ax
+
 
 def surface3d(X, Y, W, *, elev: float = 28.0, azim: float = -60.0,
               cmap: str = "viridis", title: str = "w(x, y)",
