@@ -133,13 +133,18 @@ def test_support_fd_certificate_ss_square():
 
 
 def test_support_karman_linear_limit():
-    """Карман с опорой в линейном режиме = классика (кросс-тракт; фон ~7e-5)."""
+    """Карман с опорой в линейном режиме = классика (кросс-тракт).
+
+    Фон различия полной формы и ∫ΔψΔψ на масочной квадратуре зависит от
+    BLAS: 7e-5 (Accelerate) / 2.4e-4 (OpenBLAS) — порог 1e-3 выше фона,
+    но ловит реальную поломку тракта (расхождение теорий было бы >>1e-2).
+    """
     rk = dispatch.solve(Problem.from_dict(_circle_case(1e6 * _D,
                                                        theory="karman")))
     rc = dispatch.solve(Problem.from_dict(_circle_case(1e6 * _D)))
-    assert abs(rk.w_max - rc.w_max) / rc.w_max < 2e-4
+    assert abs(rk.w_max - rc.w_max) / rc.w_max < 1e-3
     assert abs(rk.support_reactions[0] - rc.support_reactions[0]) \
-        / rc.support_reactions[0] < 2e-4
+        / rc.support_reactions[0] < 1e-3
 
 
 def test_support_eigen_frequencies_monotone():

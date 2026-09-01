@@ -93,8 +93,8 @@ def test_expr_matches_gaussian():
     r1 = dispatch.solve(Problem.from_dict(d1))
     r2 = dispatch.solve(Problem.from_dict(d2))
     # разные деревья выражений: расхождение — последние биты округления
-    # (измерено 1.1e-13 по w_max при |Δw| ~ 1e-20 абсолютных)
-    assert abs(r1.w_max - r2.w_max) / r1.w_max < 5e-13
+    # (1.1e-13 на Accelerate; порог с запасом на иной BLAS)
+    assert abs(r1.w_max - r2.w_max) / r1.w_max < 2e-12
 
 
 def test_expr_ktn_full_symbolic_lap_q():

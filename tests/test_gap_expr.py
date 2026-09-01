@@ -121,7 +121,9 @@ def test_gap_expr_nonlinear_route():
     d2["contact"]["gap_expr"] = f"{z0} + ((x-{cx})**2+(y-{cy})**2)/(2*{R})"
     r1 = dispatch.solve(Problem.from_dict(d1))
     r2 = dispatch.solve(Problem.from_dict(d2))
-    assert abs(r1.w_max - r2.w_max) / r1.w_max < 1e-13
+    # последние биты gap-массива усиливаются итерацией МОР по-разному на
+    # разных BLAS — порог 1e-12 сохраняет суть (одна маршрутизация)
+    assert abs(r1.w_max - r2.w_max) / r1.w_max < 1e-12
 
 
 @pytest.mark.parametrize("bad", [
