@@ -188,6 +188,47 @@ def assemble_biharmonic_full(domain, basis, quad, nu: float):
     return psi, 0.5 * (S + S.T), W
 
 
+def assemble_ortho(pxx, pyy, pxy, W, Dm):
+    r"""Ортотропная билинейная форма изгиба (v0.7.0), С МНОЖИТЕЛЯМИ D_ij:
+
+    .. math:: a(w, v) = \iint \big[D_{11} w_{xx} v_{xx}
+              + D_{12}(w_{xx} v_{yy} + w_{yy} v_{xx})
+              + D_{22} w_{yy} v_{yy} + 4 D_{66} w_{xy} v_{xy}\big]\, d\Omega
+
+    Эллиптичность (⇒ применимость Ритца): ``D11, D66 > 0, D11·D22 > D12²``
+    — проверяется валидатором схемы. Изотропная редукция ``D11=D22=D,
+    D12=νD, D66=(1−ν)D/2`` почленно тождественна полной форме NOTES §20.
+    """
+    D11, D12, D22, D66 = (float(v) for v in Dm)
+    S = (D11 * ((pxx * W) @ pxx.T) + D22 * ((pyy * W) @ pyy.T)
+         + D12 * ((pxx * W) @ pyy.T + (pyy * W) @ pxx.T)
+         + 4.0 * D66 * ((pxy * W) @ pxy.T))
+    return 0.5 * (S + S.T)
+
+
+def _add_point_supports(S, D, cfg, structure_fn):
+    r"""Ранг-1 добавки точечных опор (v0.7.0): ``S += (k/D)·Σ_j ψ(P_j)ψ(P_j)ᵀ``.
+
+    Энергия пружин ``Π_s = (k/2)·Σ_j w(P_j)²`` ⇒ вариация
+    ``k·Σ_j w(P_j)·δw(P_j)``; в системе Ритца — ранг-1 члены в матрице
+    (S хранится без множителя D, поэтому вклад ``k/D``). Дискретизация опоры
+    ТОЧНАЯ (значение структуры в точке, квадратуры нет); сходимость решения по
+    базису — алгебраическая ~p⁻² (функция Грина ~r²ln r у опоры). Жёсткая
+    опора — штраф: ``R(k) = w_free(P)/(G_N(P,P) + 1/k)``, ошибка ``O(1/k)``.
+    Дефолт (нет точек) НЕ трогает S — прежние числа бит-точно.
+    """
+    pts = tuple(getattr(cfg, "supports_points", ()) or ())
+    k = float(getattr(cfg, "supports_stiffness", 0.0))
+    if not pts or k <= 0.0:
+        return S
+    S = S.copy()
+    for (px, py) in pts:
+        psi_p = np.asarray(structure_fn(np.array([float(px)]),
+                                        np.array([float(py)])), float)[:, 0]
+        S += (k / D) * np.outer(psi_p, psi_p)
+    return 0.5 * (S + S.T)
+
+
 class ClampedPlate:
     """Изгиб защемлённой пластины: прямой Ритц по ``(D/2)∫(Δw)²`` на ``w = ω²Φ``."""
 
@@ -197,18 +238,62 @@ class ClampedPlate:
         self.quad = quad
         self.cfg = cfg
         self.D = float(cfg.D)
-        psi, lap_psi, W = _structure_laplacian(domain, basis, quad)
-        self._psi = psi
-        self._lap_psi = lap_psi                   # Δψ — кэш для Δw (A3: КТН, напряжения)
-        self._W = W
-        S = (lap_psi * W) @ lap_psi.T             # S[k,l] = ∫ Δψ_k Δψ_l
-        self.S = 0.5 * (S + S.T)                  # подавить несимметрию округления
+        ortho = getattr(cfg, "ortho_D", None)
+        h_expr = getattr(cfg, "h_expr", None)
+        if h_expr is not None:
+            # переменная толщина (v0.7.0): D(x,y) = E·h³/12(1−ν²) входит ВЕСОМ
+            # ПОЛНОЙ билинейной формы (гауссов член при D≠const НЕ
+            # нуль-лагранжиан — упрощённый ∫DΔψΔψ неверен); self.D — только
+            # нормировка D0 (сокращается: D0·(S/D0) = ∫D[…])
+            from . import exprfield
+            psi, pxx, pyy, pxy, W = _structure_second_derivs(domain, basis, quad)
+            h_pts = exprfield.field_values(
+                exprfield.parse_field("model.h_expr", h_expr),
+                quad.x, quad.y, key="model.h_expr")
+            h_pts = (np.full(quad.x.size, float(h_pts))
+                     if np.ndim(h_pts) == 0 else h_pts)
+            if float(np.min(h_pts)) <= 0.0:
+                from .problem import CaseError
+                j = int(np.argmin(h_pts))
+                raise CaseError(
+                    f"model.h_expr: h ≤ 0 в узле квадратуры ({quad.x[j]:.4g}, "
+                    f"{quad.y[j]:.4g}) — толщина обязана быть положительной, "
+                    "см. docs/CASE_SCHEMA.md#model")
+            self.h_pts = h_pts
+            D_pts = cfg.E * h_pts**3 / (12.0 * (1.0 - cfg.nu**2))
+            Wd = W * (D_pts / self.D)
+            nu = cfg.nu
+            lap = pxx + pyy
+            S = (lap * Wd) @ lap.T - (1.0 - nu) * ((pxx * Wd) @ pyy.T
+                                                   + (pyy * Wd) @ pxx.T
+                                                   - 2.0 * (pxy * Wd) @ pxy.T)
+            self._psi = psi
+            self._lap_psi = lap
+            self._W = W
+            self.S = 0.5 * (S + S.T)
+        elif ortho is not None:
+            # ортотропия (v0.7.0): полная квадратичная форма D_ij; нормировка
+            # S = S_ortho/D_ref (D_ref = D11) сохраняет контракт «S без D»
+            psi, pxx, pyy, pxy, W = _structure_second_derivs(domain, basis, quad)
+            self.D = float(ortho[0])
+            self._psi = psi
+            self._lap_psi = pxx + pyy             # Δψ — кэш (диагностика)
+            self._W = W
+            self.S = assemble_ortho(pxx, pyy, pxy, W, ortho) / self.D
+        else:
+            psi, lap_psi, W = _structure_laplacian(domain, basis, quad)
+            self._psi = psi
+            self._lap_psi = lap_psi               # Δψ — кэш для Δw (A3: КТН, напряжения)
+            self._W = W
+            S = (lap_psi * W) @ lap_psi.T         # S[k,l] = ∫ Δψ_k Δψ_l
+            self.S = 0.5 * (S + S.T)                  # подавить несимметрию округления
         kw = float(getattr(cfg, "winkler", 0.0))  # упругое основание Винклера (v0.6.6)
         if kw > 0.0:
             # оператор D·Δ²w + k_w·w = q ⇒ D·(S + (k_w/D)·∫ψψ); свёртка в S
             # сохраняет факторизацию Холецкого и весь пайплайн без изменений
             M = (psi * W) @ psi.T
             self.S = self.S + (kw / self.D) * 0.5 * (M + M.T)
+        self.S = _add_point_supports(self.S, self.D, cfg, self.structure_at)
         # Факторизация ОДИН раз (A3.1): диагональное предобуславливание
         # (нормировка на √S_kk, NOTES §2) + Холецкий; решение произвольной
         # правой части далее — две треугольные подстановки (solve_rhs).
@@ -511,11 +596,25 @@ class MixedRectPlate:
         pyy = gyy * T + 2.0 * gy * Ty + g * Tyy
         pxy = gxy * T + gx * Ty + gy * Tx + g * Txy
         lap = pxx + pyy
-        nu = cfg.nu
-        S = (lap * W) @ lap.T - (1.0 - nu) * ((pxx * W) @ pyy.T
-                                              + (pyy * W) @ pxx.T
-                                              - 2.0 * (pxy * W) @ pxy.T)
-        self.S = 0.5 * (S + S.T)
+        ortho = getattr(cfg, "ortho_D", None)
+        if ortho is not None:                     # ортотропия (v0.7.0)
+            self.D = float(ortho[0])
+            self.S = assemble_ortho(pxx, pyy, pxy, W, ortho) / self.D
+        else:
+            nu = cfg.nu
+            S = (lap * W) @ lap.T - (1.0 - nu) * ((pxx * W) @ pyy.T
+                                                  + (pyy * W) @ pxx.T
+                                                  - 2.0 * (pxy * W) @ pxy.T)
+            self.S = 0.5 * (S + S.T)
+        kw = float(getattr(cfg, "winkler", 0.0))  # основание Винклера (v0.7.0
+        if kw > 0.0:                              # для mixed — полная форма)
+            M = (psi * W) @ psi.T
+            self.S = self.S + (kw / self.D) * 0.5 * (M + M.T)
+        self.S = _add_point_supports(
+            self.S, self.D, cfg,
+            lambda XX, YY: (self._ev("g", np.asarray(XX, float),
+                                     np.asarray(YY, float))
+                            * self.basis.values(XX, YY)))
         self._psi, self._W = psi, W
         self._lap_psi = lap
         self._d = 1.0 / np.sqrt(np.diag(self.S))
@@ -604,6 +703,11 @@ class MixedRectPlate:
         wxx = gxx * v + 2.0 * gx * vx + g * vxx
         wyy = gyy * v + 2.0 * gy * vy + g * vyy
         wxy = gxy * v + gx * vy + gy * vx + g * vxy
+        ortho = getattr(self.cfg, "ortho_D", None)
+        if ortho is not None:                     # ортотропный конститутив (v0.7.0)
+            D11, D12, D22, D66 = (float(t) for t in ortho)
+            return (-(D11 * wxx + D12 * wyy), -(D12 * wxx + D22 * wyy),
+                    -2.0 * D66 * wxy)
         nu = self.cfg.nu
         return (-self.D * (wxx + nu * wyy), -self.D * (wyy + nu * wxx),
                 -self.D * (1.0 - nu) * wxy)

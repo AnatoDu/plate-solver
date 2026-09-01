@@ -36,7 +36,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from . import geometry
+from . import exprfield, geometry
 from .clamped import ClampedPlate
 from .config import Config
 from .contact import ContactMOR, ContactResult
@@ -73,8 +73,11 @@ def build_domain(spec: GeometrySpec) -> geometry.Domain:
         elif spec.kind == "compose":
             dom = geometry.make_compose(spec.tree)
         else:
+            from .problem import GEOMETRY_KINDS
+
             raise CaseError(f"geometry.kind: получено {spec.kind!r}, ожидалось "
-                            f"значение реестра v0.2, см. {_SCHEMA_DOC}#geometry")
+                            f"{' | '.join(GEOMETRY_KINDS)}, "
+                            f"см. {_SCHEMA_DOC}#geometry")
     except CaseError:
         raise
     except ValueError as e:                    # напр. пустое пересечение bbox в compose
@@ -127,6 +130,8 @@ class Result:
     w_max_classic: float | None = None  # классический w_max (когда theory=ktn)
     # собственная задача (§eigen v0.6.4): EigenPair (значения λ_cr/ω + формы)
     eigen: object | None = None
+    # точечные опоры (v0.7.0): реакции R_j = k·w(P_j) в порядке supports.points
+    support_reactions: tuple | None = None
 
     def scalars(self) -> dict:
         """Скалярная сводка (то, что уходит в result.json и таблицы)."""
@@ -159,6 +164,10 @@ class Result:
         if self.eigen is not None:
             out.update({"eigen_kind": self.eigen.kind,
                         "eigen_values": [float(v) for v in self.eigen.values]})
+        if self.support_reactions is not None:
+            # ключ добавляется ТОЛЬКО при наличии [supports] — прежние
+            # result.json бит-неизменны
+            out["support_reactions"] = [float(v) for v in self.support_reactions]
         return out
 
     def save(self, out_dir: str | Path | None = None,
@@ -193,10 +202,16 @@ class Result:
         return out / "result.json"
 
     def moments_on_grid(self):
-        """Моменты (Mx, My, Mxy) на фоновой сетке (NaN вне Ω)."""
+        """Моменты (Mx, My, Mxy) на фоновой сетке (NaN вне Ω).
+
+        Термоизгиб (v0.7.0): полные моменты несут сдвиг ``−M_T`` (Mx, My) —
+        ЕДИНАЯ точка сдвига (solver.moments_at/bending_moments_* возвращают
+        только упругую часть ``−D·∇∇w``).
+        """
         from .ladder import bending_moments_full
 
         solver = self._plate
+        m_t = float(getattr(self.config, "thermal_moment", 0.0))
         inside = np.isfinite(self.w_grid)
         if hasattr(solver, "moments_at"):                   # mixed-структура
             Mx = np.full(self.Xg.shape, np.nan)
@@ -204,6 +219,9 @@ class Result:
             Mxy = np.full(self.Xg.shape, np.nan)
             mx, my, mxy = solver.moments_at(self._c, self.Xg[inside], self.Yg[inside])
             Mx[inside], My[inside], Mxy[inside] = mx, my, mxy
+            if m_t != 0.0:
+                Mx[inside] -= m_t
+                My[inside] -= m_t
             return Mx, My, Mxy
         p_struct = 2 if hasattr(solver, "S") else 1        # ω²Φ у защемления
         Mx = np.full(self.Xg.shape, np.nan)
@@ -213,14 +231,50 @@ class Result:
         # линии излома (f₁ = f₂): гессиан структуры там не определён — точки
         # остаются NaN и маскируются в картах (NOTES §19).
         with np.errstate(invalid="ignore", divide="ignore"):
-            mx, my, mxy = bending_moments_full(
-                solver.domain, solver.basis, self._c, p_struct,
-                self.config.D, self.config.nu, self.Xg[inside], self.Yg[inside])
+            if self.config.ortho_D is not None:            # ортотропия (v0.7.0)
+                from .ladder import bending_moments_ortho
+
+                mx, my, mxy = bending_moments_ortho(
+                    solver.domain, solver.basis, self._c, p_struct,
+                    self.config.ortho_D, self.Xg[inside], self.Yg[inside])
+            elif getattr(self.config, "h_expr", None) is not None:
+                # переменная толщина (v0.7.0): моменты с ЛОКАЛЬНОЙ D(x, y) —
+                # формулы линейны по D: считаем с D=1 и домножаем поточечно
+                mx, my, mxy = bending_moments_full(
+                    solver.domain, solver.basis, self._c, p_struct,
+                    1.0, self.config.nu, self.Xg[inside], self.Yg[inside])
+                d_loc = self._local_D(self.Xg[inside], self.Yg[inside])
+                mx, my, mxy = d_loc * mx, d_loc * my, d_loc * mxy
+            else:
+                mx, my, mxy = bending_moments_full(
+                    solver.domain, solver.basis, self._c, p_struct,
+                    self.config.D, self.config.nu, self.Xg[inside], self.Yg[inside])
         Mx[inside], My[inside], Mxy[inside] = mx, my, mxy
+        if m_t != 0.0:
+            Mx[inside] -= m_t
+            My[inside] -= m_t
         return Mx, My, Mxy
 
+    def _local_h(self, X, Y):
+        """Толщина h(x, y) в точках (model.h_expr, v0.7.0)."""
+        e_h = exprfield.parse_field("model.h_expr", self.config.h_expr)
+        h = exprfield.field_values(e_h, np.asarray(X, float),
+                                   np.asarray(Y, float), key="model.h_expr")
+        return np.broadcast_to(np.asarray(h, float), np.shape(X)).copy()
+
+    def _local_D(self, X, Y):
+        """Жёсткость D(x, y) = E·h(x, y)³/12(1−ν²) в точках (v0.7.0)."""
+        cfg = self.config
+        return cfg.E * self._local_h(X, Y) ** 3 / (12.0 * (1.0 - cfg.nu**2))
+
     def _q_faces_on_grid(self):
-        """(q_top, q_bottom) на сетке: нагрузка сверху, реакция снизу (§19)."""
+        """(q_top, q_bottom) на сетке: нагрузка сверху, реакция снизу (§19).
+
+        Ветвление по ВСЕМ типам нагрузки — общего else нет (у expr/line
+        нет x0, их нельзя трактовать как точечное пятно).
+        ``line`` и точная δ (``point exact``) — МЕРЫ, а не поверхностные
+        плотности: q_top ≡ 0 (поправка обжатия ν/(1−ν)·q_n к ним неприменима).
+        """
         load = self.problem.load
         inside = np.isfinite(self.w_grid)
         q_top = np.zeros(self.Xg.shape)
@@ -230,11 +284,22 @@ class Result:
             zone = build_domain(load.zone)
             m = inside & (zone.omega(self.Xg, self.Yg) > 0.0)
             q_top[m] = self.config.q0
-        else:                                            # point: пятно eps_eff
+        elif load.type == "gaussian":
+            d2 = (self.Xg - load.x0) ** 2 + (self.Yg - load.y0) ** 2
+            q_top[inside] = (float(load.q0)
+                             * np.exp(-d2 / (2.0 * load.sigma**2)))[inside]
+        elif load.type == "expr":
+            e = exprfield.parse_field("load.expr", load.expr)
+            v = exprfield.field_values(e, self.Xg[inside], self.Yg[inside],
+                                       key="load.expr")
+            q_top[inside] = float(load.q0) * np.broadcast_to(
+                np.asarray(v, float), self.Xg[inside].shape)
+        elif load.type == "point" and not load.exact:    # пятно eps_eff
             eps = self.eps_eff if self.eps_eff is not None else 0.0
             m = inside & (((self.Xg - load.x0) ** 2 + (self.Yg - load.y0) ** 2)
                           <= eps**2)
             q_top[m] = self.config.q0
+        # line | point exact: сосредоточенные меры — q_top остаётся нулевым
         q_bot = np.zeros(self.Xg.shape)
         if self.contact is not None:
             q_bot = np.nan_to_num(self.contact.r_grid, nan=0.0)
@@ -368,7 +433,23 @@ class Result:
         Ny = np.nan_to_num(forces["Ny"], nan=0.0) if has_N else Nz
         Nxy = np.nan_to_num(forces["Nxy"], nan=0.0) if has_N else Nz
         q_top, q_bot = self._q_faces_on_grid()
-        s = stresses_faces(Mx, My, Mxy, h=self.config.h, nu=self.config.nu,
+        if self.config.ortho_D is not None:
+            # ортотропия (v0.7.0): изотропная поправка обжатия ν/(1−ν)·q_n в
+            # σ выведена из изотропного 3D-закона — для ортотропа опускается
+            # (σ = 6M/h² от ОРТОТРОПНЫХ моментов)
+            q_top = np.zeros_like(q_top)
+            q_bot = np.zeros_like(q_bot)
+        h_stress = self.config.h
+        h_grid = None
+        if getattr(self.config, "h_expr", None) is not None:
+            # переменная толщина (v0.7.0): σ = 6M/h(x, y)² с ЛОКАЛЬНОЙ h;
+            # вне Ω — NaN (выражение может быть не определено за областью)
+            inside_h = np.isfinite(self.w_grid)
+            h_grid = np.full(self.Xg.shape, np.nan)
+            h_grid[inside_h] = self._local_h(self.Xg[inside_h],
+                                             self.Yg[inside_h])
+            h_stress = h_grid
+        s = stresses_faces(Mx, My, Mxy, h=h_stress, nu=self.config.nu,
                            q_top=q_top, q_bottom=q_bot, Nx=Nx, Ny=Ny, Nxy=Nxy)
         w_top, w_bot, dh = self.faces_on_grid()
         payload = {
@@ -380,6 +461,8 @@ class Result:
                                                ensure_ascii=False)),
             "h": np.float64(self.config.h), "nu": np.float64(self.config.nu),
         }
+        if h_grid is not None:
+            payload["h_grid"] = h_grid            # опциональный ключ (h_expr)
         payload.update(s)
         payload["svm_top"] = von_mises(s["sx_top"], s["sy_top"], s["txy_top"])
         payload["svm_bot"] = von_mises(s["sx_bot"], s["sy_bot"], s["txy_bot"])
@@ -554,9 +637,11 @@ def _load_laplacian(load, quad) -> np.ndarray | None:
     """Лапласиан нагрузки Δq в узлах квадратуры для члена КТН (A) ``−h_*²Δq`` (§7).
 
     Аналитична для гладкой нагрузки: у гауссовой ``q = q0·exp(−r²/(2σ²))``
-    ``Δq = q·(r²−2σ²)/σ⁴``. Для равномерной ``Δq ≡ 0`` (член A исчезает).
-    Разрывные нагрузки (patch/point) не дают гладкой Δq ⇒ ``None`` (член A
-    опущен, отражено пометкой).
+    ``Δq = q·(r²−2σ²)/σ⁴``; у ``expr`` — СИМВОЛЬНОЕ дифференцирование
+    (``exprfield.field_laplacian``, точное). Для равномерной ``Δq ≡ 0``
+    (член A исчезает). Разрывные нагрузки (patch/point) и негладкие выражения
+    (abs/min/max) гладкой Δq не дают ⇒ ``None`` (член A опущен, отражено
+    пометкой).
     """
     if load.type == "gaussian":
         s2 = load.sigma**2
@@ -565,6 +650,16 @@ def _load_laplacian(load, quad) -> np.ndarray | None:
         return q * (d2 - 2.0 * s2) / s2**2
     if load.type == "uniform":
         return np.zeros(quad.x.size)
+    if load.type == "expr":
+        e = exprfield.parse_field("load.expr", load.expr)
+        try:
+            v = exprfield.field_values(exprfield.field_laplacian(e),
+                                       quad.x, quad.y, key="load.expr (Δq)")
+        except (ValueError, NotImplementedError, NameError, TypeError):
+            return None                     # Δq негладкая — член A опущен
+        if np.ndim(v) == 0:
+            return float(load.q0) * float(v) * np.ones(quad.x.size)
+        return float(load.q0) * v
     return None
 
 
@@ -582,6 +677,18 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
         # гладкая локализованная q = q0·exp(−r²/(2σ²)) (§7); q0_eff — амплитуда
         d2 = (quad.x - load.x0) ** 2 + (quad.y - load.y0) ** 2
         f = float(load.q0) * np.exp(-d2 / (2.0 * load.sigma**2))
+        return f, float(load.q0), None
+
+    if load.type == "expr":
+        # нагрузка выражением q = q0·g(x, y) (v0.7.0); q0_eff — амплитуда
+        # (семантика поправки ktn_linear и нормировок МОР — как у gaussian)
+        e = exprfield.parse_field("load.expr", load.expr)
+        try:
+            v = exprfield.field_values(e, quad.x, quad.y, key="load.expr")
+        except ValueError as err:
+            raise CaseError(f"{err}, см. {_SCHEMA_DOC}#load") from None
+        f = float(load.q0) * (np.full(quad.x.size, float(v))
+                              if np.ndim(v) == 0 else v)
         return f, float(load.q0), None
 
     # point: регуляризованный patch, круговое пятно радиуса eps_eff
@@ -624,6 +731,10 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     t0 = time.perf_counter()
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
+    if problem.supports.points:                           # точечные опоры (v0.7.0)
+        _check_support_points(problem, cfg, dom, warnings)
+    if problem.model.h_expr is not None:                  # перем. толщина (v0.7.0)
+        _check_h_expr(problem, cfg, dom, warnings)
 
     if problem.eigen is not None:                         # собственная задача (§eigen)
         t_build = time.perf_counter() - t0
@@ -668,7 +779,22 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
         solver = PlateBending.from_config(dom, cfg)
     quad = solver.quad
 
-    f_values, q0_eff, eps_eff = _load_values(problem, dom, quad, warnings)
+    if problem.load.type == "line" or (problem.load.type == "point"
+                                       and problem.load.exact):
+        # линейная нагрузка / точная δ (v0.7.0): не площадная плотность —
+        # готовый вектор собирается в трактах; cfg.q0 не трогается
+        f_values, q0_eff, eps_eff = None, cfg.q0, None
+    else:
+        f_values, q0_eff, eps_eff = _load_values(problem, dom, quad, warnings)
+    if (problem.model.theory == "ktn_linear" and problem.load.type == "expr"
+            and f_values is not None and float(np.min(f_values)) < 0.0):
+        # поправка ktn_linear использует СКАЛЯРНУЮ амплитуду q0 (как у
+        # gaussian); для знакопеременной нагрузки константный сдвиг
+        # cq·q0 не имеет смысла локально
+        warnings.append(
+            "ktn_linear: нагрузка expr знакопеременна — поправка сдвига/обжатия "
+            "использует скалярную амплитуду q0 и для таких нагрузок не "
+            "определена локально; интерпретируйте w_max_classic")
     if q0_eff != cfg.q0:
         cfg.q0 = q0_eff                     # эффективная интенсивность (КТН, МОР)
     t_build = time.perf_counter() - t0
@@ -679,6 +805,14 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     else:
         result = _solve_bending(problem, cfg, dom, solver, f_values, warnings)
     t_solve = time.perf_counter() - t0
+
+    if problem.supports.points:
+        # реакции опор R_j = k·w(P_j) (контакт с опорами отсечён валидатором)
+        xs = np.array([pt[0] for pt in problem.supports.points])
+        ys = np.array([pt[1] for pt in problem.supports.points])
+        w_p = np.asarray(solver.deflection(result._c, xs, ys), float)
+        object.__setattr__(result, "support_reactions",
+                           tuple(float(cfg.supports_stiffness * v) for v in w_p))
 
     object.__setattr__(result, "timings", {"build": t_build, "solve": t_solve})
     object.__setattr__(result, "eps_eff", eps_eff)
@@ -759,8 +893,11 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
     if problem.model.theory == "karman":
         return _solve_karman(problem, cfg, dom, solver, f, warnings)
     q = solver.quad
+    # line / точная δ (v0.7.0): готовый вектор вместо площадной плотности
+    # (недопустимые комбинации отсечены валидатором)
+    line_b = _external_load_vector(problem, dom, solver)
     if problem.bc.type in ("clamped", "mixed"):
-        c = solver.solve(f)
+        c = solver.solve(f) if line_b is None else solver.solve_from_b(line_b)
         w_nodes = solver.deflection_at_quad(c)
         evaluate = lambda X, Y: solver.deflection(c, X, Y)      # noqa: E731
         cond = float(solver.cond)
@@ -772,7 +909,8 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
             w_ktn = kp.corrected_deflection(w_nodes, lap_w, cfg.q0,
                                             np.zeros(q.x.size))
     else:
-        cM, cw = solver.solve(f)
+        cM, cw = (solver.solve(f) if line_b is None
+                  else solver.solve_from_b(line_b))
         w_nodes = solver.poisson.evaluate_at_quad(cw)
         evaluate = lambda X, Y: solver.deflection(cw, X, Y)     # noqa: E731
         c = cw
@@ -806,14 +944,21 @@ def _solve_karman(problem, cfg, dom, solver, f, warnings) -> Result:
     мембранные усилия) в поле ``_karman_ref`` — для ноутбука и анализа.
     Несошедшаяся итерация — предупреждение в ``result.json`` (не ошибка).
     """
-    kr = solver.solve(f)
+    b_ext = _external_load_vector(problem, dom, solver)
+    if b_ext is not None:
+        # line / точная δ (v0.7.0): нулевая площадная плотность + готовый
+        # вектор b_extra (наращивается теми же n_load_steps)
+        kr = solver.solve(np.zeros(solver.quad.x.size), b_extra=b_ext)
+    else:
+        kr = solver.solve(f)
     c = kr.cw
     w_nodes = kr.w_nodes
     warn = list(warnings)
     if not kr.converged:
         last = kr.history[-1][2] if kr.history else float("nan")
         warn.append(
-            f"karman: итерация Пикара не достигла karman_tol за karman_max_iter "
+            f"karman: итерация ({getattr(cfg, 'karman_method', 'picard')}) не "
+            f"достигла karman_tol за karman_max_iter "
             f"(последняя относительная невязка {last:.2e}); увеличьте "
             f"karman_max_iter или n_load_steps")
     Xg, Yg, W = _grid_fields(dom, cfg, lambda X, Y: solver.deflection(c, X, Y))
@@ -839,16 +984,18 @@ def _solve_ktn_full(problem, cfg, dom, solver, f, warnings) -> Result:
     warn = list(warnings)
     lap_q = _load_laplacian(problem.load, solver.quad)   # член (A): −h_*²Δq (§7)
     solver.set_load_laplacian(lap_q)
-    if problem.load.type not in ("uniform", "gaussian"):
+    if lap_q is None:
         warn.append(
             f"ktn_full: член −h_*²Δq опущен для load.type = '{problem.load.type}' "
-            "(Δq не гладкая); проявляется при uniform (Δq=0) и gaussian")
+            "(Δq не гладкая); аналитический Δq есть у uniform (Δq=0), gaussian "
+            "и гладких expr")
     kr = solver.solve(f)
     c = kr.cw
     if not kr.converged:
         last = kr.history[-1][2] if kr.history else float("nan")
         warn.append(
-            f"ktn_full: итерация Пикара не достигла порога за karman_max_iter "
+            f"ktn_full: итерация ({getattr(cfg, 'ktn_method', 'picard')}) не "
+            f"достигла порога за karman_max_iter "
             f"(последняя относительная невязка {last:.2e}); увеличьте "
             f"karman_max_iter или n_load_steps")
     Xg, Yg, W = _grid_fields(dom, cfg, lambda X, Y: solver.deflection(c, X, Y))
@@ -862,11 +1009,157 @@ def _solve_ktn_full(problem, cfg, dom, solver, f, warnings) -> Result:
     return res
 
 
+def _line_load_vector(load, dom, solver, n_gauss: int = 96) -> np.ndarray:
+    r"""Вектор линейной нагрузки (v0.7.0): ``b_i = P·∫_seg ψ_i ds``.
+
+    1D Гаусс–Лежандр по отрезку (подынтегральная — гладкая структура
+    ``ω^m·T_k`` вдоль отрезка: n = 32 узла дают уже ~1e-13, 96 — с запасом;
+    внутренняя константа, НЕ ключ схемы). Ограды: узел отрезка вне Ω — отказ;
+    отрезок целиком на ∂Ω (ψ ≡ 0) — отказ (иначе решение МОЛЧА нулевое);
+    концы НА границе допустимы (узлы Гаусса открытые).
+    """
+    x0, y0 = load.p0
+    x1, y1 = load.p1
+    t, wg = np.polynomial.legendre.leggauss(n_gauss)
+    xs = 0.5 * (x0 + x1) + 0.5 * (x1 - x0) * t
+    ys = 0.5 * (y0 + y1) + 0.5 * (y1 - y0) * t
+    length = float(np.hypot(x1 - x0, y1 - y0))
+    # ограда «в Ω» — на ПЛОТНОЙ равномерной выборке (узлы Гаусса редки в
+    # середине — узкий вырез мог бы проскочить между ними)
+    td = np.linspace(-1.0, 1.0, 513)
+    om_dense = np.asarray(dom.omega(0.5 * (x0 + x1) + 0.5 * (x1 - x0) * td,
+                                    0.5 * (y0 + y1) + 0.5 * (y1 - y0) * td),
+                          float)
+    om = np.concatenate([np.asarray(dom.omega(xs, ys), float), om_dense[1:-1]])
+    bx0, bx1, by0, by1 = dom.bbox
+    gx, gy = np.meshgrid(np.linspace(bx0, bx1, 65), np.linspace(by0, by1, 65))
+    om_scale = float(np.max(dom.omega(gx, gy)))
+    if float(np.min(om)) < 0.0:
+        raise CaseError(
+            f"load.p0/p1: отрезок [{load.p0} — {load.p1}] выходит за область "
+            f"(ω < 0 на узлах), см. {_SCHEMA_DOC}#load")
+    if float(np.max(om)) <= 1e-9 * om_scale:
+        raise CaseError(
+            f"load.p0/p1: отрезок [{load.p0} — {load.p1}] лежит на границе "
+            f"(ψ ≡ 0 — прогиб был бы тождественно нулевым), "
+            f"см. {_SCHEMA_DOC}#load")
+    psi = np.asarray(solver.structure_at(xs, ys), float)
+    return float(load.intensity) * (length / 2.0) * (psi @ wg)
+
+
+def _check_h_expr(problem, cfg, dom, warnings: list) -> None:
+    """Проверка толщины h(x, y) (v0.7.0): h > 0 на Ω; предупреждение о
+    контрасте (обусловленность ~ (h_max/h_min)³)."""
+    e_h = exprfield.parse_field("model.h_expr", problem.model.h_expr)
+    x0, x1, y0, y1 = dom.bbox
+    gx, gy = np.meshgrid(np.linspace(x0, x1, 97), np.linspace(y0, y1, 97))
+    m = np.asarray(dom.omega(gx, gy), float) > 0.0
+    try:
+        h = exprfield.field_values(e_h, gx[m], gy[m], key="model.h_expr")
+    except ValueError as err:
+        raise CaseError(f"{err}, см. {_SCHEMA_DOC}#model") from None
+    h = np.broadcast_to(np.asarray(h, float), gx[m].shape)
+    h_min, h_max = float(np.min(h)), float(np.max(h))
+    if h_min <= 0.0:
+        j = int(np.argmin(h))
+        raise CaseError(
+            f"model.h_expr: h = {h_min:.4g} ≤ 0 в точке ({gx[m][j]:.4g}, "
+            f"{gy[m][j]:.4g}) — толщина обязана быть положительной, "
+            f"см. {_SCHEMA_DOC}#model")
+    if h_max / h_min > 3.0:
+        warnings.append(
+            f"model.h_expr: контраст толщины h_max/h_min = {h_max / h_min:.2f} "
+            "> 3 — обусловленность растёт ~ (h_max/h_min)³, следите за cond_A")
+
+
+def _point_load_vector(load, dom, solver) -> np.ndarray:
+    r"""Вектор ТОЧНОЙ δ-силы (v0.7.0): ``b_i = P·ψ_i(x0, y0)``.
+
+    Точечное вычисление ограничено на H² в 2D (дискретизация точная, без
+    квадратуры); сходимость решения по базису — алгебраическая, ~p⁻¹·⁵
+    в точке приложения (функция Грина ~r²ln r; у точечных ОПОР показатель
+    мягче, ~p⁻², — там особенность в реакции, а не в поле нагрузки).
+    Точка обязана лежать
+    внутри Ω (на границе ψ ≡ 0 — сила ушла бы в опору тождественно).
+    """
+    om = float(np.asarray(dom.omega(np.array([load.x0]),
+                                    np.array([load.y0])), float)[0])
+    if not om > 0.0:
+        raise CaseError(
+            f"load.x0/y0: точка ({load.x0}, {load.y0}) вне области или на "
+            f"границе (ω ≤ 0) при exact = true, см. {_SCHEMA_DOC}#load")
+    psi = np.asarray(solver.structure_at(np.array([float(load.x0)]),
+                                         np.array([float(load.y0)])), float)[:, 0]
+    return float(load.P) * psi
+
+
+def _external_load_vector(problem, dom, solver):
+    """Готовый вектор нагрузки вне площадной квадратуры: line | точная δ."""
+    if problem.load.type == "line":
+        return _line_load_vector(problem.load, dom, solver)
+    if problem.load.type == "point" and problem.load.exact:
+        return _point_load_vector(problem.load, dom, solver)
+    return None
+
+
+def _check_pair_gap_expr(spec, gap_val) -> None:
+    """Зазор пары ≥ 0 для expr-поля (v0.7.0; зеркало скалярного правила).
+
+    У унаследованных kind plane/steps проверки min Δ ≥ 0 в парном тракте
+    исторически нет — их поведение сознательно сохранено; новая
+    проверка — только для expr.
+    """
+    if (spec.kind == "expr" and np.ndim(gap_val) > 0
+            and float(np.min(gap_val)) < 0.0):
+        raise CaseError(
+            f"contact.gap_expr: min Δ = {float(np.min(gap_val)):.3g} < 0 "
+            f"между пластинами (зазор пары ≥ 0; Δ = 0 — касание), "
+            f"см. {_SCHEMA_DOC}#contact")
+
+
+def _check_support_points(problem, cfg, dom, warnings: list) -> None:
+    """Проверка точек [supports] (v0.7.0): внутри Ω; предупреждения у кромки/при
+    экстремальной жёсткости (риск потери ПД — МНК-fallback)."""
+    pts = problem.supports.points
+    xs = np.array([pt[0] for pt in pts])
+    ys = np.array([pt[1] for pt in pts])
+    om = np.asarray(dom.omega(xs, ys), float)
+    x0, x1, y0, y1 = dom.bbox
+    gx, gy = np.meshgrid(np.linspace(x0, x1, 65), np.linspace(y0, y1, 65))
+    om_max = float(np.max(dom.omega(gx, gy)))
+    for i, (o, pt) in enumerate(zip(om, pts, strict=True)):
+        if not o > 0.0:
+            raise CaseError(
+                f"supports.points[{i}]: точка {pt} вне области или на границе "
+                f"(ω ≤ 0) — опора на кромке уже содержится в КУ, "
+                f"см. {_SCHEMA_DOC}#supports")
+        if o < 0.05 * om_max:
+            warnings.append(
+                f"supports.points[{i}]: опора {pt} у кромки — эффективная "
+                f"жёсткость гаснет как k·ω^(2m)(P)")
+    k = float(cfg.supports_stiffness)
+    scale = cfg.D / min(x1 - x0, y1 - y0) ** 3
+    if k >= 1e12 * scale:
+        # при k ~ 1e14·D МНК-fallback молча искажает реакции на десятки
+        # процентов — жёсткий отказ вместо тихой деградации
+        raise CaseError(
+            f"supports.stiffness = {k:.3g} ≥ 1e12·D/a³ — матрица теряет "
+            "положительную определённость, МНК-fallback искажает реакции; "
+            f"жёсткая опора достигается уже при k ≈ 1e6·D/a³, "
+            f"см. {_SCHEMA_DOC}#supports")
+    if k >= 1e8 * scale:
+        warnings.append(
+            f"supports.stiffness = {k:.3g} ≥ 1e8·D/a³ — риск потери "
+            "положительной определённости (МНК-fallback, потеря точности "
+            "реакции ~1e-4); жёсткая опора достигается уже при k ≈ 1e6·D/a³")
+
+
 def _gap_field_values(spec, quad):
     """Поле зазора Δ(x, y) в узлах квадратуры по GapSpec (A1.2); const → скаляр.
 
     ``const`` возвращает СКАЛЯР — путь и арифметика тождественны скалярному
-    ``gap`` v0.2 (ворота-тождество A1.3-т1).
+    ``gap`` v0.2 (ворота-тождество A1.3-т1). Константный ``expr`` также
+    редуцируется в скаляр (тот же путь бит-точно).
     """
     if spec.kind == "const":
         return spec.value
@@ -875,6 +1168,13 @@ def _gap_field_values(spec, quad):
     if spec.kind == "paraboloid":
         return spec.apex + ((quad.x - spec.cx) ** 2 + (quad.y - spec.cy) ** 2) \
             / (2.0 * spec.r_curv)
+    if spec.kind == "expr":                             # Δ = f(x, y) (v0.7.0)
+        e = exprfield.parse_field("contact.gap_expr", spec.expr)
+        try:
+            return exprfield.field_values(e, quad.x, quad.y,
+                                          key="contact.gap_expr")
+        except ValueError as err:
+            raise CaseError(f"{err}, см. {_SCHEMA_DOC}#contact") from None
     g = np.full(quad.x.size, float(spec.base))          # steps
     for zone_geom, value in spec.zones:
         zdom = build_domain(zone_geom)
@@ -895,7 +1195,8 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
             return _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings)
         if problem.contact.force is not None:
             return _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings)
-        return _solve_contact_nonlinear(problem, cfg, dom, solver, warnings)
+        return _solve_contact_nonlinear(problem, cfg, dom, solver, f_values,
+                                        warnings)
     q = solver.quad
     # Δ: скаляр gap | gap_factor·w_free | поле [contact.gap] (A1)
     f = _uniform(cfg, q) if f_values is None else f_values
@@ -943,10 +1244,19 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
     mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=delta_val, ktn=ktn,
                      load_values=f_values)
     cres = mor.solve()
+    warn = list(warnings)
+    if not cres.converged:
+        # несходимость МОР — явное предупреждение (симметрично нелинейным
+        # трактам): при r ≡ 0 результат неотличим от свободного решения
+        last = float(cres.residual_history[-1]) if len(cres.residual_history) else float("nan")
+        warn.append(
+            f"контакт: МОР не достиг порога за max_iter (последняя невязка "
+            f"{last:.2e}); увеличьте max_iter/подберите beta — при r ≡ 0 "
+            "результат может совпадать со СВОБОДНЫМ решением")
     w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes
     res = Result(problem=problem, config=cfg, w_max=float(np.max(np.abs(w_nodes))),
                  cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
-                 w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
+                 w_grid=cres.w_grid, warnings=tuple(warn), contact=cres,
                  delta=float(delta), w_free_max=w_free,
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
@@ -968,17 +1278,19 @@ def _contact_metrics_nl(r, disp, gap, gap_ref, q0):
     return comp, over
 
 
-def _solve_contact_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
+def _solve_contact_nonlinear(problem, cfg, dom, solver, f_values,
+                             warnings) -> Result:
     r"""Нелинейный контакт МОР поверх КТН (§4): karman | ktn_full на защемлении.
 
     ``solver`` — единый :class:`~plate_solver.ktn_solver.KTNSolver` (пресет
     теории). Реакция ``r`` определяется вокруг ПОЛНОГО нелинейного решателя КТН
     (:class:`~plate_solver.contact_nl.NonlinearContactMOR`); контакт «щупает»
     ЛИЦЕВУЮ поверхность (условие Синьорини на грани, ``u_c = w + (h_c²−h_*²)Δw``;
-    для ``karman`` коэффициент кривизны ноль ⇒ по срединной). Нагрузка
-    равномерная (гарантировано валидатором); зазор Δ(x, y) и зона препятствия —
-    как в линейном контакте. Результат адаптируется в :class:`ContactResult`
-    (тот же пайплайн сетки/VTK/фигур/лицевых величин).
+    для ``karman`` коэффициент кривизны ноль ⇒ по срединной). Нагрузка —
+    равномерная либо гладкое поле gaussian/expr (v0.7.0; гарантировано
+    валидатором; нормировка усиления — по амплитуде cfg.q0, как в классическом
+    МОР); зазор Δ(x, y) и зона препятствия — как в линейном контакте. Результат
+    адаптируется в :class:`ContactResult` (тот же пайплайн сетки/VTK/фигур).
     """
     from .contact import sample_fields_on_grid
     from .contact_nl import NonlinearContactMOR
@@ -986,9 +1298,16 @@ def _solve_contact_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
     q = solver.quad
     c = problem.contact
     warn = list(warnings)
+    if problem.model.theory == "ktn_full" and problem.load.type != "uniform":
+        warn.append(
+            "ktn_full+контакт: член −h_*²Δq в контактном тракте опущен "
+            "(для uniform он тождественно нулевой; для gaussian/expr — "
+            "приближение порядка h_*²)")
 
     # свободное (без контакта) нелинейное решение: w_free для gap_factor/отчёта.
-    free = solver.solve(np.full(q.x.size, float(cfg.q0)))
+    f_arr = (np.full(q.x.size, float(cfg.q0)) if f_values is None
+             else np.asarray(f_values, float))
+    free = solver.solve(f_arr)
     w_free = float(np.max(np.abs(free.w_nodes)))
 
     # зона основания (дефолт — вся Ω); предикат для NonlinearContactMOR.
@@ -1022,7 +1341,8 @@ def _solve_contact_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
         delta = gmin
 
     mor = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
-                              scheme=cfg.contact_scheme, gain_mode=cfg.contact_gain)
+                              scheme=cfg.contact_scheme, gain_mode=cfg.contact_gain,
+                              f_values=f_values)
     nres = mor.solve()
     if not nres.converged:
         last = float(nres.residual_history[-1]) if nres.residual_history.size else float("nan")
@@ -1229,6 +1549,7 @@ def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
         gap_val = c.gap_factor * w_free
     elif c.gap_field is not None:
         gap_val = _gap_field_values(c.gap_field, q1)
+        _check_pair_gap_expr(c.gap_field, gap_val)
     else:
         gap_val = 0.0
 
@@ -1293,6 +1614,7 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
         gap_val = c.gap_factor * w_free1
     elif c.gap_field is not None:
         gap_val = _gap_field_values(c.gap_field, q1)
+        _check_pair_gap_expr(c.gap_field, gap_val)
     else:
         gap_val = 0.0
 

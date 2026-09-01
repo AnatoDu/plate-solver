@@ -15,8 +15,8 @@ authors:
     given-names: Anatoly A.
     orcid: "https://orcid.org/0009-0009-9118-4629"
     affiliation: "Pitirim Sorokin Syktyvkar State University"
-version: 0.6.6
-date-released: 2026-07-24
+version: 0.7.0
+date-released: 2026-09-01
 repository-code: "https://github.com/AnatoDu/plate-solver"
 url: "https://doi.org/10.5281/zenodo.21218627"
 doi: 10.5281/zenodo.21218627
@@ -26,7 +26,7 @@ identifiers:
     description: Concept DOI (all versions; resolves to latest)
   - type: doi
     value: 10.5281/zenodo.21282756
-    description: Version DOI (последняя опубликованная — v0.6.2; DOI для v0.6.3 минтуется при релизе Zenodo)
+    description: Version DOI (последняя сминченная на момент правки — v0.6.2; version-DOI новых релизов минтуется Zenodo при каждом GitHub-релизе — см. Versions на странице записи)
 license: MIT
 keywords:
   - пластины

@@ -43,8 +43,14 @@ print(res.w_max)
 ### config — численные параметры
 
 - `Config` — материал (E, nu, h → D), дискретизация (p, Q, grid_n),
-  контакт (Delta, beta, max_iter, tol, stop). Единственный источник
-  дефолтов физики.
+  контакт (Delta, beta, max_iter, tol, stop; `contact_scheme`/`contact_gain`
+  и окно Андерсона `mor_anderson` — нелинейный МОР, v0.6.3–0.6.5),
+  нелинейная итерация (`n_load_steps`, `karman_relax/max_iter/tol`,
+  `karman_method`/`ktn_method` — Пикар|Ньютон), основание Винклера `winkler`
+  (v0.6.6), точечные опоры `supports_points`/`supports_stiffness`,
+  ортотропия `ortho_D` (изгиб) и `ortho_A` (мембрана ортотропного Кармана,
+  из инженерного набора), переменная толщина `h_expr`, термомомент
+  `thermal_moment` (все — v0.7.0). Единственный источник дефолтов физики.
 
 ## Геометрия (R-функции)
 
@@ -117,7 +123,9 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 
 ## Нелинейный контакт МОР+КТН (`contact_nl.py`, v0.6.0)
 
-- `contact_nl.NonlinearContactMOR(solver, cfg, gap, foundation_mask, scheme)` —
+- `contact_nl.NonlinearContactMOR(solver, cfg, gap, foundation_mask, scheme,
+  f_values)` — `f_values` (v0.7.0): произвольное поле нагрузки в узлах
+  квадратуры (позиционное основание; gaussian/expr через case);
   метод обобщённой реакции вокруг полного нелинейного `KTNSolver` (§4). Лицевое
   условие Синьорини `u_c = w + (h_c²−h_*²)Δw ≤ z` (кривизна масштабируется
   теорией: 0 для classic/karman ⇒ контакт по срединной; физическая для ktn_full).
@@ -344,7 +352,10 @@ print("сертификат пройден:", all(abs(v) <= 1e-8
   `strip_hinge_wmax`, `strip_clamped_exact`, `strip_clamped_wmax`,
   `Strip1DResult`, `solve_strip_1d`), синус-нагрузка (`rect_sin_load`,
   `rect_sin_exact`, `rect_sin_wmax`), ряд Навье (`navier_uniform`,
-  `navier_uniform_center`), MMS (`mms_load_and_exact`,
+  `navier_uniform_center`; линейная нагрузка `x = ξ` — `navier_line`,
+  `navier_line_center`; ортотропный ряд Лехницкого —
+  `navier_uniform_center_ortho`; ортотропные моменты RFM-решения —
+  `bending_moments_ortho`; все v0.7.0), MMS (`mms_load_and_exact`,
   `mms_clamped_rect_w`, `mms_clamped_disk_w`; `mms_ktn_load_and_exact` —
   изготовленное решение ПОЛНОЙ КТН при замороженных усилиях, обращает сильную
   форму `D Δ²w − (I−h_ψ²Δ)L(w) = (I−h_*²Δ)q` с точным полиномиальным `q`),
@@ -354,6 +365,19 @@ print("сертификат пройден:", all(abs(v) <= 1e-8
   Кирхгоф-Морли/Marcus-P2, `solve_rect_fem_mixed` — смешанные стороны,
   включая свободные), сравнение (`FemSolution`, `FemComparison`,
   `compare_l2`, `compare_rfm_vs_fem`).
+- `exprfield` — безопасные выражения f(x, y) case-схемы (v0.7.0):
+  `parse_field(key, s)` — ТОКЕН-ОГРАДА до sympy (закрытый белый список имён,
+  ресурсные пороги; parse_expr — это eval, ограду не ослаблять),
+  `field_values(e, x, y)` — значения в узлах (константа → скаляр),
+  `field_laplacian(e)` — символьный Δf (негладкость — честный отказ).
+  Обслуживает ключи `[load] expr`, `[contact] gap_expr`, `[model] h_expr`.
+- `fd_contact` — конечно-разностный метод-дублёр контакта на SS-прямоугольнике
+  (v0.7.0): `FDPlateSS` (бигармоника `A = D·L·L` — квадрат пятиточечного
+  Лапласиана Дирихле, ТОЧНО для шарнира на прямых кромках; splu-факторизация
+  один раз), `fd_contact_foundation(x1, x2, y1, y2, D=, q0=, gap=, …)` —
+  МОР поверх разреженной СЛАУ (схема с локальным базисом: реакция без «звона»
+  глобальных базисов), `FDContactResult`. Взаимный сертификат с RFM+Ритц МОР —
+  `tests/test_fd_contact.py`; заметка — NOTES §25.
 
 ## Графика
 

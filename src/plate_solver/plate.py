@@ -37,6 +37,12 @@ class PlateBending:
         self.quad = quad
         self.cfg = cfg
         self.D = float(cfg.D)
+        # термомомент M_T (v0.7.0): подстановка M = M̃ + M_T переводит термо
+        # в (P2): −Δw = (M̃ + M_T)/D; (P1) НЕ меняется (ΔM_T ≡ 0). На прямой
+        # кромке модель = истинный шарнир (M_n = 0 при w_tt = 0); на кривой —
+        # модель мягкого шарнира (круг: w = M_T(a²−r²)/4D, а истинный SS —
+        # сфера /2D(1+ν); истинный шарнир — theory = karman, полная форма).
+        self.M_T = float(getattr(cfg, "thermal_moment", 0.0))
         self.poisson = PoissonSolver(domain, basis, quad)
 
     @classmethod
@@ -54,7 +60,10 @@ class PlateBending:
         """
         cM = self.poisson.solve(qtilde_values)                       # (P1): −ΔM = q̃
         M_nodes = self.poisson.evaluate_at_quad(cM)                  # M в узлах (кэш, GEMV)
-        cw = self.poisson.solve(M_nodes / self.D)                    # (P2): −Δw = M/D
+        if self.M_T != 0.0:                                          # термо (v0.7.0)
+            cw = self.poisson.solve((M_nodes + self.M_T) / self.D)
+        else:
+            cw = self.poisson.solve(M_nodes / self.D)                # (P2): −Δw = M/D
         return cM, cw
 
     def solve_uniform(self, q: float | None = None):
@@ -83,7 +92,10 @@ class PlateBending:
         """
         cM = self.poisson.solve_b(b1)
         M_nodes = self.poisson.evaluate_at_quad(cM)
-        cw = self.poisson.solve(M_nodes / self.D)
+        if self.M_T != 0.0:                                          # термо (v0.7.0)
+            cw = self.poisson.solve((M_nodes + self.M_T) / self.D)
+        else:
+            cw = self.poisson.solve(M_nodes / self.D)
         return cM, cw
 
     def structure_at(self, X, Y) -> np.ndarray:
@@ -97,9 +109,12 @@ class PlateBending:
         return self.poisson.evaluate_at_quad(state[1])
 
     def lap_w_at_quad(self, state) -> np.ndarray:
-        r"""Кривизна ``Δw = −M/D`` в узлах квадратуры (из (P1), без
+        r"""Кривизна ``Δw = −(M + M_T)/D`` в узлах квадратуры (из (P1), без
         численного дифференцирования); state = (cM, cw)."""
-        return -self.poisson.evaluate_at_quad(state[0]) / self.D
+        M_nodes = self.poisson.evaluate_at_quad(state[0])
+        if self.M_T != 0.0:                                          # термо (v0.7.0)
+            M_nodes = M_nodes + self.M_T
+        return -M_nodes / self.D
 
     @staticmethod
     def coeffs_w(state) -> np.ndarray:

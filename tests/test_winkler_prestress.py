@@ -173,3 +173,90 @@ def test_prestress_requires_karman_and_load(tmp_path):
     p2.write_text(no_pre, encoding="utf-8")
     with pytest.raises(CaseError, match="prestress"):
         Problem.from_toml(str(p2))
+
+
+def test_winkler_mixed_all_hinge_navier_series():
+    """Винклер на mixed all-hinge (v0.7.0): точный ряд w_mn/(π⁴D_mn + k_w).
+
+    Свёртка +k_w∫ψψ выполнена и в MixedRectPlate; измерено rel 3.8e-9
+    при p=14.
+    """
+    import numpy as np
+
+    from plate_solver import dispatch
+    from plate_solver.ladder import _navier_odd
+    from plate_solver.problem import Problem
+
+    a, b, q0, D, kw = 2.0, 1.2, 1.0, 1.7, 300.0
+    m = _navier_odd(200)[:, None]
+    n = _navier_odd(200)[None, :]
+    Dmn = D * np.pi**4 * ((m / a) ** 2 + (n / b) ** 2) ** 2
+    coef = 16.0 * q0 / (np.pi**2 * m * n) / (Dmn + kw)
+    w_ref = float(np.sum(coef * np.sin(m * np.pi / 2) * np.sin(n * np.pi / 2)))
+    d = {
+        "geometry": {"kind": "rectangle", "x1": 0.0, "x2": a, "y1": 0.0,
+                     "y2": b},
+        "bc": {"type": "mixed", "sides": [
+            {"side": "x1", "type": "hinge"}, {"side": "x2", "type": "hinge"},
+            {"side": "y1", "type": "hinge"}, {"side": "y2", "type": "hinge"}]},
+        "load": {"type": "uniform", "q0": q0},
+        "model": {"theory": "classic", "E": 12 * (1 - 0.09) * D, "nu": 0.3,
+                  "h": 1.0, "winkler": kw},
+        "discretization": {"p": 14, "Q": 64, "grid_n": 24},
+        "verify": {"reference": "none"},
+    }
+    res = dispatch.solve(Problem.from_dict(d))
+    w_c = float(res._plate.deflection(res._c, np.array([a / 2]),
+                                      np.array([b / 2]))[0])
+    assert abs(w_c - w_ref) / w_ref < 1e-7
+
+
+def test_winkler_mixed_all_clamped_mms():
+    """Винклер на mixed all-clamped: MMS машинно (структура полиномиальная)."""
+    import numpy as np
+    import sympy as sp
+
+    from plate_solver import dispatch
+    from plate_solver.problem import Problem
+
+    x, y = sp.symbols("x y")
+    D, kw = 1.7, 300.0
+    w_ex = (x**2 - 1) ** 2 * (y**2 - sp.Rational(36, 100)) ** 2
+    q = D * (sp.diff(w_ex, x, 4) + 2 * sp.diff(w_ex, x, 2, y, 2)
+             + sp.diff(w_ex, y, 4)) + kw * w_ex
+    d = {
+        "geometry": {"kind": "rectangle", "x1": -1.0, "x2": 1.0,
+                     "y1": -0.6, "y2": 0.6},
+        "bc": {"type": "mixed", "sides": [
+            {"side": "x1", "type": "clamped"}, {"side": "x2", "type": "clamped"},
+            {"side": "y1", "type": "clamped"}, {"side": "y2", "type": "clamped"}]},
+        "load": {"type": "expr", "q0": 1.0, "expr": str(sp.expand(q))},
+        "model": {"theory": "classic", "E": 12 * (1 - 0.09) * D, "nu": 0.3,
+                  "h": 1.0, "winkler": kw},
+        "discretization": {"p": 6, "Q": 32, "grid_n": 16},
+        "verify": {"reference": "none"},
+    }
+    res = dispatch.solve(Problem.from_dict(d))
+    xs = np.array([0.0, 0.3, -0.5])
+    ys = np.array([0.0, -0.2, 0.3])
+    w_num = np.asarray(res._plate.deflection(res._c, xs, ys), float)
+    f_ex = sp.lambdify((x, y), w_ex, "numpy")
+    w_exact = np.asarray(f_ex(xs, ys), float)
+    assert np.max(np.abs(w_num - w_exact)) / np.max(np.abs(w_exact)) < 1e-12
+
+
+def test_winkler_soft_hinge_classic_still_rejected():
+    """Шарнир классики с Винклером — по-прежнему отказ (расщепление)."""
+    import pytest as _pytest
+
+    from plate_solver.problem import CaseError, Problem
+
+    d = {
+        "geometry": {"kind": "circle", "a": 1.0},
+        "bc": {"type": "soft_hinge"},
+        "load": {"type": "uniform", "q0": 4.0},
+        "model": {"theory": "classic", "winkler": 100.0},
+        "verify": {"reference": "none"},
+    }
+    with _pytest.raises(CaseError, match="model.winkler"):
+        Problem.from_dict(d)

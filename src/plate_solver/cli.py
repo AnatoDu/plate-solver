@@ -1,15 +1,21 @@
 """cli.py — командная строка комплекса.
 
-v0.2: генератор шаблонов case-файлов::
+Пять команд (pyproject ``[project.scripts]``):
 
-    plate-solve --new circle|rectangle|L|annulus [--out путь.toml]
+* ``plate-solve case.toml`` — решить постановку (result.json, fields.npz,
+  фигуры); ``--new circle|rectangle|L|annulus|ellipse|compose
+  [--out путь.toml]`` —
+  закомментированный шаблон case-файла; ``--check`` — только валидация;
+  ``--report`` — одностраничный md-отчёт;
+* ``plate-verify case.toml`` — сверка с эталонами ``[verify]`` (exit 0/1);
+  ``--sweep`` — сходимость по параметру;
+* ``plate-ladder каталог/`` — сводный md по каталогу case-файлов;
+* ``plate-replot dir/`` — перерисовка фигур из fields.npz без пересчёта;
+* ``plate-profile dir/ --key w --from x0,y0 --to x1,y1`` — профиль поля
+  вдоль сечения (+CSV, наложения нескольких результатов).
 
-Пишет закомментированный case-файл (обязательные секции заполнены,
-необязательные показаны комментариями с дефолтами) — новый случай делается
-копией шаблона и правкой нескольких строк (docs/CASE_SCHEMA.md).
-
-Решение case-файлов (`plate-solve case.toml`), `plate-verify` и
-`plate-ladder` появляются в P4 (после диспетчера P2 и эталонов P3).
+Новый случай делается копией шаблона и правкой нескольких строк
+(docs/CASE_SCHEMA.md).
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ import numpy as np
 
 from .problem import CaseError, Problem
 
-_TEMPLATE_KINDS = ("circle", "rectangle", "L", "annulus")
+_TEMPLATE_KINDS = ("circle", "rectangle", "L", "annulus", "ellipse", "compose")
 
 _GEOMETRY = {
     "circle": '''[geometry]
@@ -43,6 +49,29 @@ cut = 0.5                # квадратный вырез (0 < cut < side, вх
 kind = "annulus"
 a = 1.0                  # внешний радиус
 b = 0.4                  # внутренний радиус (0 < b < a)''',
+    "ellipse": '''[geometry]
+kind = "ellipse"
+a = 1.0                  # полуось по x
+b = 0.6                  # полуось по y''',
+    "compose": '''[geometry]
+kind = "compose"         # дерево R-операций (union|intersect|difference;
+                         #  примитивы circle|rectangle; глубина ≤ 3, ≤ 7 узлов)
+
+[geometry.tree]
+op = "difference"        # квадрат с круглым вырезом (пример)
+
+[[geometry.tree.children]]
+kind = "rectangle"
+x1 = 0.0
+x2 = 1.0
+y1 = 0.0
+y2 = 1.0
+
+[[geometry.tree.children]]
+kind = "circle"
+a = 0.2
+cx = 0.5
+cy = 0.5''',
 }
 
 # Эталон по умолчанию — что доступно данной геометрии (см. CASE_SCHEMA#verify).
@@ -63,6 +92,11 @@ tol = 1.0e-2''',
     "L": '''[verify]
 reference = "fem"        # fem | mms | none (нужен pip install -e ".[fem]")
 tol = 5.0e-2''',
+    "ellipse": '''[verify]
+reference = "none"       # аналитического эталона эллипса в реестре нет
+                         # (верификация — тест-ворота, CASE_SCHEMA#geometry)''',
+    "compose": '''[verify]
+reference = "none"       # для compose доступны mms | fem | none (не analytic)''',
 }
 
 
@@ -73,20 +107,25 @@ def template(kind: str) -> str:
             f"--new: получено {kind!r}, ожидалось {' | '.join(_TEMPLATE_KINDS)}, "
             "см. docs/CASE_SCHEMA.md#geometry"
         )
-    return f'''# case-файл plate-solver (v0.2) — шаблон «{kind}».
+    return f'''# case-файл plate-solver — шаблон «{kind}».
 # Схема и все ключи: docs/CASE_SCHEMA.md. Обязательны [geometry], [bc], [load];
 # закомментированные ключи показывают дефолты (живут в plate_solver.config.Config).
 
 {_GEOMETRY[kind]}
 
 [bc]
-type = "soft_hinge"      # soft_hinge (M=0, расщепление) | clamped (w=∂w/∂n=0)
+type = "soft_hinge"      # soft_hinge (M=0) | clamped (w=∂w/∂n=0) |
+                         #  mixed (прямоугольник, стороны [[bc.sides]])
 
 [load]
-type = "uniform"         # uniform | patch | point (см. CASE_SCHEMA.md#load)
+type = "uniform"         # uniform | patch | point | gaussian | expr | line
 q0 = 4.0                 # равномерная нагрузка (q0 > 0 «вниз»)
 # точечная сила: type = "point", P = 1.0, x0 = 0.0, y0 = 0.0
-#   (регуляризованный patch; eps по умолчанию 0.05·min(ширина, высота bbox))
+#   (+ exact = true — ТОЧНАЯ δ вместо пятна; classic clamped | karman, v0.7.0)
+# гауссова:      type = "gaussian", q0, x0, y0, sigma (гладкая, Δq аналитичен)
+# выражением:    type = "expr", q0, expr = "sin(pi*x/2.0)" (v0.7.0, #load)
+# вдоль отрезка: type = "line", p0 = [x,y], p1 = [x,y], intensity (v0.7.0)
+# thermal_moment = 3.0   # термомомент M_T при type = uniform (v0.7.0)
 
 [model]
 theory = "classic"       # classic (Кирхгоф) | karman (геом. нелинейность) |
@@ -96,22 +135,39 @@ theory = "classic"       # classic (Кирхгоф) | karman (геом. нели
 # E = 2.1e6              # дефолты Config — раскомментировать при необходимости
 # nu = 0.3
 # h = 1.0                # толщина (существенно для КТН-теорий)
+# winkler = 0.0          # упругое основание Винклера k_w ≥ 0 (v0.6.6)
+# h_expr = "0.5*(1+0.3*x)"  # переменная толщина (v0.7.0; вместо h, clamped)
+# [model.orthotropy]     # ортотропия классики (v0.7.0): D11/D12/D22/D66
 # --- только theory = "karman" (геометрическая нелинейность, docs/THEORY.md) --- #
 # inplane_bc = "immovable"  # immovable (u=v=0, основной) | movable (N·n=0)
 # n_load_steps = 1          # шагов по нагрузке (большой прогиб — увеличить)
 # karman_relax = 1.0        # недорелаксация θ ∈ (0, 1] итерации Пикара
+# karman_method = "picard"  # picard | newton (ускоритель, v0.6.4)
 
-# [contact]              # односторонний контакт (МОР); в v0.2 — только soft_hinge
+# [supports]             # точечные упругие опоры (v0.7.0, CASE_SCHEMA#supports)
+# points = [[0.0, 0.0]]
+# stiffness = 2.0e5      # жёсткая опора ≈ 1e6·D/a³
+
+# [contact]              # односторонний контакт (МОР)
 # enabled = true
-# gap_factor = 0.5       # Δ = gap_factor·w_free; либо абсолютный gap = 5.0e-5
+# gap_factor = 0.5       # Δ = gap_factor·w_free; абсолютный gap = 5.0e-5;
+#                        #  профиль выражением: gap_expr = "..." (v0.7.0)
 # beta = 1.2             # 0 < β < 2 (теорема 4)
 # max_iter = 8000
+# force = 1.0            # силовой штамп: ∫r dΩ = P (уровень ищется)
+# scheme = "merged"      # нелин. контакт КТН: merged | nested (v0.6.3)
+# mor_anderson = 5       # ускорение Андерсона внешнего МОР (v0.6.5)
 # [contact.zone]         # зона препятствия (дефолт: вся Ω); плоский штамп:
 # kind = "rectangle"
 # x1 = 0.15
 # x2 = 0.45
 # y1 = 0.15
 # y2 = 0.45
+
+# [eigen]                # собственная задача (v0.6.4; без [load]/[contact])
+# kind = "vibration"     # vibration | buckling
+# n_modes = 6
+# prestress = false      # true: преднапряжение N(w) (karman + [load], v0.6.6)
 
 [discretization]
 p = 10                   # степень Чебышёва по оси (N = (p+1)²)
@@ -125,6 +181,7 @@ grid_n = 80              # сетка вывода полей и графико�
 [output]
 dir = "results/{kind}_case"
 figures = false          # true — сохранить фигуры viz.py
+# vtk = false            # true — result.vtk (legacy VTK, v0.6.6)
 '''
 
 
@@ -309,6 +366,11 @@ def _run_case(args, do_verify: bool) -> int:
 
         rep = verify_result(res)
         print(rep.table())
+        if res.eigen is not None and not rep.rows:
+            # НЕ вакуумный PASS молча: у собственных задач эталонов в [verify]
+            # нет — честно сообщаем (числовые ворота — tests/test_eigenmodes.py)
+            print("предупреждение: эталонов для собственной задачи в [verify] "
+                  "нет — вердикт не выносится (ворота — tests/test_eigenmodes.py)")
         print(f"допуск tol = {rep.tol:g}; вердикт: {'PASS' if rep.ok else 'FAIL'}")
         return 0 if rep.ok else 1
     formats = tuple(f.strip() for f in getattr(args, "fig_format", "png,pdf")
@@ -328,6 +390,11 @@ def _run_case(args, do_verify: bool) -> int:
         print(f"результат: {path}")
         return 0
     print(f"{args.case}: w_max = {res.w_max:.6e}, cond(A) = {res.cond:.2e}")
+    if problem.model.winkler is not None and problem.model.winkler > 0.0:
+        print(f"основание Винклера: k_w = {problem.model.winkler:g}")
+    if res.support_reactions is not None:
+        rs = ", ".join(f"{v:.4e}" for v in res.support_reactions)
+        print(f"опоры: реакции R = [{rs}]")
     if problem.model.theory in ("karman", "ktn_linear", "ktn_full"):
         tp = res.thickness_params()          # интроспекция §6.3
         print(f"толщина (КТН): h_ψ² = {tp['h_psi_sq']:.4e}, h_*² = {tp['h_star_sq']:.4e}, "
@@ -459,8 +526,11 @@ def main(argv: list[str] | None = None) -> int:
             parser.print_help()
             return 0
         if args.check:
+            from . import __version__
+
             Problem.from_toml(args.case)             # вся статика — валидатор
-            print(f"{args.case}: постановка валидна (схема v0.3)")
+            print(f"{args.case}: постановка валидна "
+                  f"(plate-solver {__version__}, схема — docs/CASE_SCHEMA.md)")
             return 0
         return _run_case(args, do_verify=False)
     except CaseError as e:
@@ -553,13 +623,17 @@ def main_replot(argv: list[str] | None = None) -> int:
     parser.add_argument("--surface", default="mid",
                         choices=("mid", "top", "bottom"),
                         help="поверхность w-фигуры (лицевые — NOTES §21)")
+    from . import __version__
+
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
     from .viz import replot
 
     target = Path(args.dir)
     if not (target / "fields.npz").exists():
         print(f"plate-replot: в {target} нет fields.npz "
-              "(укажите каталог результата [output] dir)")
+              "(укажите каталог результата [output] dir)", file=sys.stderr)
         return 1
     paths = replot(target, formats=tuple(args.fig_format.split(",")),
                    dpi=args.dpi, surface=args.surface)
@@ -592,17 +666,35 @@ def main_profile(argv: list[str] | None = None) -> int:
                         help="записать CSV (s, значения по каталогам)")
     parser.add_argument("--fig", default=None,
                         help="записать фигуру (расширение задаёт формат)")
+    from . import __version__
+
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
     from .viz import overlay_profiles, section_profile
 
-    p0 = tuple(float(v) for v in args.p0.split(","))
-    p1 = tuple(float(v) for v in args.p1.split(","))
+    try:
+        p0 = tuple(float(v) for v in args.p0.split(","))
+        p1 = tuple(float(v) for v in args.p1.split(","))
+    except ValueError:
+        print("plate-profile: --from/--to ожидают пару координат x,y",
+              file=sys.stderr)
+        return 1
     if len(p0) != 2 or len(p1) != 2:
-        print("plate-profile: --from/--to ожидают пару координат x,y")
+        print("plate-profile: --from/--to ожидают пару координат x,y",
+              file=sys.stderr)
         return 1
     curves = []
     for d in args.dirs:
-        s, vals = section_profile(d, args.key, p0, p1, n=args.n)
+        if not (Path(d) / "fields.npz").exists():
+            print(f"plate-profile: в {d} нет fields.npz "
+                  "(укажите каталог результата [output] dir)", file=sys.stderr)
+            return 1
+        try:
+            s, vals = section_profile(d, args.key, p0, p1, n=args.n)
+        except (KeyError, ValueError) as e:
+            print(f"plate-profile: {e}", file=sys.stderr)
+            return 1
         curves.append((Path(d).name, s, vals))
     if args.csv:
         header = "s," + ",".join(name for name, _, _ in curves)

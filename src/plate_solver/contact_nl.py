@@ -116,7 +116,7 @@ class NonlinearContactMOR:
 
     def __init__(self, solver: KTNSolver, cfg: Config, *, gap,
                  foundation_mask=None, scheme: str | None = None,
-                 gain_mode: str = "secant"):
+                 gain_mode: str = "secant", f_values=None):
         self.solver = solver
         self.cfg = cfg
         self.scheme = scheme if scheme is not None else getattr(cfg, "contact_scheme", "nested")
@@ -147,7 +147,12 @@ class NonlinearContactMOR:
             raise ValueError(f"gain_mode: ожидалось secant | linear, получено {gain_mode!r}")
         self.gain_mode = gain_mode
         q0 = float(cfg.q0)
-        self._free = solver.solve(np.full(q.x.size, q0))
+        # нагрузка: поле f(x, y) в узлах квадратуры (v0.7.0: гауссова/expr)
+        # либо равномерная cfg.q0; нормировка усиления остаётся по амплитуде
+        # q0 = cfg.q0 (свойство ОПЕРАТОРА, семантика как у классического МОР)
+        self._f_load = (np.full(q.x.size, q0) if f_values is None
+                        else np.asarray(f_values, float))
+        self._free = solver.solve(self._f_load)
         if q0 == 0.0:
             self.gain = 1.0
         elif gain_mode == "linear":
@@ -176,7 +181,6 @@ class NonlinearContactMOR:
     # -- вложенная схема (эталон, прил. C.1) ---------------------------- #
     def _solve_nested(self) -> NonlinearContactResult:
         solver, q = self.solver, self.solver.quad
-        q0 = float(self.cfg.q0)
         r = np.zeros(q.x.size)
         hist: list[float] = []
         converged = False
@@ -189,7 +193,7 @@ class NonlinearContactMOR:
         for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
             # тёплый старт нелинейного решателя предыдущим прогибом: нагрузка
             # q0−r меняется слабо между шагами МОР ⇒ внутренняя итерация дёшева.
-            res_k = solver.solve(q0 - r, c0=cw)             # полный нелинейный КТН
+            res_k = solver.solve(self._f_load - r, c0=cw)   # полный нелинейный КТН
             n_inner += res_k.n_iter
             cw = res_k.cw
             u_c = self._face_deflection(cw)
@@ -226,7 +230,7 @@ class NonlinearContactMOR:
                 converged = True
                 break
         # финальное состояние на сошедшейся реакции
-        res_k = solver.solve(q0 - r, c0=cw)
+        res_k = solver.solve(self._f_load - r, c0=cw)
         cw = res_k.cw
         w = res_k.w_nodes
         u_c = self._face_deflection(cw)
@@ -244,7 +248,6 @@ class NonlinearContactMOR:
         вложенной до допуска.
         """
         solver, q = self.solver, self.solver.quad
-        q0 = float(self.cfg.q0)
         theta = float(self.cfg.karman_relax)                # общая недорелаксация
         c = self._free.cw.copy()
         r = np.zeros(q.x.size)
@@ -256,7 +259,7 @@ class NonlinearContactMOR:
         f_hist: list[np.ndarray] = []
         for it in range(1, self.max_iter + 1):  # noqa: B007 — it нужен после цикла
             w_old = c @ solver._psi
-            b_level = solver._load_vector(q0 - r)           # нагрузка при текущей реакции
+            b_level = solver._load_vector(self._f_load - r)  # нагрузка при текущей реакции
             c, _forces = solver._picard_map(c, b_level, theta)  # ОДИН шаг Пикара
             u_c = self._face_deflection(c)
             g = r.copy()                                    # F(r): проекц. фикс. шаг МОР

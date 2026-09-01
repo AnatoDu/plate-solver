@@ -8,7 +8,7 @@
       "orcid": "0009-0009-9118-4629"
     }
   ],
-  "version": "0.6.6",
+  "version": "0.7.0",
   "license": "MIT",
   "upload_type": "software",
   "language": "rus",
@@ -58,6 +58,16 @@
     {
       "relation": "references",
       "identifier": "10.21105/joss.02369",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "isSupplementTo",
+      "identifier": "10.34130/1992-2752_2022_4_67",
+      "resource_type": "publication-article"
+    },
+    {
+      "relation": "isSupplementTo",
+      "identifier": "10.34130/1992-2752_2023_2_4",
       "resource_type": "publication-article"
     }
   ]

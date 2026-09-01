@@ -1,0 +1,32 @@
+# CI: линейная (погонная) нагрузка вдоль отрезка (v0.7.0) — SS-прямоугольник,
+# полная линия x = 1; ворота точности — tests/test_line_load.py (ряд Навье).
+
+[geometry]
+kind = "rectangle"
+x1 = 0.0
+x2 = 2.0
+y1 = 0.0
+y2 = 1.2
+
+[bc]
+type = "soft_hinge"
+
+[load]
+type = "line"
+p0 = [1.0, 0.0]
+p1 = [1.0, 1.2]
+intensity = 1.0
+
+[model]
+theory = "classic"
+E = 10.92
+nu = 0.3
+h = 1.0
+
+[discretization]
+p = 16
+Q = 64
+grid_n = 32
+
+[verify]
+reference = "none"

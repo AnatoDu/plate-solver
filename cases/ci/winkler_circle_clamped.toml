@@ -1,0 +1,29 @@
+# CI: упругое основание Винклера через case-файл (v0.6.6) — classic + clamped.
+# Числовые ворота тракта — tests/test_winkler_prestress.py (MMS машинно,
+# kw = 0 бит-точно); кейс закрывает клетку матрицы «model.winkler ← case».
+
+[geometry]
+kind = "circle"
+a = 1.0
+
+[bc]
+type = "clamped"
+
+[load]
+type = "uniform"
+q0 = 4.0
+
+[model]
+theory = "classic"
+winkler = 2.0e5
+
+[discretization]
+p = 10
+Q = 64
+grid_n = 32
+
+[verify]
+reference = "none"
+
+[output]
+vtk = true               # закрывает клетку матрицы «output.vtk ← case»

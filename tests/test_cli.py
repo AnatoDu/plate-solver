@@ -140,3 +140,45 @@ def test_cli_theory_override(tmp_path, capsys):
     # --inplane-bc без karman — ошибка постановки (exit 1)
     assert main([str(case), "--inplane-bc", "movable", "--out", str(tmp_path / "o2")]) == 1
     assert "inplane-bc" in capsys.readouterr().err
+
+
+def test_new_ellipse_template(tmp_path):
+    """Шаблон ellipse (v0.7.0): создаётся, проходит самопроверку и --check."""
+    out = tmp_path / "ell.toml"
+    path = write_template("ellipse", out)
+    assert path.is_file()
+    assert main([str(path), "--check"]) == 0
+
+
+def test_template_text_current_schema():
+    """Тексты шаблонов не несут устаревших меток v0.2 и упоминают новые ключи."""
+    for kind in _TEMPLATE_KINDS:
+        txt = template(kind)
+        assert "в v0.2 — только soft_hinge" not in txt
+        assert "(v0.2)" not in txt
+        assert "expr" in txt and "supports" in txt and "winkler" in txt
+
+
+def test_replot_profile_version_and_errors(tmp_path, capsys):
+    """plate-replot/plate-profile: --version и человеческие ошибки (exit 1)."""
+    from plate_solver.cli import main_profile, main_replot
+
+    for entry in (main_replot, main_profile):
+        with pytest.raises(SystemExit) as e:
+            entry(["--version"])
+        assert e.value.code == 0
+    capsys.readouterr()
+    rc = main_profile([str(tmp_path / "нет_каталога"), "--from", "0,0",
+                       "--to", "1,0"])
+    assert rc == 1
+    assert "fields.npz" in capsys.readouterr().err
+
+
+def test_verify_eigen_not_vacuous(capsys):
+    """plate-verify на [eigen]: явное предупреждение вместо тихого PASS."""
+    from plate_solver.cli import main_verify
+
+    case = _ROOT / "cases" / "ci" / "eigen_buckling_circle.toml"
+    assert main_verify([str(case)]) == 0          # exit-код НЕ меняется
+    out = capsys.readouterr().out
+    assert "эталонов для собственной задачи" in out

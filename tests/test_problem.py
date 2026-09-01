@@ -259,3 +259,20 @@ def test_file_errors(tmp_path):
     broken.write_text("[geometry\nkind = ", encoding="utf-8")
     with pytest.raises(CaseError, match="TOML"):
         Problem.from_toml(broken)
+
+
+def test_mms_winkler_rejected():
+    """mms + winkler > 0 — ложный FAIL ворот; честный отказ (v0.7.0)."""
+    import pytest as _pytest
+
+    from plate_solver.problem import CaseError, Problem
+
+    d = {
+        "geometry": {"kind": "circle", "a": 1.0},
+        "bc": {"type": "clamped"},
+        "load": {"type": "uniform", "q0": 4.0},
+        "model": {"theory": "classic", "winkler": 1.0e5},
+        "verify": {"reference": "mms"},
+    }
+    with _pytest.raises(CaseError, match="verify.reference"):
+        Problem.from_dict(d)

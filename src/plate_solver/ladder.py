@@ -152,6 +152,99 @@ def rect_sin_wmax(a: float, b: float, D: float, q0: float = 1.0) -> float:
     return q0 / (np.pi**4 * D * (1.0 / a**2 + 1.0 / b**2) ** 2)
 
 
+def navier_line(X, Y, a: float, b: float, D: float, xi: float,
+                P: float = 1.0, n_terms: int = 2000) -> np.ndarray:
+    r"""Точное решение SS-прямоугольника под ЛИНЕЙНОЙ нагрузкой ``x = ξ`` (v0.7.0).
+
+    Погонная ``P`` вдоль линии ``x = ξ`` на всю ширину: разложение
+    ``q = P·δ(x−ξ)`` в двойной ряд Навье даёт
+    ``q_mn = (8P/(a·n·π))·sin(mπξ/a)`` для нечётных ``n`` (0 для чётных);
+    ``w = Σ q_mn·sin(mπx/a)·sin(nπy/b) / (D·π⁴·(m²/a²+n²/b²)²)``.
+    Ряд абсолютно сходится (~1/(n·(m²+n²)²)); хвост при n_terms = 2000 —
+    ~4e-13 в ЦЕНТРЕ (частичные сокращения), вблизи линии/краёв медленнее —
+    для точек вне центра сверяйте сходимость по n_terms (Тимошенко–
+    Войновский-Кригер, гл. 5 — нагрузка, распределённая по линии).
+    """
+    X = np.asarray(X, float)
+    Y = np.asarray(Y, float)
+    m = np.arange(1, n_terms + 1)
+    n = np.arange(1, 2 * n_terms, 2)               # только нечётные
+    qmn = (8.0 * P / (a * np.pi)) * np.sin(m[:, None] * np.pi * xi / a) / n[None, :]
+    denom = np.pi**4 * D * ((m[:, None] / a) ** 2 + (n[None, :] / b) ** 2) ** 2
+    sx = np.sin(np.pi * np.multiply.outer(m, X) / a)   # (M, ...)
+    sy = np.sin(np.pi * np.multiply.outer(n, Y) / b)   # (N, ...)
+    return np.einsum("mn,m...,n...->...", qmn / denom, sx, sy)
+
+
+def navier_line_center(a: float, b: float, D: float, xi: float,
+                       P: float = 1.0, n_terms: int = 2000) -> float:
+    """``w`` в центре прямоугольника под линейной нагрузкой ``x = ξ`` (ряд выше)."""
+    return float(navier_line(a / 2.0, b / 2.0, a, b, D, xi, P, n_terms))
+
+
+def navier_uniform_center_ortho(a: float, b: float, Dm: tuple,
+                                q0: float = 1.0, n_terms: int = 400):
+    r"""Центр SSSS ОРТОТРОПНОГО прямоугольника под равномерной ``q0`` (v0.7.0).
+
+    Ряд Навье (Лехницкий; Тимошенко–Войновский-Кригер гл. 11):
+    ``w = (16q/π⁶)·Σ_{m,n нечёт} sin·sin / [mn·D_mn]``,
+    ``D_mn = D11(m/a)⁴ + 2(D12+2D66)(m/a)²(n/b)² + D22(n/b)⁴``.
+    Возвращает ``(w_центра, Mx_центра)``; ``Mx = −(D11 w_xx + D12 w_yy)``.
+    Изотропная редукция D11=D22=D, D12=νD, D66=(1−ν)D/2 совпадает с
+    :func:`navier_uniform_center` алгебраически (D_mn = D·(m²/a²+n²/b²)²).
+    """
+    D11, D12, D22, D66 = (float(v) for v in Dm)
+    m = _navier_odd(n_terms)[:, None]
+    n = _navier_odd(n_terms)[None, :]
+    Dmn = (D11 * (m / a) ** 4 + 2.0 * (D12 + 2.0 * D66) * (m / a) ** 2 * (n / b) ** 2
+           + D22 * (n / b) ** 4)
+    s = np.sin(m * np.pi / 2.0) * np.sin(n * np.pi / 2.0)     # sin(mπ/2)·sin(nπ/2)
+    coef = (16.0 * q0 / np.pi**6) / (m * n * Dmn)
+    w_c = float(np.sum(coef * s))
+    # кривизны в центре: w_xx = −(mπ/a)²·w_mn·sin·sin и т.д.
+    wxx = float(np.sum(coef * s * (-(m * np.pi / a) ** 2)))
+    wyy = float(np.sum(coef * s * (-(n * np.pi / b) ** 2)))
+    Mx_c = -(D11 * wxx + D12 * wyy)
+    return w_c, Mx_c
+
+
+def bending_moments_ortho(domain, basis, c, p_struct: int, Dm: tuple, X, Y):
+    r"""Ортотропные моменты ``(M_x, M_y, M_xy)`` RFM-решения (v0.7.0).
+
+    Кривизны структуры ``w = ω^p·v`` — та же машинерия, что у
+    :func:`bending_moments_full`; конститутив ортотропный:
+    ``Mx = −(D11 w_xx + D12 w_yy)``, ``My = −(D12 w_xx + D22 w_yy)``,
+    ``Mxy = −2·D66·w_xy``.
+    """
+    from .clamped import _OmegaHessian
+
+    D11, D12, D22, D66 = (float(v) for v in Dm)
+    c = np.asarray(c, float)
+    om, omx, omy, omxx, omyy, omxy = _OmegaHessian(domain).fields_full(X, Y)
+    T = basis.values(X, Y)
+    Tx, Ty = basis.grads(X, Y)
+    Txx, Tyy = _basis_xx_yy(basis, X, Y)
+    Txy = _basis_xy(basis, X, Y)
+    v = np.tensordot(c, T, axes=(0, 0))
+    vx = np.tensordot(c, Tx, axes=(0, 0))
+    vy = np.tensordot(c, Ty, axes=(0, 0))
+    vxx = np.tensordot(c, Txx, axes=(0, 0))
+    vyy = np.tensordot(c, Tyy, axes=(0, 0))
+    vxy = np.tensordot(c, Txy, axes=(0, 0))
+    p = p_struct
+    om_p = om**p
+    om_pm1 = om ** (p - 1)
+    quad = (p * (p - 1)) * (om ** (p - 2) if p >= 2 else 0.0)
+    wxx = (quad * omx**2 + p * om_pm1 * omxx) * v + 2.0 * p * om_pm1 * omx * vx + om_p * vxx
+    wyy = (quad * omy**2 + p * om_pm1 * omyy) * v + 2.0 * p * om_pm1 * omy * vy + om_p * vyy
+    wxy = ((quad * omx * omy + p * om_pm1 * omxy) * v
+           + p * om_pm1 * (omx * vy + omy * vx) + om_p * vxy)
+    Mx = -(D11 * wxx + D12 * wyy)
+    My = -(D12 * wxx + D22 * wyy)
+    Mxy = -2.0 * D66 * wxy
+    return Mx, My, Mxy
+
+
 # =========================================================================== #
 #  СТУПЕНЬ 4b — равномерная нагрузка на шарнирном прямоугольнике (ряд Навье)
 # =========================================================================== #
@@ -416,6 +509,8 @@ __all__ = [
     "Strip1DResult", "solve_strip_1d",
     "rect_sin_load", "rect_sin_exact", "rect_sin_wmax",
     "navier_uniform", "navier_uniform_center",
+    "navier_line", "navier_line_center",
+    "navier_uniform_center_ortho", "bending_moments_ortho",
     "mms_load_and_exact", "mms_clamped_rect_w", "mms_clamped_disk_w",
     "mms_ktn_load_and_exact",
     "bending_moments", "bending_moments_full",

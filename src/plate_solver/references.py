@@ -575,7 +575,12 @@ def verify_result(result: Result) -> VerifyReport:
             value = ref.value
         else:
             value = result.w_max
-        rel = abs(value - ref.w_max) / abs(ref.w_max)
+        if ref.w_max == 0.0:
+            # нулевой эталон (например, q0 = 0): относительная метрика не
+            # определена — сравниваем абсолютно
+            rel = abs(value - ref.w_max)
+        else:
+            rel = abs(value - ref.w_max) / abs(ref.w_max)
         rows.append(RefRow(name=ref.name, reference=ref.w_max, value=value,
                            rel=rel, gated=ref.gated,
                            passed=(rel <= tol) if ref.gated else None))

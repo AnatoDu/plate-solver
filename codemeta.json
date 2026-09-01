@@ -1,9 +1,14 @@
 {
-  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@context": [
+    "https://doi.org/10.5063/schema/codemeta-2.0",
+    {
+      "vvprov": "https://w3id.org/vvprov/terms#"
+    }
+  ],
   "@type": "SoftwareSourceCode",
   "name": "plate-solver",
   "description": "Комплекс программ для расчёта изгиба и одностороннего (Синьорини) контакта упругих пластин произвольного очертания. Геометрия и краевые условия — R-функциями В. Л. Рвачёва (структура решения w=ω·Φ удовлетворяет краевым условиям тождественно); изгиб — методом Ритца (базис ω·Φ, полиномы Чебышёва, однократная факторизация Холецкого); контакт со свободной границей — методом обобщённой реакции (МОР). Все теории объединены в единую параметрическую модель (пресеты: классическая Кирхгофа, геометрически нелинейная Кармана, линейные и полные нелинейные поправки типа Кармана–Тимошенко–Нагди — поперечный сдвиг и обжатие; редукции точны по построению). Нелинейный контакт МОР работает поверх полной КТН; поддержаны многосвязные области, сценарии со штампом и двумя пластинами, диагностика зоны контакта, экспорт полей/усилий и конвейер воспроизводимости. Числовые результаты защищены тест-воротами, эталонные отчёты — под хеш-контролем. / Bending and unilateral (Signorini) contact of thin elastic plates of arbitrary planform: Rvachev's R-functions describe geometry and boundary conditions, a spectral Ritz method solves the bending, and the generalized reaction method resolves free-boundary contact.",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "identifier": "https://doi.org/10.5281/zenodo.21218627",
   "license": "https://spdx.org/licenses/MIT",
   "codeRepository": "https://github.com/AnatoDu/plate-solver",
@@ -19,9 +24,9 @@
   "programmingLanguage": "Python",
   "runtimePlatform": "Python 3.11+",
   "operatingSystem": "OS Independent",
-  "datePublished": "2026-07-24",
-  "dateModified": "2026-07-24",
-  "downloadUrl": "https://github.com/AnatoDu/plate-solver/archive/refs/tags/v0.6.6.tar.gz",
+  "datePublished": "2026-09-01",
+  "dateModified": "2026-09-01",
+  "downloadUrl": "https://github.com/AnatoDu/plate-solver/archive/refs/tags/v0.7.0.tar.gz",
   "keywords": [
     "plates",
     "bending",
@@ -58,5 +63,194 @@
     "scipy >=1.10",
     "sympy >=1.12",
     "matplotlib >=3.10.9"
+  ],
+  "referencePublication": [
+    {
+      "@type": "ScholarlyArticle",
+      "name": "О контактной задаче для цилиндрической панели и прямоугольного бруса",
+      "author": "Ермоленко А. В., Дуркин А. А.",
+      "isPartOf": "Bulletin of Syktyvkar University. Series 1: Mathematics. Mechanics. Informatics, 2022, no. 4 (45), pp. 67-74",
+      "@id": "https://doi.org/10.34130/1992-2752_2022_4_67"
+    },
+    {
+      "@type": "ScholarlyArticle",
+      "name": "Определение напряжений на лицевых поверхностях пластины",
+      "author": "Ермоленко А. В., Туркова О. И.",
+      "isPartOf": "Bulletin of Syktyvkar University. Series 1: Mathematics. Mechanics. Informatics, 2023, no. 2 (47), pp. 4-16",
+      "@id": "https://doi.org/10.34130/1992-2752_2023_2_4"
+    }
+  ],
+  "vvprov:validationStatus": "inherited from the plate theory of Karman-Timoshenko-Naghdi type (Mikhailovskii, Badokin, Ermolenko, 1999; unilateral contact by the generalized reaction method: Mikhailovskii, Tarasov, 1993 — see CITATION.cff references)",
+  "vvprov:verification": [
+    {
+      "vvprov:benchmark": "bending of a 1D hinged/clamped strip, uniform load",
+      "vvprov:referenceType": "analytic solution (exact ODE integration)",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative deflection error",
+      "vvprov:achieved": "~1e-13 (machine precision)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_ladder.py"
+    },
+    {
+      "vvprov:benchmark": "bending of a clamped circular plate, uniform load",
+      "vvprov:referenceType": "analytic solution (auto-generated with substitution certificate)",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative w_max error",
+      "vvprov:achieved": "< 1e-5 (regression-gated, SHA-controlled reference report)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "cases/ci/circle_clamped.toml; tests/test_ci_cases.py"
+    },
+    {
+      "vvprov:benchmark": "bending of a rectangular plate (Navier and Levy series)",
+      "vvprov:referenceType": "analytic series",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative w_max error",
+      "vvprov:achieved": "1.5e-6",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "cases/ci/rect_levy.toml; tests/test_ci_cases.py"
+    },
+    {
+      "vvprov:benchmark": "clamped rectangle, manufactured solution",
+      "vvprov:referenceType": "manufactured solution (MMS)",
+      "vvprov:vvType": "code verification (MMS)",
+      "vvprov:metric": "relative deflection error",
+      "vvprov:achieved": "6e-15",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "cases/ci/rect_mms.toml; tests/test_mms_reference.py"
+    },
+    {
+      "vvprov:benchmark": "rigid stamp contact (MOR): Green-function vs Ritz solvers",
+      "vvprov:referenceType": "independent computation (Green function method, same model)",
+      "vvprov:vvType": "cross-code verification",
+      "vvprov:metric": "relative L2 error of deflection",
+      "vvprov:achieved": "2.7e-3 (tolerance 1e-2)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_stamp_ritz.py"
+    },
+    {
+      "vvprov:benchmark": "bending of an L-shaped plate, soft simple support",
+      "vvprov:referenceType": "independent computation (finite elements, same model)",
+      "vvprov:vvType": "cross-code verification",
+      "vvprov:metric": "relative L2 error of deflection",
+      "vvprov:achieved": "2.44e-2 (tolerance 5e-2)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_lshape.py"
+    },
+    {
+      "vvprov:benchmark": "bending of an L-shaped plate, soft simple support",
+      "vvprov:referenceType": "independent computation (finite elements, Kirchhoff model)",
+      "vvprov:vvType": "cross-model comparison",
+      "vvprov:metric": "relative L2 error of deflection",
+      "vvprov:achieved": "4.83e-1",
+      "vvprov:status": "model discrepancy (Sapondzhyan-Babuska paradox), not a defect",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_lshape.py"
+    },
+    {
+      "vvprov:benchmark": "full Karman-Timoshenko-Naghdi solution with refinement terms off",
+      "vvprov:referenceType": "sub-theory of the same parametric solver (Karman)",
+      "vvprov:vvType": "reduction verification",
+      "vvprov:metric": "relative w_max difference",
+      "vvprov:achieved": "machine precision (identical execution path by construction)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_ktn_full.py"
+    },
+    {
+      "vvprov:benchmark": "full KTN on a circle vs independent 1D radial solver (Gate R3)",
+      "vvprov:referenceType": "independent computation (1D radial Ritz oracle)",
+      "vvprov:vvType": "cross-code verification",
+      "vvprov:metric": "relative center deflection",
+      "vvprov:achieved": "4.1e-3 decreasing to 2.0e-3 with 2D basis degree p = 12...18",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_ktn_full.py"
+    },
+    {
+      "vvprov:benchmark": "axisymmetric foundation contact with certified ring reaction",
+      "vvprov:referenceType": "analytic contact solution (flat zone + edge ring concentration)",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative w_max and reaction resultant",
+      "vvprov:achieved": "regression-gated per case",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "cases/ci/circle_clamped_contact_certified.toml; tests/test_ci_cases.py"
+    },
+    {
+      "vvprov:benchmark": "foundation contact on a rectangle: finite-difference duplicate (MOR)",
+      "vvprov:referenceType": "independent computation (finite differences + MOR, local basis)",
+      "vvprov:vvType": "cross-code verification",
+      "vvprov:metric": "relative w_max; relative total reaction",
+      "vvprov:achieved": "1.0e-3; 2.0e-3",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_fd_contact.py"
+    },
+    {
+      "vvprov:benchmark": "SSSS orthotropic rectangle, uniform load (Lekhnitskii series)",
+      "vvprov:referenceType": "analytic series",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative center deflection",
+      "vvprov:achieved": "1.7e-10 (p = 14)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_orthotropy.py"
+    },
+    {
+      "vvprov:benchmark": "rigid central point support of a clamped circle (R = pi*q*a^2/4)",
+      "vvprov:referenceType": "analytic solution (superposition of Timoshenko closed forms)",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative support reaction",
+      "vvprov:achieved": "8.8e-3 (p = 12), 4.1e-3 (p = 20); algebraic ~p^-2 convergence",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_supports.py"
+    },
+    {
+      "vvprov:benchmark": "pure thermal bending of a simply supported circle (true hinge)",
+      "vvprov:referenceType": "analytic solution (exact sphere M_T*(a^2-r^2)/(2*D*(1+nu)))",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative deflection profile error",
+      "vvprov:achieved": "8.1e-11",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_thermal.py"
+    },
+    {
+      "vvprov:benchmark": "line load across a simply supported rectangle (Navier series)",
+      "vvprov:referenceType": "analytic series",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative center deflection",
+      "vvprov:achieved": "4.0e-4 (p = 24); algebraic ~p^-2.8 convergence",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "cases/ci/line_load_rect.toml; tests/test_line_load.py"
+    },
+    {
+      "vvprov:benchmark": "clamped rectangle of variable thickness, manufactured solution",
+      "vvprov:referenceType": "manufactured solution (MMS, strong form with variable D)",
+      "vvprov:vvType": "code verification (MMS)",
+      "vvprov:metric": "relative deflection error",
+      "vvprov:achieved": "8.2e-9 (p = 20, spectral convergence)",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_variable_thickness.py"
+    },
+    {
+      "vvprov:benchmark": "exact point force at the center of a clamped circle",
+      "vvprov:referenceType": "analytic solution (P*a^2/(16*pi*D) and full Green profile)",
+      "vvprov:vvType": "code verification",
+      "vvprov:metric": "relative center deflection",
+      "vvprov:achieved": "6.2e-3 (p = 24); algebraic convergence at the load point",
+      "vvprov:status": "within tolerance",
+      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:artifact": "tests/test_point_exact.py"
+    }
   ]
 }

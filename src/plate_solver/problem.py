@@ -7,7 +7,7 @@ r"""problem.py — слой постановки задачи: case-файл TOM
 ``[discretization]``, ``[verify]``, ``[output]``), а решатель выбирается
 диспетчером (``dispatch.py``). Полная схема — ``docs/CASE_SCHEMA.md``.
 
-Принципы (TODO_PHASE2):
+Принципы:
 
 * обязательны только ``geometry``, ``bc``, ``load`` — остальное с дефолтами;
 * physics-дефолты живут в ОДНОМ месте — :class:`~plate_solver.config.Config`;
@@ -21,11 +21,13 @@ r"""problem.py — слой постановки задачи: case-файл TOM
 
 from __future__ import annotations
 
+import math
 import tomllib
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import exprfield
 from .config import Config
 
 _SCHEMA_DOC = "docs/CASE_SCHEMA.md"
@@ -39,7 +41,7 @@ COMPOSE_MAX_NODES = 7
 
 GEOMETRY_KINDS = ("circle", "rectangle", "L", "annulus", "ellipse", "compose")
 BC_TYPES = ("soft_hinge", "clamped")
-LOAD_TYPES = ("uniform", "patch", "point", "gaussian")
+LOAD_TYPES = ("uniform", "patch", "point", "gaussian", "expr", "line")
 # Лестница моделей одним ключом [model] theory (v0.5.0, ЯВНЫЕ имена — §4):
 #   classic    — линейный Кирхгоф;
 #   karman     — геометрически-НЕЛИНЕЙНОЕ решение Фёппля–Кармана (L(Φ, w));
@@ -81,6 +83,13 @@ class CaseError(ValueError):
 
 def _fail(key: str, got, expected: str, anchor: str) -> None:
     raise CaseError(f"{key}: получено {got!r}, ожидалось {expected}, см. {_SCHEMA_DOC}#{anchor}")
+
+
+def _finite(key: str, value: float, anchor: str) -> float:
+    """Конечность числа нового ключа (TOML допускает литералы inf/nan)."""
+    if not math.isfinite(value):
+        _fail(key, value, "конечное число (inf/nan не допускаются)", anchor)
+    return value
 
 
 def _require_keys(section: str, data: dict, allowed: set[str], anchor: str) -> None:
@@ -161,7 +170,7 @@ class BCSpec:
 
 @dataclass(frozen=True)
 class LoadSpec:
-    """Нагрузка: равномерная, зонная (patch), точечная (point) или гауссова.
+    """Нагрузка: равномерная, зонная (patch), точечная (point), гауссова, выражением.
 
     Точечная сила — регуляризованный patch: круговое пятно радиуса ``eps``,
     ``q = P / (π·eps²)``. Истинная δ-нагрузка в схему сознательно не вводится
@@ -170,16 +179,48 @@ class LoadSpec:
     ``q = q0·exp(−r²/(2σ²))`` (центр ``x0, y0``, ширина ``sigma``): у неё Δq
     аналитична, поэтому проявляется член КТН ``−h_*²Δq`` (§7) — под НЕравномерной
     нагрузкой уже и СРЕДИННЫЙ прогиб КТН отличается от классики.
+    ``expr`` (v0.7.0) — произвольная гладкая нагрузка ``q = q0·g(x, y)``
+    выражением (``exprfield``: sympy за токен-оградой, белый список имён);
+    для гладкого ``g`` член КТН ``Δq`` берётся символьным дифференцированием.
     """
 
     type: str
-    q0: float | None = None         # uniform | patch | gaussian (амплитуда)
+    q0: float | None = None         # uniform | patch | gaussian | expr (амплитуда)
     P: float | None = None          # point: результирующая сила
     x0: float | None = None         # point/gaussian: центр
     y0: float | None = None
     eps: float | None = None        # point: радиус пятна (None ⇒ 0.05·min(ширина, высота bbox))
     sigma: float | None = None      # gaussian: ширина (СКО)
     zone: GeometrySpec | None = None  # patch: зона нагрузки
+    expr: str | None = None         # expr: безразмерная форма g(x, y)
+    p0: tuple | None = None         # line: начало отрезка (x, y)
+    p1: tuple | None = None         # line: конец отрезка (x, y)
+    intensity: float | None = None  # line: погонная интенсивность P (сила/длину)
+    thermal_moment: float | None = None  # uniform: термомомент M_T (v0.7.0)
+    exact: bool = False             # point: точная δ вместо регуляризации (v0.7.0)
+
+
+@dataclass(frozen=True)
+class OrthotropySpec:
+    r"""Ортотропия классической теории (v0.7.0): подсекция ``[model.orthotropy]``.
+
+    РОВНО один из двух наборов: инженерный (``Ex, Ey, nu_xy, Gxy``; конвенция
+    ``ν_yx = ν_xy·Ey/Ex``, эллиптичность ``ν_xy²·Ey/Ex < 1``) либо прямой
+    (``D11, D12, D22, D66``; положительная определённость
+    ``D11 > 0, D66 > 0, D11·D22 > D12²``). Конверсия в жёсткости — в
+    ``Problem.to_config`` (нужна толщина ``h``):
+    ``k = 1 − ν_xy·ν_yx``; ``D11 = Ex·h³/(12k)``, ``D22 = Ey·h³/(12k)``,
+    ``D12 = ν_xy·Ey·h³/(12k)``, ``D66 = Gxy·h³/12``.
+    """
+
+    Ex: float | None = None
+    Ey: float | None = None
+    nu_xy: float | None = None
+    Gxy: float | None = None
+    D11: float | None = None
+    D12: float | None = None
+    D22: float | None = None
+    D66: float | None = None
 
 
 @dataclass(frozen=True)
@@ -206,6 +247,8 @@ class ModelSpec:
     karman_method: str | None = None        # karman: picard | newton
     ktn_method: str | None = None           # ktn_full: picard | newton
     winkler: float | None = None            # упругое основание Винклера k_w ≥ 0 (v0.6.6)
+    orthotropy: OrthotropySpec | None = None  # ортотропия классики (v0.7.0)
+    h_expr: str | None = None               # переменная толщина h(x, y) (v0.7.0)
 
 
 GAP_KINDS = ("const", "plane", "paraboloid", "steps")
@@ -220,7 +263,11 @@ class GapSpec:
     * ``paraboloid``: Δ = apex + ((x−cx)² + (y−cy)²) / (2·r_curv)
       (неплоский штамп; r_curv — радиус кривизны в вершине);
     * ``steps``: Δ = base, в зонах ``[[contact.gap.zones]]`` — своё value
-      (несколько штампов разной высоты; зоны применяются по порядку).
+      (несколько штампов разной высоты; зоны применяются по порядку);
+    * ``expr`` (v0.7.0): Δ = f(x, y) выражением — конструируется ТОЛЬКО из
+      строкового ключа ``[contact] gap_expr`` (не из таблицы ``[contact.gap]``);
+      константное выражение редуцируется в скаляр — путь скалярного ``gap``
+      бит-точно.
 
     Положительность Δ на основании проверяется диспетчером (зависит от Ω).
     Произвольное поле — только через API (``ContactMOR(gap=массив)``).
@@ -237,6 +284,23 @@ class GapSpec:
     apex: float | None = None
     base: float | None = None           # steps
     zones: tuple = ()                   # steps: пары (GeometrySpec, value)
+    expr: str | None = None             # expr: Δ = f(x, y) (ключ gap_expr)
+
+
+@dataclass(frozen=True)
+class SupportsSpec:
+    r"""Точечные упругие опоры (v0.7.0): секция ``[supports]``.
+
+    Энергия пружин ``Π_s = (k/2)·Σ_j w(P_j)²`` — ранг-1 добавки
+    ``k·ψ(P_j)ψ(P_j)ᵀ`` к изгибной жёсткости ДО факторизации (паттерн
+    Винклера). Жёсткая опора — штраф ``k ≈ 1e6·D/a³`` (ошибка штрафа ~5e-5,
+    точный закон ``R(k) = w_free(P)/(G_N(P,P) + 1/k)``). Сходимость решения
+    по базису с опорой АЛГЕБРАИЧЕСКАЯ ~p⁻² (функция Грина ~r²ln r), не
+    спектральная. Реакции ``R_j = k·w(P_j)`` — в result.json.
+    """
+
+    points: tuple = ()        # пары (x, y)
+    stiffness: float = 0.0    # жёсткость k каждой пружины (> 0)
 
 
 @dataclass(frozen=True)
@@ -347,6 +411,7 @@ class Problem:
     load: LoadSpec
     model: ModelSpec = field(default_factory=ModelSpec)
     contact: ContactSpec = field(default_factory=ContactSpec)
+    supports: SupportsSpec = field(default_factory=SupportsSpec)  # v0.7.0
     plate2: Plate2Spec | None = None
     discretization: DiscretizationSpec = field(default_factory=DiscretizationSpec)
     verify: VerifySpec = field(default_factory=VerifySpec)
@@ -374,8 +439,8 @@ class Problem:
         if not isinstance(data, dict):
             _fail("case", type(data).__name__, "таблица секций TOML", "схема")
         _require_keys("case", data, {"geometry", "bc", "load", "model", "contact",
-                                     "plate2", "discretization", "verify", "output",
-                                     "eigen"},
+                                     "supports", "plate2", "discretization",
+                                     "verify", "output", "eigen"},
                       "схема")
         eigen_prestress = (isinstance(data.get("eigen"), dict)
                            and bool(data["eigen"].get("prestress", False)))
@@ -402,6 +467,8 @@ class Problem:
                 else LoadSpec(type="uniform", q0=0.0))
         model = _parse_model(data.get("model", {}))
         contact = _parse_contact(data.get("contact", {}))
+        supports = (_parse_supports(data["supports"]) if "supports" in data
+                    else SupportsSpec())
         plate2 = _parse_plate2(data["plate2"]) if "plate2" in data else None
         disc = _parse_discretization(data.get("discretization", {}))
         verify = _parse_verify(data.get("verify", {}))
@@ -409,8 +476,8 @@ class Problem:
         eigen = _parse_eigen(data["eigen"]) if "eigen" in data else None
 
         problem = cls(geometry=geometry, bc=bc, load=load, model=model, contact=contact,
-                      plate2=plate2, discretization=disc, verify=verify, output=output,
-                      eigen=eigen, source=source)
+                      supports=supports, plate2=plate2, discretization=disc,
+                      verify=verify, output=output, eigen=eigen, source=source)
         _validate_cross(problem)
         return problem
 
@@ -456,6 +523,28 @@ class Problem:
                 kw[attr] = v
         if self.load.q0 is not None:
             kw["q0"] = self.load.q0
+        if self.load.thermal_moment is not None:       # термоизгиб (v0.7.0)
+            kw["thermal_moment"] = self.load.thermal_moment
+        if self.supports.points:                       # точечные опоры (v0.7.0)
+            kw["supports_points"] = self.supports.points
+            kw["supports_stiffness"] = self.supports.stiffness
+        if self.model.h_expr is not None:              # переменная толщина (v0.7.0)
+            kw["h_expr"] = self.model.h_expr
+        o = self.model.orthotropy                      # ортотропия (v0.7.0)
+        if o is not None:
+            if o.D11 is not None:                      # прямой набор жёсткостей
+                kw["ortho_D"] = (o.D11, o.D12, o.D22, o.D66)
+            else:                                      # инженерные константы
+                h_val = self.model.h if self.model.h is not None else Config().h
+                k_el = 1.0 - o.nu_xy**2 * o.Ey / o.Ex  # 1 − ν_xy·ν_yx
+                h3 = h_val**3 / 12.0
+                kw["ortho_D"] = (o.Ex * h3 / k_el, o.nu_xy * o.Ey * h3 / k_el,
+                                 o.Ey * h3 / k_el, o.Gxy * h3)
+                if self.model.theory == "karman":
+                    # мембранный закон N = A·ε (нужен нелинейной связке)
+                    kw["ortho_A"] = (o.Ex * h_val / k_el,
+                                     o.nu_xy * o.Ey * h_val / k_el,
+                                     o.Ey * h_val / k_el, o.Gxy * h_val)
         if self.geometry.kind in ("circle", "annulus") and self.geometry.a is not None:
             kw["a"] = self.geometry.a
         if self.contact.gap is not None:
@@ -648,9 +737,14 @@ def _parse_load(data) -> LoadSpec:
         _fail("load.type", t, " | ".join(LOAD_TYPES), "load")
 
     if t == "uniform":
-        _require_keys("load", data, {"type", "q0"}, "load")
+        _require_keys("load", data, {"type", "q0", "thermal_moment"}, "load")
         q0 = _number("load", data, "q0", "load", required=True)
-        return LoadSpec(type=t, q0=q0)
+        # термомомент M_T (v0.7.0): аддитивен к равномерной q (q0 = 0 — чистый
+        # термоизгиб); у других типов нагрузки ключ не принимается
+        mt = _number("load", data, "thermal_moment", "load")
+        if mt is not None:
+            _finite("load.thermal_moment", mt, "load")
+        return LoadSpec(type=t, q0=q0, thermal_moment=mt)
 
     if t == "patch":
         _require_keys("load", data, {"type", "q0", "zone"}, "load")
@@ -669,13 +763,60 @@ def _parse_load(data) -> LoadSpec:
         sigma = _number("load", data, "sigma", "load", required=True, positive=True)
         return LoadSpec(type=t, q0=q0, x0=x0, y0=y0, sigma=sigma)
 
-    # point: регуляризованный patch, q = P/(π·eps²)
-    _require_keys("load", data, {"type", "P", "x0", "y0", "eps"}, "load")
+    if t == "expr":
+        # нагрузка выражением: q = q0·g(x, y) (v0.7.0); синтаксис и белый
+        # список проверяются ЗДЕСЬ (fail-fast при чтении case), значения на
+        # узлах — диспетчером (нужна квадратура области)
+        _require_keys("load", data, {"type", "q0", "expr"}, "load")
+        q0 = _number("load", data, "q0", "load", required=True)
+        s = data.get("expr")
+        try:
+            e = exprfield.parse_field("load.expr", s)
+            if not e.free_symbols:                  # константа: значение сразу
+                exprfield.field_values(e, 0.0, 0.0, key="load.expr")
+        except ValueError as err:
+            raise CaseError(f"{err}, см. {_SCHEMA_DOC}#load") from None
+        return LoadSpec(type=t, q0=q0, expr=s)
+
+    if t == "line":
+        # погонная нагрузка вдоль отрезка (v0.7.0): b_i = P·∫_seg ψ_i ds
+        _require_keys("load", data, {"type", "p0", "p1", "intensity"}, "load")
+        pts = {}
+        for key in ("p0", "p1"):
+            raw = data.get(key)
+            ok = (isinstance(raw, (list, tuple)) and len(raw) == 2
+                  and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                          for v in raw))
+            if not ok:
+                _fail(f"load.{key}", raw, "пара чисел [x, y] (конец отрезка)",
+                      "load")
+            pts[key] = (_finite(f"load.{key}[0]", float(raw[0]), "load"),
+                        _finite(f"load.{key}[1]", float(raw[1]), "load"))
+        if pts["p0"] == pts["p1"]:
+            _fail("load.p1", data.get("p1"),
+                  "отрезок ненулевой длины (для точечной силы — load.type = "
+                  "point)", "load")
+        intensity = _number("load", data, "intensity", "load", required=True)
+        _finite("load.intensity", intensity, "load")
+        if intensity == 0.0:
+            _fail("load.intensity", intensity, "число ≠ 0 (погонная сила/длину)",
+                  "load")
+        return LoadSpec(type=t, p0=pts["p0"], p1=pts["p1"], intensity=intensity)
+
+    # point: регуляризованный patch q = P/(π·eps²) ЛИБО точная δ (exact=true,
+    # v0.7.0: b_i = P·ψ_i(x0, y0) — функционал ограничен на H² в 2D; только
+    # тракты с прямой сборкой — см. _validate_cross и NOTES §18)
+    _require_keys("load", data, {"type", "P", "x0", "y0", "eps", "exact"}, "load")
     P = _number("load", data, "P", "load", required=True)
     x0 = _number("load", data, "x0", "load", required=True)
     y0 = _number("load", data, "y0", "load", required=True)
     eps = _number("load", data, "eps", "load", positive=True)
-    return LoadSpec(type=t, P=P, x0=x0, y0=y0, eps=eps)
+    exact = _boolean("load", data, "exact", "load", default=False)
+    if exact and eps is not None:
+        _fail("load.eps", eps,
+              "отсутствие eps при exact = true (точная δ не регуляризуется)",
+              "load")
+    return LoadSpec(type=t, P=P, x0=x0, y0=y0, eps=eps, exact=exact)
 
 
 def _parse_model(data) -> ModelSpec:
@@ -684,7 +825,9 @@ def _parse_model(data) -> ModelSpec:
     _require_keys("model", data,
                   {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
                    "karman_relax", "karman_max_iter", "karman_tol",
-                   "karman_method", "ktn_method", "winkler"}, "model")
+                   "karman_method", "ktn_method", "winkler", "orthotropy",
+                   "h_expr"},
+                  "model")
     raw_theory = data.get("theory", "classic")
     if raw_theory in THEORY_ALIASES:
         # Депрекация-алиас (§4): "ktn" → "ktn_linear", поведение сохранено.
@@ -744,11 +887,74 @@ def _parse_model(data) -> ModelSpec:
     if winkler is not None and winkler < 0.0:
         _fail("model.winkler", winkler, "число ≥ 0 (жёсткость основания Винклера)",
               "model")
+    orthotropy = (_parse_orthotropy(data["orthotropy"])
+                  if "orthotropy" in data else None)
+    if orthotropy is not None and (E is not None or nu is not None):
+        _fail("model.E", E if E is not None else nu,
+              "отсутствие E и nu рядом с [model.orthotropy] — два источника "
+              "жёсткости неоднозначны (h задавать можно и нужно)", "model")
+    h_expr = data.get("h_expr")                     # переменная толщина (v0.7.0)
+    if h_expr is not None:
+        if not isinstance(h_expr, str):
+            _fail("model.h_expr", h_expr, "строка-выражение h(x, y)", "model")
+        try:
+            exprfield.parse_field("model.h_expr", h_expr)
+        except ValueError as err:
+            raise CaseError(f"{err}, см. {_SCHEMA_DOC}#model") from None
+        if h is not None:
+            _fail("model.h", h,
+                  "отсутствие h рядом с h_expr (толщина либо скаляром, либо "
+                  "полем — двусмысленность не допускается)", "model")
     return ModelSpec(theory=theory, E=E, nu=nu, h=h, inplane_bc=inplane_bc,
                      n_load_steps=n_load_steps, karman_relax=karman_relax,
                      karman_max_iter=karman_max_iter, karman_tol=karman_tol,
                      karman_method=karman_method, ktn_method=ktn_method,
-                     winkler=winkler)
+                     winkler=winkler, orthotropy=orthotropy, h_expr=h_expr)
+
+
+def _parse_orthotropy(data) -> OrthotropySpec:
+    """Подсекция ``[model.orthotropy]`` (v0.7.0): инженерный ЛИБО прямой набор."""
+    sec = "model.orthotropy"
+    if not isinstance(data, dict):
+        _fail(sec, data, "таблица (подсекция TOML)", "model")
+    _require_keys(sec, data, {"Ex", "Ey", "nu_xy", "Gxy",
+                              "D11", "D12", "D22", "D66"}, "model")
+    eng = {k: data.get(k) for k in ("Ex", "Ey", "nu_xy", "Gxy")}
+    direct = {k: data.get(k) for k in ("D11", "D12", "D22", "D66")}
+    has_eng = any(v is not None for v in eng.values())
+    has_direct = any(v is not None for v in direct.values())
+    if has_eng == has_direct:                       # оба или ни одного
+        _fail(sec, sorted(k for k, v in {**eng, **direct}.items()
+                          if v is not None) or None,
+              "РОВНО один набор: инженерный (Ex, Ey, nu_xy, Gxy) либо прямой "
+              "(D11, D12, D22, D66)", "model")
+    if has_eng:
+        Ex = _finite(f"{sec}.Ex", _number(sec, data, "Ex", "model",
+                                          required=True, positive=True), "model")
+        Ey = _finite(f"{sec}.Ey", _number(sec, data, "Ey", "model",
+                                          required=True, positive=True), "model")
+        Gxy = _finite(f"{sec}.Gxy", _number(sec, data, "Gxy", "model",
+                                            required=True, positive=True), "model")
+        nu_xy = _finite(f"{sec}.nu_xy", _number(sec, data, "nu_xy", "model",
+                                                required=True), "model")
+        if nu_xy < 0.0 or nu_xy**2 * Ey / Ex >= 1.0:
+            _fail(f"{sec}.nu_xy", nu_xy,
+                  "0 ≤ nu_xy и nu_xy²·Ey/Ex < 1 (эллиптичность энергии)",
+                  "model")
+        return OrthotropySpec(Ex=Ex, Ey=Ey, nu_xy=nu_xy, Gxy=Gxy)
+    D11 = _finite(f"{sec}.D11", _number(sec, data, "D11", "model",
+                                        required=True, positive=True), "model")
+    D22 = _finite(f"{sec}.D22", _number(sec, data, "D22", "model",
+                                        required=True, positive=True), "model")
+    D66 = _finite(f"{sec}.D66", _number(sec, data, "D66", "model",
+                                        required=True, positive=True), "model")
+    D12 = _finite(f"{sec}.D12", _number(sec, data, "D12", "model",
+                                        required=True), "model")
+    if D11 * D22 <= D12**2:
+        _fail(f"{sec}.D12", D12,
+              "D11·D22 > D12² (положительная определённость энергии — иначе "
+              "Ритц теряет смысл)", "model")
+    return OrthotropySpec(D11=D11, D12=D12, D22=D22, D66=D66)
 
 
 def _parse_gap_field(data: dict) -> GapSpec:
@@ -806,8 +1012,8 @@ def _parse_contact(data) -> ContactSpec:
     if not isinstance(data, dict):
         _fail("contact", data, "таблица (секция TOML)", "contact")
     _require_keys("contact", data,
-                  {"enabled", "target", "gap", "gap_factor", "force", "beta",
-                   "max_iter", "tol", "stop", "zone", "scheme", "gain",
+                  {"enabled", "target", "gap", "gap_factor", "gap_expr", "force",
+                   "beta", "max_iter", "tol", "stop", "zone", "scheme", "gain",
                    "mor_anderson"},
                   "contact")
     enabled = _boolean("contact", data, "enabled", "contact", default=False)
@@ -821,6 +1027,21 @@ def _parse_contact(data) -> ContactSpec:
         gap_field = _parse_gap_field(gap_raw)
     else:
         gap = _number("contact", data, "gap", "contact")
+    gap_expr = data.get("gap_expr")                   # Δ = f(x, y) выражением (v0.7.0)
+    if gap_expr is not None:
+        if not isinstance(gap_expr, str):
+            _fail("contact.gap_expr", gap_expr, "строка-выражение Δ = f(x, y)",
+                  "contact")
+        try:
+            e = exprfield.parse_field("contact.gap_expr", gap_expr)
+            if not e.free_symbols:                    # константа: значение сразу
+                exprfield.field_values(e, 0.0, 0.0, key="contact.gap_expr")
+        except ValueError as err:
+            raise CaseError(f"{err}, см. {_SCHEMA_DOC}#contact") from None
+        if gap_field is not None:
+            _fail("contact.gap_expr", gap_expr,
+                  "ровно одно из gap_expr | таблица [contact.gap]", "contact")
+        gap_field = GapSpec(kind="expr", expr=gap_expr)
     gap_factor = _number("contact", data, "gap_factor", "contact", positive=True)
     beta = _number("contact", data, "beta", "contact", positive=True)
     max_iter = _integer("contact", data, "max_iter", "contact", minimum=1)
@@ -857,6 +1078,42 @@ def _parse_contact(data) -> ContactSpec:
                        gap_field=gap_field, force=force, beta=beta,
                        max_iter=max_iter, tol=tol, stop=stop, zone=zone,
                        scheme=scheme, gain=gain, mor_anderson=mor_anderson)
+
+
+_MAX_SUPPORTS = 32
+
+
+def _parse_supports(data) -> SupportsSpec:
+    """Секция ``[supports]`` (v0.7.0): points (пары [x, y]) + stiffness."""
+    if not isinstance(data, dict):
+        _fail("supports", data, "таблица (секция TOML)", "supports")
+    _require_keys("supports", data, {"points", "stiffness"}, "supports")
+    raw = data.get("points")
+    if not isinstance(raw, list) or not raw:
+        _fail("supports.points", raw, "непустой массив пар [[x, y], ...]",
+              "supports")
+    if len(raw) > _MAX_SUPPORTS:
+        _fail("supports.points", f"{len(raw)} точек",
+              f"≤ {_MAX_SUPPORTS} (близкие опоры вырождают обусловленность)",
+              "supports")
+    pts = []
+    for i, pair in enumerate(raw):
+        ok = (isinstance(pair, (list, tuple)) and len(pair) == 2
+              and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                      for v in pair))
+        if not ok:
+            _fail(f"supports.points[{i}]", pair, "пара чисел [x, y]", "supports")
+        pt = (_finite(f"supports.points[{i}].x", float(pair[0]), "supports"),
+              _finite(f"supports.points[{i}].y", float(pair[1]), "supports"))
+        if pt in pts:
+            _fail(f"supports.points[{i}]", pair,
+                  "уникальная точка (дубликат тихо удваивает жёсткость)",
+                  "supports")
+        pts.append(pt)
+    k = _number("supports", data, "stiffness", "supports", required=True,
+                positive=True)
+    _finite("supports.stiffness", float(k), "supports")
+    return SupportsSpec(points=tuple(pts), stiffness=float(k))
 
 
 def _parse_plate2(data) -> Plate2Spec:
@@ -963,6 +1220,36 @@ def _validate_cross(p: Problem) -> None:
             _fail("verify.reference", p.verify.reference,
                   "none для [eigen] (верификация классическими эталонами — "
                   "tests/test_eigenmodes.py)", "eigen")
+        if p.load.thermal_moment is not None and p.load.thermal_moment != 0.0:
+            _fail("load.thermal_moment", p.load.thermal_moment,
+                  "отсутствие при [eigen] (термо-преднапряжение требует "
+                  "мембранной силы N_T, которая не моделируется — термо-"
+                  "выпучивания нет)", "load")
+        if p.model.h_expr is not None:
+            _fail("model.h_expr", p.model.h_expr,
+                  "отсутствие при [eigen] (собственные задачи с D(x, y) не "
+                  "верифицированы — направление развития)", "model")
+        if p.model.orthotropy is not None:
+            # ортотропная собственная задача (v0.7.0): K = S_ortho, эталоны
+            # ω_mn/N_cr Лехницкого — theory=classic гарантирует ветка ниже;
+            # преднапряжение (кармановское N(w)) и опоры с ортотропией
+            # не верифицированы
+            if p.eigen.prestress:
+                _fail("eigen.prestress", True,
+                      "false при [model.orthotropy] (преднапряжение требует "
+                      "ортотропной мембранной жёсткости — направление "
+                      "развития)", "model")
+            # опоры и Винклер с ортотропией в собственных задачах РАЗРЕШЕНЫ
+            # (v0.7.0): вклады конститутив-независимы; ворота — сдвиг частот
+            # ω² = (π⁴D_mn + k_w)/ρh и монотонность Куранта–Фишера
+        if p.eigen.prestress and p.supports.points:
+            # опоры в собственных задачах поддержаны (K + k·ψψᵀ, ворота
+            # монотонности), но их сочетание с преднапряжением N(w) не
+            # верифицировано — честный отказ
+            _fail("eigen.prestress", True,
+                  "false при [supports] (преднапряжение с опорами не "
+                  "верифицировано; обычные vibration | buckling с опорами — "
+                  "поддержаны)", "supports")
         if p.eigen.prestress:
             # преднапряжённая собственная задача (v0.6.6): источник поля N(w) —
             # кармановское решение под [load]; сам анализ линеен вокруг него
@@ -983,18 +1270,250 @@ def _validate_cross(p: Problem) -> None:
                   "преднапряжение полем N(w) — [eigen] prestress = true + "
                   "[load] + theory = karman, v0.6.6)", "eigen")
         return
+    if p.model.h_expr is not None:
+        # Переменная толщина (v0.7.0): D(x,y) весом ПОЛНОЙ билинейной формы;
+        # честный объём — classic clamped и karman clamped immovable.
+        if p.model.theory not in ("classic", "karman"):
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при model.h_expr (лицевые параметры КТН "
+                  "h_*², h_ψ² становятся полями — направление развития)",
+                  "model")
+        if p.bc.type != "clamped":
+            _fail("bc.type", p.bc.type,
+                  "clamped при model.h_expr (расщепление шарнира классики "
+                  "неверно при D ≠ const: Δ(DΔw) ≠ DΔ²w; шарнир/смешанные КУ "
+                  "с D(x, y) — направление развития)", "model")
+        if p.contact.enabled or p.plate2 is not None:
+            _fail("contact.enabled", True,
+                  "false при model.h_expr (МОР поверх переменного D не "
+                  "сертифицирован — нормировка усиления, теорема 4)", "model")
+        if p.model.theory == "karman" and p.model.inplane_bc == "movable":
+            _fail("model.inplane_bc", "movable",
+                  "immovable при model.h_expr (ворота v0.7.0 покрывают только "
+                  "immovable)", "model")
+        if p.model.orthotropy is not None:
+            _fail("model.orthotropy", "present",
+                  "отсутствие при model.h_expr (комбинация двух конститутивных "
+                  "полей не верифицирована)", "model")
+        if p.load.thermal_moment is not None and p.load.thermal_moment != 0.0:
+            _fail("load.thermal_moment", p.load.thermal_moment,
+                  "отсутствие при model.h_expr (термомомент физически ~h² — "
+                  "комбинация не верифицирована)", "load")
+        if p.supports.points:
+            _fail("supports.points", p.supports.points,
+                  "отсутствие [supports] при model.h_expr (комбинация не "
+                  "верифицирована)", "supports")
+    mt = p.load.thermal_moment
+    if mt is not None and mt != 0.0:
+        # Термоизгиб (v0.7.0): D·Δ²w = q − ΔM_T; честный объём — classic
+        # (clamped: w не меняется, сдвиг моментов; soft_hinge: расщепление)
+        # и karman (истинный шарнир из полной формы; сфера на круге машинно).
+        if p.model.theory in ("ktn_linear", "ktn_full"):
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при load.thermal_moment (взаимодействие "
+                  "термомомента с КТН-членами не выведено)", "load")
+        if p.bc.type == "mixed":
+            _fail("bc.type", "mixed",
+                  "clamped | soft_hinge при load.thermal_moment (термо-член "
+                  "на сторонах смешанной структуры — направление развития)",
+                  "load")
+        if p.contact.enabled or p.plate2 is not None:
+            _fail("contact.enabled", True,
+                  "false при load.thermal_moment (термо в цикле МОР не "
+                  "верифицировано)", "load")
+        if (p.model.winkler is not None and p.model.winkler > 0.0
+                and p.bc.type == "soft_hinge"):
+            _fail("model.winkler", p.model.winkler,
+                  "0 при load.thermal_moment и bc = soft_hinge (комбинация "
+                  "основание+термо+шарнир не верифицирована)", "load")
+        if p.model.orthotropy is not None:
+            _fail("model.orthotropy", "present",
+                  "отсутствие при load.thermal_moment (ортотропный термо-член "
+                  "M_T·(β_x, β_y) анизотропен — направление развития)", "load")
+        if p.supports.points:
+            _fail("supports.points", p.supports.points,
+                  "отсутствие [supports] при load.thermal_moment (комбинация "
+                  "не верифицирована)", "load")
+    if p.model.orthotropy is not None:
+        # Ортотропия (v0.7.0): полная квадратичная форма D_ij; объём —
+        # classic (clamped | mixed clamped/hinge; eigen) и karman
+        # (инженерный набор: мембранный закон N = A·ε; редукционная лестница).
+        if p.model.theory not in ("classic", "karman"):
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при [model.orthotropy] (поправкам КТН "
+                  "нужен изотропный 3D-закон — направление развития)", "model")
+        if p.model.theory == "karman":
+            if p.model.orthotropy.Ex is None:
+                _fail("model.orthotropy", "набор D11..D66",
+                      "инженерный набор Ex, Ey, nu_xy, Gxy при theory = karman "
+                      "(мембранная жёсткость A = f(Ex, Ey, ν, G, h) из прямых "
+                      "D-жёсткостей неопределима)", "model")
+            if p.model.inplane_bc == "movable":
+                _fail("model.inplane_bc", "movable",
+                      "immovable при [model.orthotropy] + karman (ворота "
+                      "v0.7.0 покрывают только неподвижную кромку)", "model")
+            if p.bc.type == "mixed":
+                _fail("bc.type", "mixed",
+                      "clamped | soft_hinge при [model.orthotropy] + karman "
+                      "(смешанные КУ ортотропного Кармана — направление "
+                      "развития)", "bc")
+        if p.model.theory == "classic" and p.bc.type == "soft_hinge":
+            _fail("bc.type", p.bc.type,
+                  "clamped | mixed (hinge на сторонах) при [model.orthotropy]: "
+                  "расщепление шарнира классики предполагает изотропный Δ² — "
+                  "ортотропный оператор не квадрат Лапласиана (истинный "
+                  "шарнир — theory = karman)", "model")
+        if p.bc.type == "mixed":
+            free_sides = [s for s, t in p.bc.sides if t == "free"]
+            if free_sides:
+                _fail(f"bc.sides[{free_sides[0]}]", "free",
+                      "clamped | hinge при [model.orthotropy] (естественные "
+                      "условия свободного края с D-матрицей не верифицированы)",
+                      "model")
+        if p.contact.enabled or p.plate2 is not None:
+            _fail("contact.enabled", True,
+                  "false при [model.orthotropy] (контактные эталоны изотропны; "
+                  "МОР поверх ортотропного оператора — направление развития)",
+                  "model")
+        # Винклер и точечные опоры С ортотропией РАЗРЕШЕНЫ (v0.7.0): оба
+        # вклада (+k_w∫ψψ и k·ψψᵀ) конститутив-независимы и складываются с
+        # S_ortho по построению; сертификаты — MMS c k_w и машинное тождество
+        # Шермана–Моррисона на ортотропном операторе (tests/test_orthotropy.py).
+        if p.verify.reference != "none":
+            _fail("verify.reference", p.verify.reference,
+                  "none при [model.orthotropy] (реестр эталонов изотропен; "
+                  "ворота — tests/test_orthotropy.py)", "verify")
+    if p.verify.reference != "none":
+        # Реестр эталонов ([verify] analytic|mms|fem) НЕ знает новых физических
+        # ключей v0.7.0 — честный решатель получил бы ЛОЖНЫЙ FAIL ворот.
+        infected = []
+        if p.load.type == "expr":
+            infected.append("load.type = expr")
+        if p.load.thermal_moment is not None and p.load.thermal_moment != 0.0:
+            infected.append("load.thermal_moment")
+        if p.supports.points:
+            infected.append("[supports]")
+        if p.model.h_expr is not None:
+            infected.append("model.h_expr")
+        if p.contact.gap_field is not None and p.contact.gap_field.kind == "expr":
+            infected.append("contact.gap_expr")
+        if infected:
+            _fail("verify.reference", p.verify.reference,
+                  f"none при {', '.join(infected)} (реестр эталонов не "
+                  "учитывает эти ключи — сравнение дало бы ложный вердикт; "
+                  "ворота новых фич — tests/test_*.py v0.7.0)", "verify")
+    if p.plate2 is not None and p.plate2.load.type == "line":
+        # тракт пары собирает нагрузку второй пластины по площадной
+        # квадратуре — line для неё не собирается
+        _fail("plate2.load.type", "line",
+              "uniform | patch | point | gaussian | expr для второй пластины "
+              "(линейная нагрузка пары — направление развития)", "plate2")
+    if p.load.type == "point" and p.load.exact:
+        # Точная δ-сила (v0.7.0): b_i = P·ψ_i(P) — ограниченный функционал на
+        # H² (2D), но ТОЛЬКО в трактах с прямой сборкой: расщепление классики
+        # даёт (P1) с δ вне H⁻¹ (M ~ ln r), а КТН-прогиб под δ логарифмически
+        # расходится — NOTES §18.
+        if p.model.theory in ("ktn_linear", "ktn_full"):
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при load.exact = true (КТН-прогиб под δ "
+                  "логарифмически расходится — NOTES «Точечная сила и "
+                  "уточнённая теория»; используйте регуляризованный point)",
+                  "load")
+        if p.model.theory == "classic" and p.bc.type == "soft_hinge":
+            _fail("bc.type", p.bc.type,
+                  "clamped при theory = classic с load.exact = true "
+                  "(расщепление шарнира: (P1) с δ — функционал вне H¹; "
+                  "истинный шарнир под δ — theory = karman)", "load")
+        if p.bc.type == "mixed":
+            _fail("bc.type", "mixed",
+                  "clamped | soft_hinge при load.exact = true (вектор нагрузки "
+                  "смешанного тракта — направление развития)", "load")
+        if p.contact.enabled or p.plate2 is not None:
+            _fail("contact.enabled", True,
+                  "false при load.exact = true (контактные тракты собирают "
+                  "нагрузку по площадной квадратуре)", "load")
+        if p.verify.reference != "none":
+            _fail("verify.reference", p.verify.reference,
+                  "none при load.exact = true (эталоны реестра — для "
+                  "регуляризованного пятна; ворота точной δ — "
+                  "tests/test_point_exact.py)", "verify")
+    if p.plate2 is not None and p.plate2.load.type == "point" and p.plate2.load.exact:
+        _fail("plate2.load.exact", True,
+              "false для второй пластины (точная δ пары — направление "
+              "развития)", "plate2")
+    if p.load.type == "line":
+        # Линейная (погонная) нагрузка (v0.7.0): линейный функционал
+        # b_i = P·∫_seg ψ_i ds — только тракты с готовым вектором нагрузки.
+        if p.model.theory in ("ktn_linear", "ktn_full"):
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при load.type = line (Δq линии сингулярен, "
+                  "поправка ktn_linear требует скалярной амплитуды q0)", "load")
+        if p.contact.enabled or p.plate2 is not None:
+            _fail("contact.enabled", True,
+                  "false при load.type = line (контактные тракты собирают "
+                  "нагрузку по площадной квадратуре — направление развития)",
+                  "load")
+        if p.bc.type == "mixed":
+            _fail("bc.type", "mixed",
+                  "clamped | soft_hinge при load.type = line (вектор нагрузки "
+                  "смешанного тракта — направление развития)", "bc")
+        if p.verify.reference != "none":
+            _fail("verify.reference", p.verify.reference,
+                  "none при load.type = line (эталонов линии в реестре нет; "
+                  "ворота — tests/test_line_load.py)", "verify")
+    if p.supports.points:
+        # Точечные опоры (v0.7.0): ранг-1 в ЕДИНУЮ матрицу изгибной жёсткости.
+        if p.model.theory in ("ktn_linear", "ktn_full"):
+            # реакция опоры — δ-сила; КТН-поправки требуют гладкой поверхностной
+            # нагрузки (δ в схему сознательно не вводится — NOTES §18)
+            _fail("model.theory", p.model.theory,
+                  "classic | karman при [supports] (реакция опоры — δ-сила; "
+                  "КТН-поправки требуют гладкой нагрузки, NOTES «Точечная сила "
+                  "и уточнённая теория»)", "supports")
+        if p.model.theory == "classic" and p.bc.type == "soft_hinge":
+            # классический шарнир — РАСЩЕПЛЕНИЕ на две Пуассоны: единой матрицы
+            # бигармоники нет, ранг-1 вставить некуда (прецедент Винклера)
+            _fail("bc.type", p.bc.type,
+                  "clamped | mixed при theory = classic с [supports] (мягкий "
+                  "шарнир классики — расщепление; шарнир с опорами — "
+                  "bc = mixed на прямоугольнике либо theory = karman)",
+                  "supports")
+        if p.contact.enabled or p.plate2 is not None:
+            # v0.7.0: опоры входят в S ДО факторизации ⇒ контактный оператор
+            # остаётся SPD и теорема 4 МОР применима как есть (gain считается
+            # на ОПЁРТОМ операторе). Верифицирован классический позиционный
+            # контакт об основание на защемлении (редукции + KKT,
+            # tests/test_supports.py); остальные тракты — отказ.
+            ok = (p.model.theory == "classic" and p.bc.type == "clamped"
+                  and p.contact.target == "foundation"
+                  and p.contact.force is None and p.plate2 is None)
+            if not ok:
+                _fail("contact.enabled", True,
+                      "[supports] с контактом — только theory = classic, "
+                      "bc = clamped, позиционное основание (нелинейный/"
+                      "силовой/парный контакт с опорами — направление "
+                      "развития)", "supports")
+        # prestress×supports проверяется в ветке [eigen] выше (ранний return)
+    if (p.model.winkler is not None and p.model.winkler > 0.0
+            and p.verify.reference == "mms"):
+        # MMS-эталон (ladder.mms_load_and_exact) НЕ учитывает основание k_w —
+        # честный решатель получил бы ЛОЖНЫЙ FAIL ворот
+        _fail("verify.reference", "mms",
+              "none при model.winkler > 0 (MMS-эталон не учитывает основание "
+              "Винклера — k_w вошёл бы в невязку; либо k_w = 0)", "verify")
     if (p.model.winkler is not None and p.model.winkler > 0.0
             and p.model.theory in ("classic", "ktn_linear")
-            and p.bc.type != "clamped"):
+            and p.bc.type == "soft_hinge"):
         # Винклер свёрнут в ПОЛНУЮ билинейную форму; классический мягкий шарнир
         # решается РАСЩЕПЛЕНИЕМ (две Пуассоны) — основание расщепление ломает.
-        # Полная форма шарнира доступна нелинейным теориям (karman при малой
-        # нагрузке = линейный предел).
+        # clamped и mixed (v0.7.0: свёртка добавлена в MixedRectPlate,
+        # сертификаты — MMS и ряд Навье с k_w) идут полной формой; полная
+        # форма шарнира доступна нелинейным теориям (karman в линейном пределе).
         _fail("model.winkler", p.model.winkler,
-              "0 либо bc = clamped при theory = classic | ktn_linear (мягкий "
-              "шарнир классики — расщепление, несовместимое с основанием; "
-              "используйте theory = karman: его линейный предел — полная форма "
-              "шарнира)", "model")
+              "0 либо bc = clamped | mixed при theory = classic | ktn_linear "
+              "(мягкий шарнир классики — расщепление, несовместимое с "
+              "основанием; используйте theory = karman: его линейный предел — "
+              "полная форма шарнира)", "model")
     if p.bc.type == "mixed":
         if p.geometry.kind != "rectangle":
             _fail("bc.type", "mixed",
@@ -1054,10 +1573,19 @@ def _validate_cross(p: Problem) -> None:
                       "(мягкий шарнир — circle | ellipse | rectangle | annulus, "
                       "одиночная ИЛИ пара; область с входящим углом L/compose — "
                       "направление развития v0.7)", "bc")
-            if p.load.type != "uniform":
+            # v0.7.0: гладкое поле нагрузки (gaussian/expr) допущено в
+            # ПОЗИЦИОННОМ контакте об основание (МОР — свойство оператора,
+            # ворота — редукции и nested==merged); силовой режим и пара —
+            # по-прежнему равномерная нагрузка.
+            positional = (p.contact.target == "foundation"
+                          and p.contact.force is None and p.plate2 is None)
+            allowed_loads = (("uniform", "gaussian", "expr") if positional
+                             else ("uniform",))
+            if p.load.type not in allowed_loads:
                 _fail("load.type", p.load.type,
-                      f"uniform при theory = {th} с контактом (нелинейный контакт "
-                      "МОР+КТН реализован для равномерной нагрузки, §4)", "load")
+                      f"{' | '.join(allowed_loads)} при theory = {th} с контактом "
+                      "(гладкое поле нагрузки — только позиционное основание, "
+                      "v0.7.0; силовой/парный контакт — uniform, §4)", "load")
     # Ключи схемы/усиления осмысленны ТОЛЬКО для нелинейного контакта (§4).
     _nl_keys = {"scheme": p.contact.scheme, "gain": p.contact.gain,
                 "mor_anderson": p.contact.mor_anderson}

@@ -301,25 +301,89 @@ class KarmanPlate:
         psi, psi_x, psi_y, pxx, pyy, pxy = self._wstruct(X, Y)
         self._psi, self._psi_x, self._psi_y = psi, psi_x, psi_y
         lap = pxx + pyy
-        S = (lap * W) @ lap.T - (1.0 - self.nu) * (
-            (pxx * W) @ pyy.T + (pyy * W) @ pxx.T - 2.0 * (pxy * W) @ pxy.T)
-        self._S_bend = 0.5 * (S + S.T)
+        ortho = getattr(cfg, "ortho_D", None)
+        h_expr = getattr(cfg, "h_expr", None)
+        self._h_pts = None
+        if h_expr is not None:
+            # переменная толщина (v0.7.0): D(x,y) весом полной формы; ниже
+            # мембранная жёсткость C(x,y) — тоже поле (clamped immovable,
+            # гарантировано валидатором)
+            from . import exprfield
+            e_h = exprfield.parse_field("model.h_expr", h_expr)
+            h_pts = exprfield.field_values(e_h, X, Y, key="model.h_expr")
+            h_pts = np.full(X.size, float(h_pts)) if np.ndim(h_pts) == 0 else h_pts
+            if float(np.min(h_pts)) <= 0.0:
+                from .problem import CaseError
+                j = int(np.argmin(h_pts))
+                raise CaseError(
+                    f"model.h_expr: h ≤ 0 в узле квадратуры ({X[j]:.4g}, "
+                    f"{Y[j]:.4g}) — толщина обязана быть положительной, "
+                    "см. docs/CASE_SCHEMA.md#model")
+            self._h_pts = h_pts
+            self._h_expr_ast = e_h
+            D_pts = cfg.E * h_pts**3 / (12.0 * (1.0 - self.nu**2))
+            Wd = W * (D_pts / self.D)
+            S = (lap * Wd) @ lap.T - (1.0 - self.nu) * (
+                (pxx * Wd) @ pyy.T + (pyy * Wd) @ pxx.T - 2.0 * (pxy * Wd) @ pxy.T)
+            self._S_bend = 0.5 * (S + S.T)
+        elif ortho is not None:
+            # ортотропия (v0.7.0): изгиб — S_ortho (и для собственных задач
+            # K = D·S_bend, и для НЕЛИНЕЙНОГО ортотропного Кармана: мембрана
+            # тогда идёт законом ortho_A ниже; прямой D-ввод без A отгорожен
+            # валидатором — изотропная C в этом случае остаётся мёртвым весом)
+            from .clamped import assemble_ortho
+            self.D = float(ortho[0])
+            self._S_bend = assemble_ortho(pxx, pyy, pxy, W, ortho) / self.D
+        else:
+            S = (lap * W) @ lap.T - (1.0 - self.nu) * (
+                (pxx * W) @ pyy.T + (pyy * W) @ pxx.T - 2.0 * (pxy * W) @ pxy.T)
+            self._S_bend = 0.5 * (S + S.T)
         kw = float(getattr(cfg, "winkler", 0.0))   # упругое основание Винклера (v0.6.6)
         if kw > 0.0:
             # D·Δ²w + k_w·w ⇒ D·(S_bend + (k_w/D)·∫ψψ): весь пайплайн (Пикар,
             # Ньютон, собственные задачи, контакт) наследует член основания
             M = (psi * W) @ psi.T
             self._S_bend = self._S_bend + (kw / self.D) * 0.5 * (M + M.T)
+        # точечные опоры (v0.7.0): ранг-1 в изгибную жёсткость — наследуют
+        # Пикар/Ньютон и собственные задачи (КТН-теории отсекает валидатор)
+        from .clamped import _add_point_supports
+        self._S_bend = _add_point_supports(self._S_bend, self.D, cfg,
+                                           self.structure_at)
+        # термомомент (v0.7.0): b_th[k] = −M_T·∫Δψ_k dΩ — полная форма даёт
+        # ИСТИННЫЙ шарнир M_n = −M_T (сфера на круге машинно). У защемления
+        # (ω²T: ψ = ψ_n = 0 на ∂Ω) интеграл — АНАЛИТИЧЕСКИЙ ноль (теорема о
+        # дивергенции): не собираем (квадратурный шум) — w не меняется бит-точно.
+        m_t = float(getattr(cfg, "thermal_moment", 0.0))
+        self._b_thermal = None
+        if m_t != 0.0 and self._power == 1:
+            self._b_thermal = -m_t * (lap @ W)
         # -- мембранная жёсткость плоской задачи (от w не зависит) ----------- #
-        C = cfg.E * cfg.h / (1.0 - self.nu**2)
+        if self._h_pts is not None:                   # C(x,y) = E·h(x,y)/(1−ν²)
+            C = cfg.E * self._h_pts / (1.0 - self.nu**2)
+        else:
+            C = cfg.E * cfg.h / (1.0 - self.nu**2)
         self._C = C
         immovable = inplane_bc == "immovable"
         P, Px, Py = _disp_structure(domain, basis, X, Y, immovable)
         self._Px, self._Py = Px, Py
         half = 0.5 * (1.0 - self.nu)
-        Kaa = C * ((Px * W) @ Px.T + half * (Py * W) @ Py.T)
-        Kbb = C * ((Py * W) @ Py.T + half * (Px * W) @ Px.T)
-        Kab = C * (self.nu * (Px * W) @ Py.T + half * (Py * W) @ Px.T)
+        self._ortho_A = getattr(cfg, "ortho_A", None)   # ортотропная мембрана
+        if self._ortho_A is not None:
+            # (v0.7.0) закон N = A·ε: A11 ε_x + A12 ε_y, A12 ε_x + A22 ε_y,
+            # A66 γ_xy — ортотропное плоское напряжённое состояние
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            Kaa = A11 * (Px * W) @ Px.T + A66 * (Py * W) @ Py.T
+            Kbb = A22 * (Py * W) @ Py.T + A66 * (Px * W) @ Px.T
+            Kab = A12 * (Px * W) @ Py.T + A66 * (Py * W) @ Px.T
+        elif np.ndim(C) > 0:                          # переменная C — вес узла
+            CW = C * W
+            Kaa = (Px * CW) @ Px.T + half * (Py * CW) @ Py.T
+            Kbb = (Py * CW) @ Py.T + half * (Px * CW) @ Px.T
+            Kab = self.nu * (Px * CW) @ Py.T + half * (Py * CW) @ Px.T
+        else:
+            Kaa = C * ((Px * W) @ Px.T + half * (Py * W) @ Py.T)
+            Kbb = C * ((Py * W) @ Py.T + half * (Px * W) @ Px.T)
+            Kab = C * (self.nu * (Px * W) @ Py.T + half * (Py * W) @ Px.T)
         n = basis.N
         Kuv = np.empty((2 * n, 2 * n))
         Kuv[:n, :n] = Kaa
@@ -358,10 +422,16 @@ class KarmanPlate:
         C, nu, W = self._C, self.nu, self._W
         Px, Py = self._Px, self._Py
         e_x, e_y, e_xy = 0.5 * wx**2, 0.5 * wy**2, wx * wy
-        # предварительные усилия от нелинейных деформаций
-        Ne_x = C * (e_x + nu * e_y)
-        Ne_y = C * (e_y + nu * e_x)
-        Ne_xy = C * 0.5 * (1.0 - nu) * e_xy
+        if self._ortho_A is not None:                        # N = A·ε (v0.7.0)
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            Ne_x = A11 * e_x + A12 * e_y
+            Ne_y = A12 * e_x + A22 * e_y
+            Ne_xy = A66 * e_xy
+        else:
+            # предварительные усилия от нелинейных деформаций
+            Ne_x = C * (e_x + nu * e_y)
+            Ne_y = C * (e_y + nu * e_x)
+            Ne_xy = C * 0.5 * (1.0 - nu) * e_xy
         f_a = -(Px @ (W * Ne_x) + Py @ (W * Ne_xy))
         f_b = -(Py @ (W * Ne_y) + Px @ (W * Ne_xy))
         rhs = np.concatenate([f_a, f_b])
@@ -373,9 +443,15 @@ class KarmanPlate:
         ex = a @ Px + e_x                                    # полная деформация ε
         ey = b @ Py + e_y
         gxy = a @ Py + b @ Px + e_xy
-        Nx = C * (ex + nu * ey)
-        Ny = C * (ey + nu * ex)
-        Nxy = C * 0.5 * (1.0 - nu) * gxy
+        if self._ortho_A is not None:
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            Nx = A11 * ex + A12 * ey
+            Ny = A12 * ex + A22 * ey
+            Nxy = A66 * gxy
+        else:
+            Nx = C * (ex + nu * ey)
+            Ny = C * (ey + nu * ex)
+            Nxy = C * 0.5 * (1.0 - nu) * gxy
         return a, b, Nx, Ny, Nxy
 
     def _geometric_stiffness(self, Nx, Ny, Nxy):
@@ -431,14 +507,22 @@ class KarmanPlate:
         """
         Px, Py, C, nu, n = self._Px, self._Py, self._C, self.nu, self._n
         W, half = self._W, 0.5 * (1.0 - self.nu)
+        Cc = C[:, None] if np.ndim(C) > 0 else C             # C(x,y) — по узлам
         dex = wx[:, None] * self._psi_x.T                    # ∂e_x/∂c_k = wx·ψ_kx
         dey = wy[:, None] * self._psi_y.T
         dexy = wx[:, None] * self._psi_y.T + wy[:, None] * self._psi_x.T
+        if self._ortho_A is not None:                        # ∂N = A·∂ε (v0.7.0)
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            dNe_x = A11 * dex + A12 * dey
+            dNe_y = A12 * dex + A22 * dey
+            dNe_xy = A66 * dexy
+        else:
+            dNe_x = Cc * (dex + nu * dey)
+            dNe_y = Cc * (dey + nu * dex)
+            dNe_xy = Cc * half * dexy
         # предв. усилия ∂Ne/∂c → правая часть плоской задачи ∂f_pre/∂c (2n × n)
-        dfa = -(Px @ (W[:, None] * (C * (dex + nu * dey)))
-                + Py @ (W[:, None] * (C * half * dexy)))
-        dfb = -(Py @ (W[:, None] * (C * (dey + nu * dex)))
-                + Px @ (W[:, None] * (C * half * dexy)))
+        dfa = -(Px @ (W[:, None] * dNe_x) + Py @ (W[:, None] * dNe_xy))
+        dfb = -(Py @ (W[:, None] * dNe_y) + Px @ (W[:, None] * dNe_xy))
         drhs = np.vstack([dfa, dfb])
         if self._membrane_immovable:
             dab = _spd_solve(self._Kuv, drhs)
@@ -448,7 +532,10 @@ class KarmanPlate:
         ex = Px.T @ da + dex                                 # ∂ε_lin/∂c + ∂e/∂c
         ey = Py.T @ db + dey
         gxy = Py.T @ da + Px.T @ db + dexy
-        return C * (ex + nu * ey), C * (ey + nu * ex), C * half * gxy
+        if self._ortho_A is not None:
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            return (A11 * ex + A12 * ey, A12 * ex + A22 * ey, A66 * gxy)
+        return Cc * (ex + nu * ey), Cc * (ey + nu * ex), Cc * half * gxy
 
     def _newton_tangent(self, c, forces) -> np.ndarray:
         r"""Согласованный касательный оператор ``J = dR/dc`` (§5.4).
@@ -474,14 +561,20 @@ class KarmanPlate:
         forces = self._membrane_forces(c @ self._psi_x, c @ self._psi_y)
         return self._nonlinear_operator(c, forces) - b_level
 
-    def _solve_newton(self, f_values, c0=None) -> KarmanResult:
+    def _solve_newton(self, f_values, c0=None, b_extra=None) -> KarmanResult:
         r"""Ньютон с согласованным касательным оператором и бэктрекингом (§5.4).
 
         Квадратичная сходимость: ~5–6 итераций против десятков у Пикара, слабо
         зависит от уровня нагрузки. Глобализация — бэктрекинг по норме остатка
         (робастно от нулевого старта); наращивание нагрузки — по ``n_load_steps``.
+        ``b_extra`` — готовый ДОБАВОК к вектору нагрузки (линейная нагрузка
+        вдоль отрезка, v0.7.0); ``None`` — путь кода буквально прежний.
         """
         b_full = self._load_vector(np.asarray(f_values, float))
+        if b_extra is not None:
+            b_full = b_full + np.asarray(b_extra, float)
+        if self._b_thermal is not None:              # термомомент (v0.7.0)
+            b_full = b_full + self._b_thermal
         tol = float(self.cfg.karman_tol)
         max_iter = int(self.cfg.karman_max_iter)
         n_steps = max(1, int(self.cfg.n_load_steps))
@@ -532,7 +625,7 @@ class KarmanPlate:
             n_iter=total_iter, history=history)
 
     # -- основной цикл ------------------------------------------------------ #
-    def solve(self, f_values, c0=None) -> KarmanResult:
+    def solve(self, f_values, c0=None, b_extra=None) -> KarmanResult:
         r"""Итерация Пикара (ускорение Андерсона) с шагами по нагрузке (§5.1–5.2).
 
         ``f_values`` — интенсивность нагрузки в узлах квадратуры (равномерная
@@ -548,16 +641,24 @@ class KarmanPlate:
         предыдущего шага внешнего цикла МОР, `contact_nl.py`): при заданном
         нагрузка НЕ дробится (один уровень на полной нагрузке), т.к. старт уже
         близок к решению — резко экономит итерации.
+
+        ``b_extra`` — готовый ДОБАВОК к вектору нагрузки (линейная нагрузка
+        вдоль отрезка, v0.7.0): наращивается теми же ``n_load_steps``;
+        ``None`` — путь кода буквально прежний (бит-точность старых чисел).
         """
         cfg = self.cfg
         method = getattr(cfg, "karman_method", "picard")
         if method == "newton":                               # §5.4 — квадратичный
-            return self._solve_newton(f_values, c0=c0)
+            return self._solve_newton(f_values, c0=c0, b_extra=b_extra)
         if method != "picard":
             raise NotImplementedError(
                 f"karman_method = {method!r}: ожидалось picard | newton")
         f_values = np.asarray(f_values, float)
         b_full = self._load_vector(f_values)
+        if b_extra is not None:
+            b_full = b_full + np.asarray(b_extra, float)
+        if self._b_thermal is not None:              # термомомент (v0.7.0)
+            b_full = b_full + self._b_thermal
         theta = float(cfg.karman_relax)
         tol = float(cfg.karman_tol)
         max_iter = int(cfg.karman_max_iter)
@@ -668,7 +769,23 @@ class KarmanPlate:
         wxx = np.tensordot(c, pxx, axes=(0, 0))
         wyy = np.tensordot(c, pyy, axes=(0, 0))
         wxy = np.tensordot(c, pxy, axes=(0, 0))
-        nu, D = self.nu, self.D
+        ortho = getattr(self.cfg, "ortho_D", None)
+        if ortho is not None:                     # ортотропный конститутив (v0.7.0)
+            D11, D12, D22, D66 = (float(t) for t in ortho)
+            return (-(D11 * wxx + D12 * wyy), -(D12 * wxx + D22 * wyy),
+                    -2.0 * D66 * wxy)
+        nu = self.nu
+        if self._h_pts is not None:               # локальная D(x, y) (v0.7.0)
+            from . import exprfield
+            h_loc = exprfield.field_values(self._h_expr_ast,
+                                           np.asarray(X, float),
+                                           np.asarray(Y, float),
+                                           key="model.h_expr")
+            h_loc = np.broadcast_to(np.asarray(h_loc, float), np.shape(wxx))
+            D_loc = self.cfg.E * h_loc**3 / (12.0 * (1.0 - nu**2))
+            return (-D_loc * (wxx + nu * wyy), -D_loc * (wyy + nu * wxx),
+                    -D_loc * (1.0 - nu) * wxy)
+        D = self.D
         return (-D * (wxx + nu * wyy), -D * (wyy + nu * wxx), -D * (1.0 - nu) * wxy)
 
     def membrane_forces_at(self, cu, cv, cw, X, Y):
@@ -691,7 +808,23 @@ class KarmanPlate:
         ex = np.tensordot(cu, Px, axes=(0, 0)) + 0.5 * wx**2
         ey = np.tensordot(cv, Py, axes=(0, 0)) + 0.5 * wy**2
         gxy = np.tensordot(cu, Py, axes=(0, 0)) + np.tensordot(cv, Px, axes=(0, 0)) + wx * wy
-        C, nu = self._C, self.nu
+        nu = self.nu
+        if self._ortho_A is not None:                        # N = A·ε (v0.7.0)
+            A11, A12, A22, A66 = (float(v) for v in self._ortho_A)
+            return (A11 * ex + A12 * ey, A12 * ex + A22 * ey, A66 * gxy)
+        if self._h_pts is not None:
+            # переменная толщина (v0.7.0): C — поле в узлах КВАДРАТУРЫ, а здесь
+            # произвольные точки — вычисляем C(x, y) локально (формы узлов
+            # квадратуры и точек запроса не совпадают)
+            from . import exprfield
+            h_loc = exprfield.field_values(self._h_expr_ast,
+                                           np.asarray(X, float),
+                                           np.asarray(Y, float),
+                                           key="model.h_expr")
+            h_loc = np.broadcast_to(np.asarray(h_loc, float), np.shape(ex))
+            C = self.cfg.E * h_loc / (1.0 - nu**2)
+        else:
+            C = self._C
         return (C * (ex + nu * ey), C * (ey + nu * ex), C * 0.5 * (1.0 - nu) * gxy)
 
     def w_max_on_grid(self, c, grid_n: int = 160) -> float:
