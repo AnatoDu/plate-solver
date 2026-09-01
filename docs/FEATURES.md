@@ -74,7 +74,7 @@ tests/test_doc_matrix.py).
 | model.theory | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | circle_clamped_contact_certified.toml, circle_soft_contact_certified.toml, eigen_prestress_vibration.toml |
 | model.winkler | API.md, CASE_SCHEMA.md | winkler_circle_clamped.toml |
 | output.dir | API.md, CASE_SCHEMA.md, README.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
-| output.figures | CASE_SCHEMA.md, README.md | fig_mdm2026_lcontact.py, golden_config.py, run_circle_1d_2d.py |
+| output.figures | CASE_SCHEMA.md, README.md | golden_config.py, run_circle_1d_2d.py, run_clamped_circle.py |
 | output.vtk | API.md, CASE_SCHEMA.md | winkler_circle_clamped.toml |
 | plate2.bc | API.md, CASE_SCHEMA.md, MIGRATION.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | plate2.discretization | API.md, CASE_SCHEMA.md, dispatch_flow.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
@@ -173,7 +173,7 @@ tests/test_doc_matrix.py).
 | clamped | `clamped_fem_lshape` | API.md | run_clamped_lshape.py, test_clamped.py |
 | clamped | `solve_clamped_fem` | API.md | test_clamped.py |
 | config | `Config` | API.md, CASE_SCHEMA.md, README.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
-| contact | `ContactMOR` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, fig_mdm2026_lcontact.py |
+| contact | `ContactMOR` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, run_ktn.py |
 | contact | `ContactResult` | API.md | run_lshape_contact.py |
 | contact | `TwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py, test_two_plates.py |
 | contact | `TwoPlateResult` | API.md | __init__.py, contact.py, contact_nl.py |
@@ -203,7 +203,7 @@ tests/test_doc_matrix.py).
 | geometry | `Domain` | API.md | run_ladder_mms.py, test_mms_ktn.py, test_stresses.py |
 | geometry | `circle_expr` | API.md | test_geometry_registry.py |
 | geometry | `ellipse_expr` | API.md | geometry.py |
-| geometry | `make_L` | API.md, NOTES.md, README.md | fig_mdm2026_lcontact.py, run_clamped_lshape.py, run_ktn.py |
+| geometry | `make_L` | API.md, NOTES.md, README.md | run_clamped_lshape.py, run_ktn.py, run_lshape_contact.py |
 | geometry | `make_annulus` | API.md | test_geometry_registry.py, test_multiply_connected.py, test_soft_hinge_ktn.py |
 | geometry | `make_circle` | API.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
 | geometry | `make_compose` | API.md | test_geometry_registry.py |
@@ -217,7 +217,7 @@ tests/test_doc_matrix.py).
 | geometry | `rectangle_expr` | API.md | geometry.py |
 | geometry | `x` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
 | geometry | `y` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
-| ktn | `KTNParams` | API.md, MIGRATION.md, NOTES.md | fig_mdm2026_lcontact.py, run_ktn.py, test_contact_ktn.py |
+| ktn | `KTNParams` | API.md, MIGRATION.md, NOTES.md | run_ktn.py, test_contact_ktn.py, test_face_deflection.py |
 | ktn | `PlateMaterial` | API.md | circular_plate.py, conftest.py, test_smoke.py |
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |
@@ -247,7 +247,7 @@ tests/test_doc_matrix.py).
 | ladder | `strip_hinge_wmax` | API.md | run_ladder_1d.py |
 | membrane | `KarmanPlate` | ALGORITHMS.md, API.md, THEORY.md | 06_theory_comparison.ipynb, 09_eigen_verification.ipynb, test_eigenmodes.py |
 | membrane | `KarmanResult` | API.md | __init__.py, dispatch.py, eigenmodes.py |
-| plate | `PlateBending` | API.md, CASE_SCHEMA.md, dispatch_flow.md | 01_circle_api.ipynb, fig_mdm2026_lcontact.py, run_circle.py |
+| plate | `PlateBending` | API.md, CASE_SCHEMA.md, dispatch_flow.md | 01_circle_api.ipynb, run_circle.py, run_circle_1d_2d.py |
 | poisson | `CACHE_NM_MAX` | API.md | test_poisson_disk.py |
 | poisson | `PoissonSolver` | API.md | test_geometry_registry.py, test_poisson_disk.py |
 | problem | `BCSpec` | API.md | problem.py |
@@ -273,7 +273,7 @@ tests/test_doc_matrix.py).
 | references | `resolve_reference` | API.md | test_analytic_factory.py, test_contact_certified.py, test_mms_reference.py |
 | references | `verify_result` | API.md, dispatch_flow.md | 02_annulus_case.ipynb, run_reference.py, test_analytic_factory.py |
 | theory | `TheoryParams` | API.md, ARCHITECTURE.md, NOTES.md | 07_theory_ladder.ipynb, test_unified_theory.py |
-| theory | `classic` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, fig_mdm2026_lcontact.py |
+| theory | `classic` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, reproduce_all.py |
 | theory | `from_preset` | API.md | test_unified_theory.py |
 | theory | `karman` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb |
 | theory | `ktn_full` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 06_theory_comparison.ipynb, 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb |

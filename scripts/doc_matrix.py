@@ -96,17 +96,36 @@ def _read_all(paths) -> dict:
     return {p: p.read_text(encoding="utf-8", errors="replace") for p in paths}
 
 
+def _tracked_only(paths) -> list:
+    """Оставить только отслеживаемые git-ом файлы.
+
+    Иначе матрица зависела бы от локальных неотслеживаемых файлов
+    (черновики в scripts/ и т.п.) и расходилась бы между машинами/CI.
+    Без git (архив исходников) — все файлы, как раньше.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(["git", "ls-files"], cwd=ROOT, check=True,
+                             capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return list(paths)
+    tracked = {ROOT / line for line in out.splitlines() if line}
+    return [p for p in paths if p in tracked]
+
+
 def build_matrix() -> tuple[str, int]:
     # FEATURES.md исключён из пула «где описано»: само-ссылка делала
     # генерацию неидемпотентной (результат зависел от прошлого файла)
     docs = _read_all([q for q in (ROOT / "docs").glob("*.md")
                       if q.name != "FEATURES.md"] + [ROOT / "README.md"])
-    cases = _read_all(list((ROOT / "cases").rglob("*.toml")))
-    usage = _read_all(list((ROOT / "examples").glob("*.py"))
-                      + list((ROOT / "notebooks").glob("*.ipynb"))
-                      + list((ROOT / "tests").glob("*.py"))
-                      + list((ROOT / "scripts").glob("*.py")))
-    pkg = _read_all(list(SRC.glob("*.py")))
+    cases = _read_all(_tracked_only((ROOT / "cases").rglob("*.toml")))
+    usage = _read_all(_tracked_only(
+        list((ROOT / "examples").glob("*.py"))
+        + list((ROOT / "notebooks").glob("*.ipynb"))
+        + list((ROOT / "tests").glob("*.py"))
+        + list((ROOT / "scripts").glob("*.py"))))
+    pkg = _read_all(_tracked_only(SRC.glob("*.py")))
 
     def where_doc(term: str) -> str:
         hits = [p.name for p, txt in docs.items() if term in txt]

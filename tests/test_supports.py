@@ -157,7 +157,9 @@ def test_support_eigen_frequencies_monotone():
     with_sup["supports"] = {"points": [[0.3, 0.2]], "stiffness": 1e6 * _D}
     e0 = dispatch.solve(Problem.from_dict(base)).eigen.values
     e1 = dispatch.solve(Problem.from_dict(with_sup)).eigen.values
-    assert all(v1 >= v0 * (1.0 - 1e-12) for v0, v1 in zip(e0, e1, strict=False))
+    # зазор 1e-8 — шум eig-решателя на вырожденных парах (зависит от BLAS);
+    # существо ворот — монотонность Куранта–Фишера — сохранено
+    assert all(v1 >= v0 * (1.0 - 1e-8) for v0, v1 in zip(e0, e1, strict=False))
     assert e1[0] > e0[0] * 1.05                        # первая мода растёт заметно
 
 

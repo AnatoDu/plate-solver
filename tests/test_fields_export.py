@@ -334,7 +334,9 @@ reference = "none"
     assert v[50] == pytest.approx(np.nanmax(v), rel=1e-6)  # максимум в центре
     csv = tmp_path / "prof.csv"
     fig = tmp_path / "prof.png"
-    rc = main_profile([*dirs, "--key", "w", "--from", "-1,0", "--to", "1,0",
+    # отрицательная координата — формой --from=…: argparse Python ≤3.12
+    # принимает «-1,0» за опцию (матчер отрицательных чисел не знает запятой)
+    rc = main_profile([*dirs, "--key", "w", "--from=-1,0", "--to", "1,0",
                        "-n", "101", "--csv", str(csv), "--fig", str(fig)])
     assert rc == 0 and csv.exists() and fig.exists()
     data = np.loadtxt(csv, delimiter=",", skiprows=1)

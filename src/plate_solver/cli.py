@@ -658,7 +658,8 @@ def main_profile(argv: list[str] | None = None) -> int:
     parser.add_argument("--key", default="w",
                         help="ключ поля (w, Mx, Qx, sx_bot, svm_top, r, …)")
     parser.add_argument("--from", dest="p0", required=True,
-                        help="начало сечения: x0,y0")
+                        help="начало сечения: x0,y0 (отрицательные координаты "
+                             "— формой --from=-1,0)")
     parser.add_argument("--to", dest="p1", required=True,
                         help="конец сечения: x1,y1")
     parser.add_argument("-n", type=int, default=200, help="число точек")
