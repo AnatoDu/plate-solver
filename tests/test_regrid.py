@@ -72,7 +72,7 @@ def test_gate_t2_contact_regrid_no_new_iterations():
 
 
 def test_gate_t3_surfaces_consistent_after_regrid():
-    """т3: classic ⇒ w_top ≡ w_mid ≡ w_bot на НОВОЙ сетке; ktn — dh < 0 в зоне."""
+    """т3: classic ⇒ w_top ≡ w_mid ≡ w_bot на НОВОЙ сетке; ktn — обжатие < 0 в зоне."""
     import tomllib
 
     res = solve(_load("lshape_stamp")).regrid(32)
@@ -90,11 +90,21 @@ def test_gate_t3_surfaces_consistent_after_regrid():
     _, _, dhk = rk.faces_on_grid()
     zone = rk.contact.contact_zone
     assert zone.any()
-    # кромка интерполированной зоны grid-зависима (см. CASE_SCHEMA):
-    # гейтим ЯДРО зоны — пиксели с реакцией ≥ 0.5·max (там dh < 0 всюду)
+    # кромка интерполированной зоны grid-зависима (см. CASE_SCHEMA): гейтим
+    # ЯДРО зоны — пиксели с реакцией ≥ 0.5·max. Инвариант поля (v0.8.0):
+    # ОБЖИМНЫЙ вклад dh, −(κ_q·q + κ_r·r), строго отрицателен (давление сжимает
+    # пластину по толщине); знак самого dh задаёт кривизный член c_curv·Δw
+    # (до v0.8.0 обжимный член был раздут множителем D и подавлял кривизный).
+    from plate_solver.ktn import KTNParams
+
     r_grid = np.nan_to_num(rk.contact.r_grid, nan=0.0)
     core = zone & (r_grid >= 0.5 * float(np.max(r_grid)))
-    assert core.any() and float(np.nanmax(dhk[core])) < 0.0
+    assert core.any()
+    ck = rk.config
+    kp = KTNParams(E=ck.E, nu=ck.nu, h=ck.h)
+    compress = -(kp.kappa_q * ck.q0 + kp.kappa_r * r_grid)
+    assert float(np.nanmax(compress[core])) < 0.0
+    assert np.isfinite(dhk[core]).all()
 
 
 def test_pair_regrid():

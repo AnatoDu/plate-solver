@@ -255,10 +255,14 @@ class FacePrimaryContact:
         return self.solver._bending_solve(b)
 
     def _extra(self, r) -> np.ndarray | float:
-        r"""Алгебраические члены (9): ``c_q q_0 + c_r D r`` (без дифференцирования)."""
+        r"""Алгебраические члены (9): ``c_q q_0 + c_r r`` (без дифференцирования).
+
+        v0.8.0: множитель ``D`` при реакции снят (размерность κ_r — [м/Па],
+        см. ``ktn.py`` и NOTES §21.1).
+        """
         if self._cq == 0.0 and self._cr == 0.0:
             return 0.0
-        return self._cq * float(self.cfg.q0) + self._cr * self.solver.D * r
+        return self._cq * float(self.cfg.q0) + self._cr * r
 
     def _face(self, cw, r) -> tuple[np.ndarray, np.ndarray | None]:
         extra = self._extra(r)
@@ -365,13 +369,13 @@ class FacePrimaryContactKTN:
         return Nx * (cw @ s._pxx) + 2.0 * Nxy * (cw @ s._pxy) + Ny * (cw @ s._pyy)
 
     def _extra(self, cw, r, forces) -> np.ndarray:
-        r"""Алгебраические члены (9): ``c_q q_eff + c_r D r`` (q_eff = q_n[+L])."""
+        r"""Алгебраические члены (9): ``c_q q_eff + c_r r`` (q_eff = q_n[+L]; v0.8.0 — без D)."""
         q0 = float(self.cfg.q0)
         q_eff = q0
         if self.effective_load:
             _, _, Nx, Ny, Nxy = forces
             q_eff = q0 + self._bilinear_L(cw, Nx, Ny, Nxy)
-        return self._cq * q_eff + self._cr * self.solver.D * r
+        return self._cq * q_eff + self._cr * r
 
     def _face(self, cw, r, forces) -> tuple[np.ndarray, np.ndarray | None]:
         extra = self._extra(cw, r, forces)
