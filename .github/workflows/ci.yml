@@ -5,7 +5,7 @@ name: ci
 
 on:
   push:
-    branches: [main, migration]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -14,7 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # классификаторы pyproject обещают 3.11–3.14 ⇒ матрица их и гоняет
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -45,6 +46,9 @@ jobs:
         run: |
           pip install dist/*.tar.gz
           python -c "import plate_solver; print(plate_solver.__version__)"
-          plate-solve --version
+          # смок ВСЕХ пяти команд (раньше проверялась только plate-solve)
+          plate-solve --version && plate-verify --version && plate-ladder --version
+          plate-replot --version && plate-profile --version
           plate-solve --new circle && test -f circle.toml
           plate-solve circle.toml --check
+          plate-verify --help > /dev/null

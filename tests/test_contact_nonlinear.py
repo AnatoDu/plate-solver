@@ -337,11 +337,34 @@ def test_ktn_pair_engages_and_invariants(tmp_path, theory):
 
 
 def test_ktn_pair_rigid_second_reduces_to_support(tmp_path):
-    """Редукция: жёсткая вторая пластина (E2→∞) при Δ=0 ⇒ первая почти не гнётся."""
+    r"""Редукция: жёсткая вторая пластина (E2→∞) при Δ=0 ⇒ первая почти не гнётся.
+
+    Первая пластина ложится на практически недеформируемое основание, и
+    ИЗГИБА у неё не остаётся. Срединный прогиб при этом не ноль: условие
+    непроникания стоит на ЛИЦЕВОЙ поверхности, поэтому на обжатой пластине
+    срединная поверхность отстоит от препятствия ровно на обжатие по толщине
+
+    .. math:: w \approx \kappa_q q + \kappa_r r
+
+    (формула (9); до v0.8.0 алгебраические члены в нелинейном тракте были
+    опущены, и ворота требовали строго нулевого прогиба). Проверяется именно
+    это: срединный прогиб СОВПАДАЕТ с обжатием, а само обжатие на три порядка
+    меньше свободного прогиба — изгиба нет.
+    """
+    from plate_solver.faces import FaceParams
+    from plate_solver.theory import from_preset
+
     soft = dispatch.solve(_pair(tmp_path, theory="ktn_full"))
     stiff = dispatch.solve(_pair(tmp_path, theory="ktn_full", e2="E = 1.0e12"))
-    assert stiff.w_max < 1e-3 * soft.w_free_max           # опёрта на жёсткое основание
-    assert stiff.contact.r_nodes.max() > 0.0
+    cfg = stiff.config
+    kappa_q, kappa_r = from_preset("ktn_full", cfg.nu, cfg.h).face_kappas(
+        FaceParams(E=cfg.E, nu=cfg.nu, h=cfg.h))
+    r = stiff.contact.r_nodes
+    assert r.max() > 0.0
+    compression = kappa_q * float(cfg.q0) + kappa_r * float(r.max())
+    assert stiff.w_max == pytest.approx(compression, rel=0.25)   # это обжатие, не изгиб
+    assert compression < 1e-2 * soft.w_free_max                  # опёрта на жёсткое основание
+    assert stiff.w_max < 1e-2 * soft.w_free_max
 
 
 def test_reject_mixed_theory_pair(tmp_path):

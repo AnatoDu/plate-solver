@@ -2,13 +2,17 @@
 
 ## Релиз на GitHub
 
-1. Полный локальный прогон: `pytest` (все маркеры) — однострочник в
+1. Поднять версию в `plate_solver.__version__` — ЕДИНСТВЕННЫЙ источник
+   истины (pyproject берёт её динамически) — и синхронно в витринах
+   `CITATION.cff` (поле `version` и `date-released`), `.zenodo.json`,
+   `codemeta.json`; ворота — `pytest tests/test_version_sync.py`.
+2. Полный локальный прогон: `pytest` (все маркеры) — однострочник в
    CHANGELOG; `ruff check .`.
-2. Сборка и проверка пакета: `python -m build && twine check dist/*`
+3. Сборка и проверка пакета: `python -m build && twine check dist/*`
    (extra dev).
-3. Аннотированный тег: `git tag -a vX.Y.Z` (релиз-ноты из CHANGELOG),
+4. Аннотированный тег: `git tag -a vX.Y.Z` (релиз-ноты из CHANGELOG),
    `git push origin main --tags`.
-4. GitHub → Releases → Draft new release из тега (текст из CHANGELOG).
+5. GitHub → Releases → Draft new release из тега (текст из CHANGELOG).
 
 ## DOI через Zenodo (однократная настройка + на каждый релиз)
 
@@ -17,9 +21,18 @@
    `.zenodo.json`).
 2. Опубликовать GitHub-релиз (шаг выше) — Zenodo автоматически создаст
    депозит и выдаст DOI версии + concept-DOI.
-3. Вписать DOI: concept-DOI в README уже стоит (с v0.6.2 — не трогать),
-   version-DOI нового релиза — поле `doi:` в
-   CITATION.cff; закоммитить.
+3. Вписать DOI. Разделение полей в `CITATION.cff` — такое:
+
+   * `doi:` и `url:` несут CONCEPT-DOI (все версии, резолвится на
+     последнюю) — он один на весь проект и НЕ меняется от релиза к
+     релизу; concept-DOI в README тоже стоит с v0.6.2 и не трогается;
+   * VERSION-DOI очередного релиза добавляется отдельной записью в
+     список `identifiers` — `type: doi`, `value: 10.5281/zenodo.<новый>`,
+     `description: Version DOI vX.Y.Z`; там же уже лежит запись
+     concept-DOI с пометкой «Concept DOI (all versions)».
+
+   Version-DOI выдаётся Zenodo ПОСЛЕ публикации релиза, поэтому запись
+   вносится отдельным коммитом вслед за тегом (так было с v0.7.0).
 4. Провенанс верификации: перед релизом обновить блок
    `vvprov:verification` в `codemeta.json` — `vvprov:softwareVersion`
    на новую версию, достигнутые величины новых/изменённых актов — по

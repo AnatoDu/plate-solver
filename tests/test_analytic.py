@@ -38,12 +38,29 @@ def test_clamped_zero_deflection_and_slope_at_edge():
     assert abs(dwdr) < 1e-3 * analytic.clamped_uniform_wmax(A, Q, D)
 
 
-def test_simply_supported_wmax_and_edge():
+def test_simply_supported_wmax_matches_timoshenko():
+    r"""Шарнирный круг — замкнутая форма Тимошенко.
+
+    .. math:: w_{\max} = \frac{5+\nu}{1+\nu}\,\frac{q a^4}{64 D}
+
+    (в публикации: Timoshenko & Woinowsky-Krieger, Theory of Plates and Shells,
+    2-е изд., гл. 3). Проверяется не только значение при ν = 0.3, но и ВЕСЬ
+    множитель ``(5+ν)/(1+ν)``: при нескольких ν сверяются и абсолютное
+    значение, и отношение к защемлённой пластине ``qa⁴/(64D)`` — ошибка в
+    зависимости от ν (частая при переписывании формулы) не проходит.
+    """
     D = _D()
     w0 = analytic.simply_supported_uniform(0.0, A, Q, D, NU)
     assert np.isclose(w0, analytic.simply_supported_uniform_wmax(A, Q, D, NU))
+    w_clamped = analytic.clamped_uniform_wmax(A, Q, D)
+    for nu in (0.0, 0.15, NU, 0.45):
+        w_ref = (5.0 + nu) / (1.0 + nu) * Q * A**4 / (64.0 * D)
+        w_num = analytic.simply_supported_uniform_wmax(A, Q, D, nu)
+        assert np.isclose(w_num, w_ref, rtol=1e-14), (nu, w_num, w_ref)
+        # отношение к защемлённой = тот же множитель (при ν=0.3 — 4.0769)
+        assert np.isclose(w_num / w_clamped, (5.0 + nu) / (1.0 + nu), rtol=1e-14)
     # шарнирная пластина прогибается сильнее защемлённой
-    assert w0 > analytic.clamped_uniform_wmax(A, Q, D)
+    assert w0 > w_clamped
     # прогиб на крае = 0
     assert np.isclose(analytic.simply_supported_uniform(A, A, Q, D, NU), 0.0)
 

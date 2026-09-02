@@ -138,6 +138,41 @@ def test_terms_scale_gain_consistently(setup):
     assert gain(None) == pytest.approx(gain(FaceTerms(True, True, True)), rel=1e-14)
 
 
+def test_ladder_matches_frozen_snapshot(setup):
+    """Регресс ЛЕСТНИЦЫ: семь режимов против снимка в cases/baselines.json.
+
+    Снимок фиксирует то, что показывает лестница как ИЗМЕРЕНИЕ: какой член
+    даёт сходимость, какой перераспределяет реакцию, какой почти не влияет.
+    Гейтуются ОТНОШЕНИЯ и факт сходимости (кросс-платформенно устойчивые), а
+    не пятый знак; сами числа снимка — для сверки при разборе регресса.
+    """
+    import json
+
+    base = json.loads((_ROOT / "cases" / "baselines.json").read_text(encoding="utf-8"))
+    ref = base["lshape_ktn_terms_ladder"]["режимы"]
+    got = {
+        "classic": _run(setup, None, ktn=False),
+        "off": _run(setup, FaceTerms(False, False, False)),
+        "curvature": _run(setup, FaceTerms(True, False, False)),
+        "load": _run(setup, FaceTerms(False, True, False)),
+        "reaction": _run(setup, FaceTerms(False, False, True)),
+        "curvature+reaction": _run(setup, FaceTerms(True, False, True)),
+        "full": _run(setup, None),
+    }
+    base_peak = got["classic"].r_nodes.max()
+    for name, res in got.items():
+        exp = ref[name]
+        assert res.converged == exp["converged"], f"{name}: сходимость разошлась со снимком"
+        assert int((res.r_nodes > 0).sum()) == exp["n_contact"], name
+        assert float(res.r_nodes.max()) == pytest.approx(exp["r_max"], rel=2e-2), name
+        # отношение к классике — главная измеряемая величина лестницы
+        assert float(res.r_nodes.max()) / base_peak == pytest.approx(
+            exp["r_max"] / ref["classic"]["r_max"], rel=2e-2), name
+    # ключевые качественные выводы лестницы
+    assert got["off"].r_nodes.max() == got["classic"].r_nodes.max()      # бит-в-бит
+    assert got["reaction"].converged and not got["curvature"].converged
+
+
 def test_case_schema_routes_face_terms(tmp_path):
     """Ключи ``[model.face_terms]`` доходят до решателя через case-файл."""
     from plate_solver.dispatch import solve

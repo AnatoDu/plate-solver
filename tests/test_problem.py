@@ -57,18 +57,134 @@ def test_to_config_inherits_config_defaults():
     assert cfg == ref                       # всё прочее — дефолты Config
 
 
-def test_to_config_maps_all_keys():
-    data = _case(
-        model={"theory": "ktn_linear", "E": 1.0e6, "nu": 0.25, "h": 0.06},
+def _config_fields_filled_by_to_config() -> set[str]:
+    """Поля ``Config``, которые ``Problem.to_config`` умеет заполнять.
+
+    Реестр строится ИЗ ИСХОДНИКА метода: ключи ``kw[...]`` — строковые литералы
+    (в том числе в кортежах циклов), поэтому берутся все строковые литералы
+    метода, совпадающие с именем поля ``Config``. Множество заведомо не УЖЕ
+    фактического: лишний литерал лишь потребовал бы лишнего покрытия и уронил
+    тест — сторона безопасная, тихой дыры не возникает.
+    """
+    import ast
+    import dataclasses
+    import inspect
+    import textwrap
+
+    src = textwrap.dedent(inspect.getsource(Problem.to_config))
+    literals = {n.value for n in ast.walk(ast.parse(src))
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    return literals & {f.name for f in dataclasses.fields(Config)}
+
+
+_GEOM = {"kind": "circle", "a": 1.5}          # a ≠ дефолта Config (1.0)
+_CLAMPED = {"type": "clamped"}
+_LOAD = {"type": "uniform", "q0": 3.0}        # q0 ≠ дефолта Config (4.0)
+_DISC = {"p": 8, "Q": 40, "grid_n": 36}
+_H_ORT = 0.1                                  # толщина ортотропного набора
+_K_EL = 1.0 - 0.2 * (0.2 * 1.0 / 2.0)         # 1 − ν_xy·ν_yx при Ex=2, Ey=1, ν_xy=0.2
+
+
+def _full_case(**sections) -> dict:
+    """Случай на явной геометрии/нагрузке/дискретизации (все значения ≠ дефолтов)."""
+    base = dict(geometry=_GEOM, bc=_CLAMPED, load=_LOAD, discretization=_DISC,
+                verify={"reference": "none"})
+    base.update(sections)
+    return _case(**base)
+
+
+#: (метка, case, ПОЛНЫЙ перечень полей Config, отличных от дефолта, с их значениями).
+#: Одним случаем всё покрыть нельзя: схема запрещает совмещать ортотропию с
+#: контактом, опоры с термомоментом, ускорение Андерсона с методом newton и т. д.
+_TO_CONFIG_CASES = [
+    ("классика + позиционный контакт", _full_case(
+        model={"theory": "classic", "E": 1.0e6, "nu": 0.25, "h": 0.06},
         contact={"enabled": True, "gap": 5.0e-5, "beta": 1.0,
-                 "max_iter": 500, "tol": 1e-6, "stop": "comp"},
-        discretization={"p": 8, "Q": 40, "grid_n": 36},
-    )
-    cfg = Problem.from_dict(data).to_config()
-    assert (cfg.E, cfg.nu, cfg.h, cfg.q0, cfg.a) == (1.0e6, 0.25, 0.06, 4.0, 1.0)
-    assert (cfg.Delta, cfg.beta, cfg.max_iter, cfg.tol, cfg.stop) == \
-        (5.0e-5, 1.0, 500, 1e-6, "comp")
-    assert (cfg.p, cfg.Q, cfg.grid_n) == (8, 40, 36)
+                 "max_iter": 500, "tol": 1e-6, "stop": "comp"}),
+     {"E": 1.0e6, "nu": 0.25, "h": 0.06, "q0": 3.0, "a": 1.5, "Delta": 5.0e-5,
+      "beta": 1.0, "max_iter": 500, "tol": 1e-6, "stop": "comp",
+      "p": 8, "Q": 40, "grid_n": 36}),
+    ("Карман + нелинейный контакт (Пикар с Андерсоном)", _full_case(
+        model={"theory": "karman", "n_load_steps": 3, "karman_relax": 0.7,
+               "karman_max_iter": 150, "karman_tol": 1e-7, "karman_anderson": 4},
+        contact={"enabled": True, "gap": 5.0e-5, "scheme": "nested",
+                 "gain": "linear", "mor_anderson": 5}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36, "Delta": 5.0e-5,
+      "n_load_steps": 3, "karman_relax": 0.7, "karman_max_iter": 150,
+      "karman_tol": 1e-7, "karman_anderson": 4, "contact_scheme": "nested",
+      "contact_gain": "linear", "mor_anderson": 5}),
+    ("Карман методом Ньютона", _full_case(
+        model={"theory": "karman", "karman_method": "newton"}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36,
+      "karman_method": "newton"}),
+    ("полная КТН: метод и слагаемые лицевого условия", _full_case(
+        model={"theory": "ktn_full", "ktn_method": "newton",
+               "face_terms": {"curvature": True, "load": False, "reaction": True}}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36,
+      "ktn_method": "newton", "face_terms": (True, False, True)}),
+    ("основание Винклера + точечные опоры", _full_case(
+        model={"theory": "classic", "winkler": 1.0e3},
+        supports={"points": [[0.0, 0.0], [0.5, 0.25]], "stiffness": 2.0e4}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36, "winkler": 1.0e3,
+      "supports_points": ((0.0, 0.0), (0.5, 0.25)), "supports_stiffness": 2.0e4}),
+    ("термомомент", _full_case(load={"type": "uniform", "q0": 3.0,
+                                     "thermal_moment": 0.5}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36, "thermal_moment": 0.5}),
+    ("переменная толщина h(x, y)", _full_case(
+        model={"theory": "classic", "h_expr": "0.1 + 0.01*x"}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36,
+      "h_expr": "0.1 + 0.01*x"}),
+    ("ортотропия прямым набором жёсткостей", _full_case(
+        model={"theory": "classic",
+               "orthotropy": {"D11": 2.0, "D12": 0.5, "D22": 1.0, "D66": 0.4}}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36,
+      "ortho_D": (2.0, 0.5, 1.0, 0.4)}),
+    ("ортотропия инженерным набором (Карман ⇒ ещё и мембранная A)", _full_case(
+        model={"theory": "karman", "h": _H_ORT,
+               "orthotropy": {"Ex": 2.0, "Ey": 1.0, "nu_xy": 0.2, "Gxy": 0.5}}),
+     {"q0": 3.0, "a": 1.5, "p": 8, "Q": 40, "grid_n": 36, "h": _H_ORT,
+      # D_ij = E_i h³/[12(1−ν_xy ν_yx)], A_ij = E_i h/(1−ν_xy ν_yx)
+      "ortho_D": (2.0 * _H_ORT**3 / 12.0 / _K_EL, 0.2 * 1.0 * _H_ORT**3 / 12.0 / _K_EL,
+                  1.0 * _H_ORT**3 / 12.0 / _K_EL, 0.5 * _H_ORT**3 / 12.0),
+      "ortho_A": (2.0 * _H_ORT / _K_EL, 0.2 * 1.0 * _H_ORT / _K_EL,
+                  1.0 * _H_ORT / _K_EL, 0.5 * _H_ORT)}),
+]
+
+
+def _matches(got, want) -> bool:
+    """Кортеж вычисляемых жёсткостей — с допуском fp; всё прочее — точно."""
+    if isinstance(want, tuple) and want and all(isinstance(v, float) for v in want):
+        return got == pytest.approx(want, rel=1e-13)
+    return got == want
+
+
+def test_to_config_maps_all_keys():
+    """Ворота ПОЛНОТЫ отображения Problem → Config (не выборка ключей).
+
+    Прежняя редакция проверяла 13 полей из 31 и не замечала бы потерю нового
+    ключа. Теперь: (1) для каждого случая набор полей, ОТЛИЧНЫХ от дефолта
+    ``Config``, сверяется как множество — лишнее отображение так же красно, как
+    потерянное; (2) объединение по случаям обязано покрыть ВСЕ поля, которые
+    ``to_config`` умеет заполнять (реестр строится из исходника метода), поэтому
+    новый ключ схемы без покрытия роняет тест.
+    """
+    import dataclasses
+
+    dflt = Config()
+    covered: set[str] = set()
+    for label, data, expected in _TO_CONFIG_CASES:
+        cfg = Problem.from_dict(data).to_config()
+        changed = {f.name for f in dataclasses.fields(Config)
+                   if getattr(cfg, f.name) != getattr(dflt, f.name)}
+        assert changed == set(expected), (label, sorted(changed ^ set(expected)))
+        for field, value in expected.items():
+            assert _matches(getattr(cfg, field), value), (label, field,
+                                                          getattr(cfg, field), value)
+        covered |= set(expected)
+
+    filled = _config_fields_filled_by_to_config()
+    assert filled, "реестр отображаемых полей пуст — сломан разбор исходника"
+    assert covered == filled, sorted(covered ^ filled)
 
 
 def test_round_trip_from_toml(tmp_path):

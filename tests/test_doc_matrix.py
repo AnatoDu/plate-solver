@@ -69,11 +69,92 @@ def test_rect_sin_exact_consistency():
     assert w_c == pytest.approx(float(rect_sin_wmax(Lx, Ly, D, q0)), rel=1e-14)
 
 
+# --------------------------------------------------------------------------- #
+#  Полнота схемы: ключ обязан стоять В ТАБЛИЦЕ ключей, а не «где-то в тексте»
+# --------------------------------------------------------------------------- #
+def _key_table_cells(schema: str) -> list[str]:
+    """Первые ячейки строк раздела «## Таблица ключей» (без заголовка и разделителя)."""
+    lines = schema.splitlines()
+    assert "## Таблица ключей" in lines, "в docs/CASE_SCHEMA.md нет «## Таблица ключей»"
+    cells = []
+    for line in lines[lines.index("## Таблица ключей") + 1:]:
+        if line.startswith("## "):
+            break                                    # конец раздела
+        if not line.startswith("|"):
+            continue
+        cell = line.split("|")[1].strip()
+        if not cell or set(cell) <= set("-: ") or cell == "Ключ":
+            continue                                 # разделитель и заголовок
+        cells.append(cell)
+    return cells
+
+
+def _declared_keys(cell: str) -> set[tuple[str, str]]:
+    """(секция, ключ) из ячейки таблицы: перечисления и диапазоны.
+
+    Разбираются все формы, встречающиеся в таблице: ``model.theory``,
+    ``model.E, nu, h`` (перечисление в одной секции), ``geometry.x1..y2``
+    (диапазон координат прямоугольника), ``contact.gap.r_curv, cx, cy, apex``
+    (вложенная таблица), ``[plate2] bc, load`` (секция в скобках).
+    """
+    import re
+
+    cell = cell.strip().strip("`").replace("[[", "").replace("]]", "")
+    m = re.match(r"^\[([\w.]+)\]\s*(.+)$", cell)          # «[plate2] bc, load»
+    if m:
+        section, listed = m.group(1), m.group(2)
+    else:
+        head = cell.split(",")[0].strip().split("..")[0]  # «geometry.x1..y2» → «geometry.x1»
+        if "." not in head:
+            return set()
+        section = head.rsplit(".", 1)[0]
+        listed = cell[len(section) + 1:]
+    keys: set[str] = set()
+    for token in (t.strip().strip("`") for t in listed.split(",")):
+        if not token:
+            continue
+        if ".." not in token:
+            keys.add(token)
+            continue
+        lo, hi = token.split("..")                        # «x1..y2» — оси × индексы
+        keys |= {lo, hi}
+        a, b = re.match(r"^([a-z])(\d)$", lo), re.match(r"^([a-z])(\d)$", hi)
+        if a and b:
+            keys |= {f"{c}{d}" for c in (a.group(1), b.group(1))
+                     for d in (a.group(2), b.group(2))}
+    return {(section, k) for k in keys}
+
+
 def test_every_schema_key_documented_in_case_schema():
-    """Ворота полноты схемы: каждый ключ problem.py упомянут в docs/CASE_SCHEMA.md."""
+    """Ворота полноты схемы: каждый ключ problem.py стоит В ТАБЛИЦЕ ключей.
+
+    Прежняя редакция искала имя ключа ПОДСТРОКОЙ по всему файлу — для коротких
+    имён (Q, p, P, E, h, nu, tol, type) условие выполнялось случайным вхождением
+    в прозе, и недокументированный ключ проходил бы молча. Теперь ключ обязан
+    быть объявлен ЯЧЕЙКОЙ таблицы «## Таблица ключей» и ИМЕННО В СВОЕЙ СЕКЦИИ
+    (``model.tol`` не засчитывается вхождением ``verify.tol``); секции верхнего
+    уровня обязаны встречаться в виде заголовка ``[секция]``.
+    """
     from doc_matrix import schema_keys
 
     schema = (_ROOT / "docs" / "CASE_SCHEMA.md").read_text(encoding="utf-8")
-    missing = [f"{sec}.{key}" for sec, key in schema_keys()
-               if key not in schema]
-    assert not missing, f"нет в CASE_SCHEMA.md: {missing}"
+    cells = _key_table_cells(schema)
+    assert len(cells) > 50, "таблица ключей не разобрана"
+    documented: set[tuple[str, str]] = set()
+    for cell in cells:
+        declared = _declared_keys(cell)
+        assert declared, f"строка таблицы не разобрана: {cell!r}"
+        documented |= declared
+
+    missing = []
+    for sec, key in schema_keys():
+        if sec == "case":                            # секции верхнего уровня
+            if f"[{key}]" not in schema:
+                missing.append(f"секция [{key}]")
+        elif (sec, key) not in documented:
+            missing.append(f"{sec}.{key}")
+    assert not missing, f"нет в таблице ключей docs/CASE_SCHEMA.md: {missing}"
+
+    # проверка не вакуумна: несуществующий ключ и ключ ЧУЖОЙ секции не проходят
+    assert ("geometry", "radius") not in documented
+    assert ("model", "tol") not in documented and "tol" in schema

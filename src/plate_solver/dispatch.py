@@ -1870,7 +1870,8 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
         mor = NonlinearTwoPlateMOR(solver, solver2, cfg, gap=gap_val,
                                    f1=np.full(q1.x.size, float(cfg.q0)),
                                    q2=float(cfg2.q0), foundation_mask=fmask,
-                                   gain_mode=cfg.contact_gain)
+                                   gain_mode=cfg.contact_gain,
+                                   face_terms=_face_terms(cfg))
     except ValueError as e:
         raise CaseError(f"contact.target: {e} см. {_SCHEMA_DOC}#plate2") from None
     if c.force is not None:

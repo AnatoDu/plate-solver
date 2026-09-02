@@ -471,7 +471,7 @@ class NonlinearTwoPlateMOR:
 
     def __init__(self, solver1: KTNSolver, solver2: KTNSolver, cfg: Config, *,
                  gap=0.0, f1=None, f2=None, q2=None, foundation_mask=None,
-                 gain_mode: str = "secant"):
+                 gain_mode: str = "secant", face_terms=None):
         if gain_mode not in ("secant", "linear"):
             raise ValueError(f"gain_mode: ожидалось secant | linear, получено {gain_mode!r}")
         self.gain_mode = gain_mode
@@ -515,12 +515,25 @@ class NonlinearTwoPlateMOR:
             gain1, gain2 = ref1.w_max_classic / ref, ref2.w_max_classic / ref
         else:
             gain1, gain2 = ref1.w_max / ref, ref2.w_max / ref
-        gain = gain1 + gain2
+        # переключатели слагаемых лицевого условия (лестница слагаемых, v0.8.0)
+        self.face_terms = face_terms
+        use_curv = face_terms is None or face_terms.curvature
+        use_q = face_terms is None or face_terms.load
+        use_r = face_terms is None or face_terms.reaction
+        self._c1 = solver1.params.face_curv_coeff if use_curv else 0.0
+        self._c2 = solver2.params.face_curv_coeff if use_curv else 0.0
+        # податливости формулы (9) КАЖДОЙ пластины (собственные E, ν, h из её
+        # конфигурации): в сближении лицевых они СКЛАДЫВАЮТСЯ — обе грани под
+        # давлением r сжимаются к своим срединным поверхностям (v0.8.0).
+        kq1, kr1 = solver1.params.face_kappas(FaceParams.from_config(solver1.cfg))
+        kq2, kr2 = solver2.params.face_kappas(FaceParams.from_config(solver2.cfg))
+        self._kappa_q1, self._kappa_q2 = (kq1, kq2) if use_q else (0.0, 0.0)
+        self._kappa_r1, self._kappa_r2 = (kr1, kr2) if use_r else (0.0, 0.0)
+        gain = gain1 + gain2 + self._kappa_r1 + self._kappa_r2
         self.beta_eff = cfg.beta / gain if gain > 0.0 else cfg.beta
+        self.gain = gain
         self.max_iter = int(cfg.max_iter)
         self.tol = float(cfg.tol)
-        self._c1 = solver1.params.face_curv_coeff
-        self._c2 = solver2.params.face_curv_coeff
 
     @staticmethod
     def _as_field(f, n) -> np.ndarray:
@@ -528,11 +541,47 @@ class NonlinearTwoPlateMOR:
         return np.full(n, float(arr)) if arr.ndim == 0 else arr
 
     def _face(self, solver, cw, c_curv) -> np.ndarray:
-        """Лицевой прогиб пластины ``u_c = w + c_curv·Δw`` в узлах."""
+        """Кинематическая часть лицевого прогиба ``w + c_curv·Δw`` в узлах."""
         w = cw @ solver._psi
         if c_curv == 0.0:
             return w
         return w + c_curv * (cw @ solver._lap_psi)
+
+    def faces(self, c1, c2, r) -> tuple[np.ndarray, np.ndarray]:
+        r"""Лицевые прогибы пары по ПОЛНОЙ формуле (9) (v0.8.0).
+
+        .. math::
+            u_{c1} &= w_1 + c_1\Delta w_1 - \kappa_{q1} f_1 - \kappa_{r1} r,\\
+            u_{c2} &= w_2 + c_2\Delta w_2 + \kappa_{q2} f_2 + \kappa_{r2} r.
+
+        Знаки алгебраических членов у второй пластины ЗЕРКАЛЬНЫ: её
+        контактирующая грань — ВЕРХНЯЯ. Переход в собственную (перевёрнутую)
+        систему второй пластины ``ŵ = −w`` оставляет кривизный член в прежнем
+        виде (двойная смена знака), а давления ``f₂`` и ``r`` остаются
+        положительными, поэтому обжатие ``−κ q̂`` возвращается в глобальные
+        координаты со знаком «плюс». Физически обе поправки действуют в одну
+        сторону: под давлением ``r`` каждая грань смещается К СВОЕЙ срединной
+        поверхности, то есть податливости пластин СКЛАДЫВАЮТСЯ (классический
+        результат контактной механики), и сближение
+        ``u_{c1} − u_{c2}`` уменьшается на ``(κ_{r1} + κ_{r2})·r``.
+
+        Редукция: жёсткая вторая пластина (``E₂ → ∞``) обнуляет ``c₂``,
+        ``κ_{q2}``, ``κ_{r2}`` и даёт лицевое условие одиночной пластины
+        (:meth:`NonlinearContactMOR._face_deflection`) — гейт
+        ``test_two_plate_rigid_reduces_to_single``.
+        """
+        r = np.asarray(r, float)
+        u1 = self._face(self.s1, c1, self._c1)
+        u2 = self._face(self.s2, c2, self._c2)
+        if self._kappa_q1 != 0.0:
+            u1 = u1 - self._kappa_q1 * self.f1
+        if self._kappa_r1 != 0.0:
+            u1 = u1 - self._kappa_r1 * r
+        if self._kappa_q2 != 0.0:
+            u2 = u2 + self._kappa_q2 * self.f2
+        if self._kappa_r2 != 0.0:
+            u2 = u2 + self._kappa_r2 * r
+        return u1, u2
 
     def set_gap(self, gap) -> None:
         r"""Обновить зазор ``z`` БЕЗ пересборки решателей (силовой режим, §9.2).
@@ -573,8 +622,7 @@ class NonlinearTwoPlateMOR:
             b2 = self.s2._load_vector(self.f2 + r)          # пластина 2: f₂ + r
             c1, _ = self.s1._picard_map(c1, b1, theta)      # по шагу Пикара на пластину
             c2, _ = self.s2._picard_map(c2, b2, theta)
-            u1 = self._face(self.s1, c1, self._c1)
-            u2 = self._face(self.s2, c2, self._c2)
+            u1, u2 = self.faces(c1, c2, r)
             u = u1 - u2                                     # сближение лицевых
             g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
             g[self.fmask] = r[self.fmask] + self.beta_eff * (u[self.fmask] - self._gap_f)
@@ -609,8 +657,7 @@ class NonlinearTwoPlateMOR:
                 converged = True
                 break
         w1, w2 = c1 @ self.s1._psi, c2 @ self.s2._psi
-        u1 = self._face(self.s1, c1, self._c1)
-        u2 = self._face(self.s2, c2, self._c2)
+        u1, u2 = self.faces(c1, c2, r)
         contact = r > 0.0
         peak = int(np.argmax(r)) if r.size else 0
         # мембрана сошедшегося состояния: по одному дешёвому плоскому подшагу на

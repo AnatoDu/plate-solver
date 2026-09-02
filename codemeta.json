@@ -8,7 +8,7 @@
   "@type": "SoftwareSourceCode",
   "name": "plate-solver",
   "description": "Комплекс программ для расчёта изгиба и одностороннего (Синьорини) контакта упругих пластин произвольного очертания. Геометрия и краевые условия — R-функциями В. Л. Рвачёва (структура решения w=ω·Φ удовлетворяет краевым условиям тождественно); изгиб — методом Ритца (базис ω·Φ, полиномы Чебышёва, однократная факторизация Холецкого); контакт со свободной границей — методом обобщённой реакции (МОР). Все теории объединены в единую параметрическую модель (пресеты: классическая Кирхгофа, геометрически нелинейная Кармана, линейные и полные нелинейные поправки типа Кармана–Тимошенко–Нагди — поперечный сдвиг и обжатие; редукции точны по построению). Нелинейный контакт МОР работает поверх полной КТН; поддержаны многосвязные области, сценарии со штампом и двумя пластинами, диагностика зоны контакта, экспорт полей/усилий и конвейер воспроизводимости. Числовые результаты защищены тест-воротами, эталонные отчёты — под хеш-контролем. / Bending and unilateral (Signorini) contact of thin elastic plates of arbitrary planform: Rvachev's R-functions describe geometry and boundary conditions, a spectral Ritz method solves the bending, and the generalized reaction method resolves free-boundary contact.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "identifier": "https://doi.org/10.5281/zenodo.21218627",
   "license": "https://spdx.org/licenses/MIT",
   "codeRepository": "https://github.com/AnatoDu/plate-solver",
@@ -24,8 +24,8 @@
   "programmingLanguage": "Python",
   "runtimePlatform": "Python 3.11+",
   "operatingSystem": "OS Independent",
-  "datePublished": "2026-09-01",
-  "dateModified": "2026-09-01",
+  "datePublished": "2026-09-03",
+  "dateModified": "2026-09-03",
   "downloadUrl": "https://github.com/AnatoDu/plate-solver/archive/refs/tags/v0.7.0.tar.gz",
   "keywords": [
     "plates",
@@ -89,7 +89,7 @@
       "vvprov:metric": "relative deflection error",
       "vvprov:achieved": "~1e-13 (machine precision)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_ladder.py"
     },
     {
@@ -97,9 +97,9 @@
       "vvprov:referenceType": "analytic solution (auto-generated with substitution certificate)",
       "vvprov:vvType": "code verification",
       "vvprov:metric": "relative w_max error",
-      "vvprov:achieved": "< 1e-5 (regression-gated, SHA-controlled reference report)",
+      "vvprov:achieved": "7.1e-3 (tolerance 5e-2; masked-quadrature floor ~1/Q on the curved boundary)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "cases/ci/circle_clamped.toml; tests/test_ci_cases.py"
     },
     {
@@ -107,9 +107,9 @@
       "vvprov:referenceType": "analytic series",
       "vvprov:vvType": "code verification",
       "vvprov:metric": "relative w_max error",
-      "vvprov:achieved": "1.5e-6",
+      "vvprov:achieved": "7.0e-9 (tolerance 2.1e-8)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "cases/ci/rect_levy.toml; tests/test_ci_cases.py"
     },
     {
@@ -117,9 +117,9 @@
       "vvprov:referenceType": "manufactured solution (MMS)",
       "vvprov:vvType": "code verification (MMS)",
       "vvprov:metric": "relative deflection error",
-      "vvprov:achieved": "6e-15",
+      "vvprov:achieved": "4.9e-15 (machine precision; polynomial structure, exact quadrature)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "cases/ci/rect_mms.toml; tests/test_mms_reference.py"
     },
     {
@@ -129,7 +129,7 @@
       "vvprov:metric": "relative L2 error of deflection",
       "vvprov:achieved": "2.7e-3 (tolerance 1e-2)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_stamp_ritz.py"
     },
     {
@@ -139,7 +139,7 @@
       "vvprov:metric": "relative L2 error of deflection",
       "vvprov:achieved": "2.44e-2 (tolerance 5e-2)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_lshape.py"
     },
     {
@@ -149,7 +149,7 @@
       "vvprov:metric": "relative L2 error of deflection",
       "vvprov:achieved": "4.83e-1",
       "vvprov:status": "model discrepancy (Sapondzhyan-Babuska paradox), not a defect",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_lshape.py"
     },
     {
@@ -159,7 +159,7 @@
       "vvprov:metric": "relative w_max difference",
       "vvprov:achieved": "machine precision (identical execution path by construction)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_ktn_full.py"
     },
     {
@@ -169,7 +169,7 @@
       "vvprov:metric": "relative center deflection",
       "vvprov:achieved": "4.1e-3 decreasing to 2.0e-3 with 2D basis degree p = 12...18",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_ktn_full.py"
     },
     {
@@ -179,7 +179,7 @@
       "vvprov:metric": "relative w_max and reaction resultant",
       "vvprov:achieved": "regression-gated per case",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "cases/ci/circle_clamped_contact_certified.toml; tests/test_ci_cases.py"
     },
     {
@@ -189,7 +189,7 @@
       "vvprov:metric": "relative w_max; relative total reaction",
       "vvprov:achieved": "1.0e-3; 2.0e-3",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_fd_contact.py"
     },
     {
@@ -199,7 +199,7 @@
       "vvprov:metric": "relative center deflection",
       "vvprov:achieved": "1.7e-10 (p = 14)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_orthotropy.py"
     },
     {
@@ -209,7 +209,7 @@
       "vvprov:metric": "relative support reaction",
       "vvprov:achieved": "8.8e-3 (p = 12), 4.1e-3 (p = 20); algebraic ~p^-2 convergence",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_supports.py"
     },
     {
@@ -219,7 +219,7 @@
       "vvprov:metric": "relative deflection profile error",
       "vvprov:achieved": "8.1e-11",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_thermal.py"
     },
     {
@@ -229,7 +229,7 @@
       "vvprov:metric": "relative center deflection",
       "vvprov:achieved": "4.0e-4 (p = 24); algebraic ~p^-2.8 convergence",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "cases/ci/line_load_rect.toml; tests/test_line_load.py"
     },
     {
@@ -239,7 +239,7 @@
       "vvprov:metric": "relative deflection error",
       "vvprov:achieved": "8.2e-9 (p = 20, spectral convergence)",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_variable_thickness.py"
     },
     {
@@ -249,7 +249,7 @@
       "vvprov:metric": "relative center deflection",
       "vvprov:achieved": "6.2e-3 (p = 24); algebraic convergence at the load point",
       "vvprov:status": "within tolerance",
-      "vvprov:softwareVersion": "0.7.0",
+      "vvprov:softwareVersion": "0.8.0",
       "vvprov:artifact": "tests/test_point_exact.py"
     }
   ]

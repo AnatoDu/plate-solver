@@ -163,6 +163,18 @@ class SPDFactorization:
         self.n_dropped = int(self.n - np.count_nonzero(keep))
         self._spec = (np.ascontiguousarray(V[:, keep]), 1.0 / lam[keep])
         self.fallback = "pinv"
+        if self.n_dropped == 0:
+            # Холецкий отказал по ЗНАКУ (матрица не положительно определена —
+            # например касательный оператор Ньютона), но ранг полный: спектральное
+            # решение ТОЧНО (ни одно направление не отброшено), усечения нет.
+            # Такой случай штатен для нелинейных трактов и не заслуживает
+            # предупреждения об усечении пространства (v0.8.0).
+            self._emit(warn, (
+                "Холецкий не прошёл (матрица не положительно определена), "
+                "решение получено спектральным разложением; НИ ОДНО направление "
+                "не отброшено — решение полное, пространство не усечено"),
+                       loud=False)
+            return
         self._emit(warn, (
             f"Холецкий и масштабирование Якоби не прошли; включено "
             f"спектральное псевдообращение с отсечкой {self.rel_cutoff:.0e}·λ_max: "
@@ -171,10 +183,15 @@ class SPDFactorization:
             "избыточная степень базиса p при данной квадратуре; уменьшите p "
             "либо увеличьте Q"))
 
-    def _emit(self, warn: bool, msg: str) -> None:
-        """Зафиксировать факт фолбэка: атрибут + предупреждение модуля warnings."""
+    def _emit(self, warn: bool, msg: str, *, loud: bool = True) -> None:
+        """Зафиксировать факт фолбэка: атрибут + предупреждение модуля warnings.
+
+        ``loud=False`` — факт записывается в атрибуты (``fallback``,
+        ``warning_message``), но предупреждение НЕ издаётся: так помечаются
+        деградации без потери информации (полный ранг, решение точное).
+        """
         self.warning_message = f"{self.label}: {msg}"
-        if warn:
+        if warn and loud:
             warnings.warn(self.warning_message, FactorizationWarning, stacklevel=4)
 
     @property
@@ -188,15 +205,30 @@ class SPDFactorization:
         return self._chol if self.fallback is None else None
 
     def solve(self, b) -> np.ndarray:
-        """Решить ``A c = b`` той ступенью каскада, что удалась при построении."""
+        """Решить ``A c = b`` той ступенью каскада, что удалась при построении.
+
+        Правая часть — вектор ``(n,)`` ЛИБО матрица ``(n, k)`` (сразу ``k``
+        систем с одной факторизацией: так решается, например, производная
+        ``∂N/∂c`` касательного оператора Ньютона). Диагональные множители
+        ступеней 2 и 3 действуют по СТРОКАМ, поэтому для матричной правой
+        части они разворачиваются в столбец: без этого numpy молча
+        транслировал бы их по столбцам (иная арифметика) либо отказывал по
+        несовпадению форм.
+        """
         b = np.asarray(b, dtype=float)
+        if b.ndim not in (1, 2) or b.shape[0] != self.n:
+            raise ValueError(
+                f"{self.label}: правая часть формы {b.shape} несовместима с "
+                f"матрицей {self.n}×{self.n} — ожидалось ({self.n},) либо "
+                f"({self.n}, k)")
+        col = (slice(None),) if b.ndim == 1 else (slice(None), None)
         if self._chol is not None:
             if self._scale is None:
                 return sla.cho_solve(self._chol, b)          # штатный путь
-            s = self._scale
+            s = self._scale[col]                             # A = S⁻¹(SAS)S⁻¹
             return sla.cho_solve(self._chol, b * s) * s
         V, inv_lam = self._spec
-        return V @ ((V.T @ b) * inv_lam)
+        return V @ ((V.T @ b) * inv_lam[col])
 
 
 class PoissonSolver:

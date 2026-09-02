@@ -59,14 +59,41 @@ def test_gate_mms_circle_mask_floor():
 
 
 def test_mms_through_verify_result():
-    """verify_result использует value mms-прогона, а не w_max исходной задачи."""
+    """ВОРОТА: MMS-строка отчёта ГЕЙТУЕМА, сравнивает прогон MMS с точным решением.
+
+    Три содержательных утверждения (прежде здесь стояло тождественно истинное
+    ``value != approx(reference) or rel == 0``):
+
+    * строка помечена ``gated`` и её вердикт — PASS в ЗАЯВЛЕННОМ допуске
+      ``verify.tol = 1e-10`` (машинная точность полиномиальной ω);
+    * ``value`` — прогиб ПРОГОНА MMS (с изготовленной нагрузкой), а не ``w_max``
+      исходной задачи: величины различаются на шесть порядков, подмена видна;
+    * при ухудшении дискретизации (кривая граница + грубая квадратура при том
+      же допуске) ворота ПАДАЮТ — значит, проверка не вакуумна.
+    """
     from plate_solver.dispatch import solve
 
     p = _problem()
-    report = verify_result(solve(p))
-    assert report.ok
-    assert report.rows[0].value != pytest.approx(report.rows[0].reference, abs=0.0) \
-        or report.rows[0].rel == 0.0
+    res = solve(p)
+    report = verify_result(res)
+    row = report.rows[0]
+    ref = resolve_reference(p)[0]
+
+    assert row.gated and row.passed is True and report.ok
+    assert report.tol == 1.0e-10
+    assert row.value == pytest.approx(ref.value, rel=1e-14)      # прогон MMS
+    assert row.reference == pytest.approx(ref.w_max, rel=1e-14)  # точное решение
+    assert row.rel == pytest.approx(abs(row.value - row.reference) / abs(row.reference))
+    assert row.rel <= report.tol
+    # исходная задача (равномерная нагрузка) даёт ДРУГОЙ прогиб — подмена заметна
+    assert abs(res.w_max - row.value) > 0.5 * abs(row.value)
+
+    # ухудшение дискретизации: круг (маска ~1/Q) при том же допуске 1e-10
+    bad = _problem(geometry={"kind": "circle", "a": 1.0},
+                   discretization={"p": 8, "Q": 64, "grid_n": 16})
+    bad_report = verify_result(solve(bad))
+    assert bad_report.rows[0].gated and bad_report.rows[0].passed is False
+    assert not bad_report.ok and bad_report.rows[0].rel > 1.0e-10
 
 
 def test_mms_rejections():

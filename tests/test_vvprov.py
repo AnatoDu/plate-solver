@@ -91,3 +91,41 @@ def test_vvprov_types_cover_vv_classification():
     refs = {r["vvprov:referenceType"] for r in cm["vvprov:verification"]}
     assert any(t.startswith("analytic") for t in refs)
     assert any("independent computation" in t for t in refs)
+
+
+def test_vvprov_achieved_matches_actual_runs():
+    """ВОРОТА (v0.8.0): заявленная точность записей vvprov не лучше фактической.
+
+    Числа `vvprov:achieved` писались вручную и разошлись с артефактами на 2–3
+    порядка (для защемлённого круга заявлялось «< 1e-5» при факте 7.1e-3).
+    Здесь для записей, привязанных к case-файлу, ПЕРЕСЧИТЫВАЕТСЯ фактическая
+    относительная погрешность гейтуемых эталонных строк, и проверяется, что
+    заявленное число её не приукрашивает (допускается запас в 3 раза —
+    кросс-платформенный разброс) и что сам гейт проходит.
+    """
+    import re
+
+    from plate_solver.dispatch import solve
+    from plate_solver.problem import Problem
+    from plate_solver.references import verify_result
+
+    checked = 0
+    for rec in _codemeta()["vvprov:verification"]:
+        cases = [a.strip() for a in rec["vvprov:artifact"].split(";")
+                 if a.strip().endswith(".toml")]
+        if not cases:
+            continue
+        claim = re.search(r"(\d+(?:\.\d+)?)\s*e\s*-\s*(\d+)", rec["vvprov:achieved"])
+        if claim is None:                      # запись без числа («regression-gated»)
+            continue
+        claimed = float(f"{claim.group(1)}e-{claim.group(2)}")
+        report = verify_result(solve(Problem.from_toml(_ROOT / cases[0])))
+        gated = [r for r in report.rows if r.gated and "инвариант" not in r.name]
+        if not gated:
+            continue
+        actual = max(r.rel for r in gated)
+        assert report.ok, cases[0]
+        assert actual <= 3.0 * claimed, (
+            f"{cases[0]}: заявлено {claimed:.1e}, фактически {actual:.1e}")
+        checked += 1
+    assert checked >= 3, f"проверено записей: {checked}"

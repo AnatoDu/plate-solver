@@ -80,8 +80,8 @@ plate-ladder cases/ci            # каталог случаев → сводн�
 | `plate-solve --report …` | одностраничный md-отчёт по кейсу |
 | `plate-replot dir/` | перерисовать фигуры из `fields.npz` без пересчёта |
 | `plate-profile dir/ --key w --from x0,y0 --to x1,y1` | профиль поля вдоль сечения (+CSV, наложения) |
-| `--sweep p=2:12:2`, `Q=…` | свип дискретизации (md+csv+png), в solve и verify |
-| `--figures`, `--fig-format`, `--surface` | фигуры: форматы и выбор поверхности (mid/top/bottom) |
+| `--sweep p=2:12:2`, `Q=…` | свип дискретизации (md+csv+png), в solve и verify; `--out` у `plate-verify` действует только со свипом |
+| `--figures`, `--fig-format`, `--surface` | фигуры: форматы и выбор поверхности (mid/top/bottom); только `plate-solve` — `plate-verify` их отклоняет (у `plate-replot` свои `--fig-format`/`--surface`) |
 | `--grid N` | сетка вывода полей/фигур (на числа решения не влияет); после расчёта — `result.regrid(N)` |
 | `plate-ladder КАТАЛОГ` | прогон реестра случаев, сводка с провенансом |
 | `--version` | версия пакета (все пять команд) |
@@ -118,7 +118,7 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 
 Все эталонные числа получаются ОДНИМ прогоном
 `python scripts/run_reference.py` (из корня; результат —
-`results/reference/reference_v0.6.md` + csv, заморожен SHA-256:
+`results/reference/reference_v0.8.md` + csv, заморожен SHA-256:
 `tests/test_reference_hash.py`) и защищены тест-воротами:
 
 | Результат | Ключевые числа | Скрипт | Тест-ворота |
@@ -126,13 +126,15 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 | Верификация на круге | ошибка < 0.1 %; модельный разрыв мягкого шарнира 26.42 % | `run_circle.py` | `test_plate_circle.py` |
 | Верификация L-формы (МКЭ) | RFM↔FEM-Marcus 2.64 %; парадокс Сапонджяна 54.86 % | `run_lshape_verify.py` | `test_lshape.py` |
 | Контакт МОР на L-форме | 8000 итер.; 67/10800 узлов; r_max = 112.58; комплементарность 8.59e-2 | `run_lshape_contact.py` | `test_contact.py` |
-| Поправки КТН (классика ↔ КТН) | пик реакции ×0.095; узлы ×7.75; w_max +22.3 % | `run_ktn.py` | `test_ktn.py` |
+| Поправки КТН (классика ↔ КТН) | пик реакции ×0.54; узлы ×1.94; w_max +2.8 % | `run_ktn.py` | `test_ktn.py` |
 | 1D-штамп (эталон Maple) | согласие 2.4 % (L²) | `run_stamp_1d.py` | `test_stamp.py` |
 | Верификация 1D↔2D (круг) | 1D↔2D↔аналитика, 0.1 % | `run_circle_1d_2d.py` | `test_circle_1d_2d.py` |
 | Вклад R-функций (vs штраф) | 1 % при N=9 против N=25; лучше cond | `run_rvachev_vs_penalty.py` | `test_rvachev_vs_penalty.py` |
 | Лестница верификации изгиба | машинная точность → эталоны | `run_ladder_*.py` | `test_ladder.py` |
-| Лестница случаев (24 ladder-ступени: кольца, точечные силы, патчи, Леви, свободный край, контакты, пара пластин) | rel ≤ замороженных tol («факт × 3») | `run_reference.py` | `test_ci_cases.py`, big-тесты ступеней |
+| Лестница случаев (28 ladder-ступеней: кольца, точечные силы, патчи, Леви, свободный край, контакты, пара пластин) | rel ≤ замороженных tol («факт × 3») | `run_reference.py` | `test_ci_cases.py`, big-тесты ступеней |
 | Замкнутый контакт круг+основание (фабрика) | w_max 3.9e-3; полная сила 3.1e-3 | — | `test_analytic_factory.py` |
+| Сертификат КТН-контакта (редукция к сертифицированной классике) | пол дискретизации 2.7e-3; поправка гаснет как h² | — | `test_contact_ktn_certificate.py` |
+| Плато реакции при малом зазоре (L-форма) | зона 84 % площади, r/q₀ = 1.06 в глубине, F/Q = 0.80 | — | `test_lshape_plateau.py` |
 
 ## Запуск
 

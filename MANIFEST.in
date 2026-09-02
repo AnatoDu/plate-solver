@@ -12,4 +12,12 @@ prune results
 recursive-include results/reference *.md *.csv
 prune figures
 prune private
+# Локальные артефакты рядом с исходниками не входят в архив (v0.8.0): каталог
+# scripts/ включается целиком (graft), поэтому сборка из ГРЯЗНОГО дерева
+# затягивала бы в sdist чужие рисунки и данные. Явные исключения ниже +
+# правило релиза: собирать из чистого дерева (docs/RELEASING.md).
+prune scripts/figures
+recursive-exclude scripts *.png *.pdf *.eps *.npz *.npy *.csv
+recursive-exclude cases *.npz *.npy
+
 global-exclude *.py[cod] .DS_Store

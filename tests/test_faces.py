@@ -42,7 +42,13 @@ def test_naming_correspondence_to_ktn():
 
 
 def test_gate_r5_face_deflection_matches_ktn_linear():
-    """Gate R5: лицевой прогиб faces.py = ktn_linear (contact_displacement) число-в-число."""
+    """Gate R5 (страж слоёв): лицевой прогиб faces.py = ktn_linear число-в-число.
+
+    Утверждение по построению тавтологично (обёртка вызывает оборачиваемую
+    функцию), но нужно как СТРАЖ: если слои разойдутся — например, ``faces.py``
+    заведёт собственную сборку, — ``ktn_linear`` молча сдвинет регресс.
+    Содержательная проверка самой формулы — в тесте ниже.
+    """
     fp = FaceParams(E=2.1e6, nu=0.3, h=0.1)
     kp = KTNParams(E=2.1e6, nu=0.3, h=0.1)
     rng = np.random.default_rng(0)
@@ -55,6 +61,52 @@ def test_gate_r5_face_deflection_matches_ktn_linear():
                        kp.corrected_deflection(w, lap, q0, r), rtol=0, atol=0)
     # верхняя грань — по канону §21.1 совпадает со срединной
     assert np.allclose(fp.face_deflection(w, lap, q0, r, surface="top"), w)
+
+
+@pytest.mark.parametrize("nu,h,E", [(0.3, 1.0, 1.0), (0.28, 1.0, 1.0),
+                                    (0.15, 0.8, 2.0)])
+def test_face_deflection_equals_independent_formula_9(nu, h, E):
+    r"""Лицевой прогиб = НЕЗАВИСИМО собранная формула (9) — коэффициенты и адресация.
+
+    .. math:: u_c = w + c_{curv}\,\Delta w - \kappa_q q^+ - \kappa_r r
+
+    Коэффициенты выписаны ЗАМКНУТЫМИ формулами (не вызовом сборки кода):
+
+    .. math::
+        c_{curv} = h_c^2 - h_*^2 = \frac{(3\nu-2)h^2}{12(1-\nu)},\quad
+        \kappa_q = \frac{(1+\nu)(2-4\nu-3\nu^2)h}{16E(1-\nu)},\quad
+        \kappa_r = \frac{3(1+\nu)(2-4\nu+\nu^2)h}{16E(1-\nu)}.
+
+    Параметры подобраны так, чтобы все три слагаемых были ОДНОГО порядка
+    (E = h = 1): иначе q- и r-члены тонут в ``w`` и проверка знаков теряет
+    силу. Контроль не-вакуумности — перестановка ``κ_q ↔ κ_r`` и смена знака
+    любого слагаемого обязаны ломать совпадение.
+    """
+    fp = FaceParams(E=E, nu=nu, h=h)
+    rng = np.random.default_rng(7)
+    w = rng.standard_normal(24)
+    lap = rng.standard_normal(24)
+    q_n = 0.7
+    r = np.abs(rng.standard_normal(24))
+
+    c_curv = (3.0 * nu - 2.0) * h**2 / (12.0 * (1.0 - nu))
+    kappa_q = (1.0 + nu) * (2.0 - 4.0 * nu - 3.0 * nu**2) * h / (16.0 * E * (1.0 - nu))
+    kappa_r = 3.0 * (1.0 + nu) * (2.0 - 4.0 * nu + nu**2) * h / (16.0 * E * (1.0 - nu))
+    assert fp.c_curv == pytest.approx(c_curv, rel=1e-13)
+    assert fp.kappa_q == pytest.approx(kappa_q, rel=1e-12)
+    assert fp.kappa_r == pytest.approx(kappa_r, rel=1e-12)
+    assert kappa_q > 0.0 and kappa_r > 0.0 and c_curv < 0.0   # знаки податливостей
+
+    u_c = fp.face_deflection(w, lap, q_n, r, surface="bottom")
+    formula_9 = w + c_curv * lap - kappa_q * q_n - kappa_r * r
+    assert np.allclose(u_c, formula_9, rtol=1e-12, atol=0.0)
+
+    # каждое слагаемое ощутимо: смена знака / перестановка коэффициентов ловится
+    for wrong in (w + c_curv * lap + kappa_q * q_n - kappa_r * r,
+                  w + c_curv * lap - kappa_q * q_n + kappa_r * r,
+                  w - c_curv * lap - kappa_q * q_n - kappa_r * r,
+                  w + c_curv * lap - kappa_r * q_n - kappa_q * r):
+        assert not np.allclose(u_c, wrong, rtol=1e-9, atol=0.0)
 
 
 def test_from_config():

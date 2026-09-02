@@ -138,17 +138,17 @@ def test_gap_expr_rejected(bad):
 
 
 def test_gap_expr_both_sources_rejected():
-    """gap_expr вместе с gap | [contact.gap] — «ровно одно из»."""
-    with pytest.raises(CaseError):
+    """gap_expr вместе с gap | [contact.gap] — «ровно одно из» (текст ошибки — тоже ворота)."""
+    with pytest.raises(CaseError, match=r"ровно одно из gap"):
         Problem.from_dict(_contact_case(gap=0.005, gap_expr="0.005"))
-    with pytest.raises(CaseError, match="gap_expr"):
+    with pytest.raises(CaseError, match=r"gap_expr.*ожидалось ровно одно из"):
         Problem.from_dict(_contact_case(
             gap={"kind": "const", "value": 0.005}, gap_expr="0.005"))
 
 
 def test_gap_expr_nonpositive_rejected():
-    """Δ ≤ 0 где-то на основании — существующий отказ позиционного контакта."""
-    with pytest.raises(CaseError):
+    """Δ ≤ 0 где-то на основании — отказ с ФАКТИЧЕСКИМ минимумом в сообщении."""
+    with pytest.raises(CaseError, match=r"min Δ = -.*ожидалось > 0"):
         dispatch.solve(Problem.from_dict(_contact_case(gap_expr="0.005*(x-1.0)")))
 
 

@@ -15,21 +15,42 @@
   вдоль сечения (+CSV, наложения нескольких результатов).
 
 Новый случай делается копией шаблона и правкой нескольких строк
-(docs/CASE_SCHEMA.md).
+(docs/CASE_SCHEMA.md). Шаблон — исполняемая документация: его расширения
+даны блоками «``#:`` », и снятие сигила с любого ОДНОГО блока (вместе с
+правкой, названной строкой «``# требует:``» над ним) оставляет постановку
+валидной; это проверяется тестами, а не декларируется.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
 
+from .config import Config
 from .problem import CaseError, Problem
 
 _TEMPLATE_KINDS = ("circle", "rectangle", "L", "annulus", "ellipse", "compose")
+
+#: сигил «готового блока» шаблона: снятие «#: » оставляет постановку валидной
+_SIGIL = "#:"
+
+#: аннотация над блоком: правки, вносимые ВМЕСТЕ с ним (точечные ключи TOML)
+#: и — необязательно — секции, которые блок требует убрать
+_REQUIRES_RE = re.compile(
+    r"^#\s*требует:\s*(\{.*\})\s*(?:;\s*без секции:\s*(.+?))?\s*$")
+
+#: повторяющаяся правка аннотаций: реестр эталонов покрывает только базовую
+#: классическую задачу, поэтому расширения снимают эталон Кирхгофа
+_REQ_NONE = 'verify.reference = "none", verify.cross_1d = false'
+
+#: ключи, чьи значения в шаблоне берутся ИЗ ``Config`` (ворота — tests/test_cli.py):
+#: обещание «это дефолты» проверяется, а не декларируется (аудит S13)
+_TEMPLATE_DEFAULT_KEYS = ("E", "nu", "h", "winkler", "beta", "max_iter")
 
 _GEOMETRY = {
     "circle": '''[geometry]
@@ -80,12 +101,12 @@ _VERIFY = {
 reference = "analytic"   # analytic | mms | fem | none
 cross_1d = true          # сверка с 1D-Ритцем по радиусу
 tol = 1.0e-2
-# model_gap = false      # строка «истинный Кирхгоф» (вне допуска)''',
+#: model_gap = true      # информационная строка «истинный Кирхгоф»''',
     "annulus": '''[verify]
 reference = "analytic"   # analytic | mms | fem | none
 cross_1d = true          # сверка с 1D-Ритцем по радиусу [b, a]
 tol = 1.0e-2
-# model_gap = false''',
+#: model_gap = true      # информационная строка «истинный Кирхгоф»''',
     "rectangle": '''[verify]
 reference = "analytic"   # ряд Навье (soft_hinge + равномерная); mms — только clamped
 tol = 1.0e-2''',
@@ -100,16 +121,43 @@ reference = "none"       # для compose доступны mms | fem | none (н�
 }
 
 
+def _num(v) -> str:
+    """Число в TOML-записи: целое — как есть, дробное — с точкой либо порядком."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    s = f"{v:g}".replace("e+0", "e").replace("e+", "e").replace("e-0", "e-")
+    return s if ("." in s or "e" in s) else s + ".0"
+
+
 def template(kind: str) -> str:
-    """Текст закомментированного case-файла для геометрии ``kind``."""
+    """Текст закомментированного case-файла для геометрии ``kind``.
+
+    Активная часть — полная постановка со СВОИМ эталоном ``[verify]``.
+    Расширения даны блоками «``#:`` »: снятие сигила с ЛЮБОГО ОДНОГО блока
+    (плюс правки, перечисленные строкой «``# требует:``» над ним) оставляет
+    постановку валидной — ворота ``tests/test_cli.py``. Прежде шаблон
+    предлагал блоки, которые валидатор отклонял (реестр эталонов покрывает
+    только базовую классическую задачу), и путь «скопировать шаблон и
+    раскомментировать» обрывался ошибкой (аудит S15).
+    """
     if kind not in _TEMPLATE_KINDS:
         raise CaseError(
             f"--new: получено {kind!r}, ожидалось {' | '.join(_TEMPLATE_KINDS)}, "
             "см. docs/CASE_SCHEMA.md#geometry"
         )
+    d = Config()
     return f'''# case-файл plate-solver — шаблон «{kind}».
-# Схема и все ключи: docs/CASE_SCHEMA.md. Обязательны [geometry], [bc], [load];
-# закомментированные ключи показывают дефолты (живут в plate_solver.config.Config).
+# Схема и все ключи: docs/CASE_SCHEMA.md. Обязательны [geometry], [bc], [load].
+#
+# Строки «#: » — ГОТОВЫЕ блоки расширений: снимите «#: » с ОДНОГО блока, и
+# постановка останется валидной. Строка «# требует: {{…}}» над блоком —
+# правки, которые вносятся ВМЕСТЕ с ним (точечные ключи: «verify.reference»
+# — это ключ reference секции [verify]). Реестр эталонов покрывает только
+# базовую классическую задачу, поэтому почти всякое расширение снимает
+# эталон Кирхгофа. Числа блоков — дефолты plate_solver.config.Config,
+# кроме помеченных как «не дефолт».
 
 {_GEOMETRY[kind]}
 
@@ -119,55 +167,37 @@ type = "soft_hinge"      # soft_hinge (M=0) | clamped (w=∂w/∂n=0) |
 
 [load]
 type = "uniform"         # uniform | patch | point | gaussian | expr | line
-q0 = 4.0                 # равномерная нагрузка (q0 > 0 «вниз»)
-# точечная сила: type = "point", P = 1.0, x0 = 0.0, y0 = 0.0
-#   (+ exact = true — ТОЧНАЯ δ вместо пятна; classic clamped | karman, v0.7.0)
-# гауссова:      type = "gaussian", q0, x0, y0, sigma (гладкая, Δq аналитичен)
-# выражением:    type = "expr", q0, expr = "sin(pi*x/2.0)" (v0.7.0, #load)
-# вдоль отрезка: type = "line", p0 = [x,y], p1 = [x,y], intensity (v0.7.0)
-# thermal_moment = 3.0   # термомомент M_T при type = uniform (v0.7.0)
+q0 = {_num(d.q0)}                 # равномерная нагрузка (q0 > 0 «вниз»)
+# прочие виды нагрузки (docs/CASE_SCHEMA.md#load):
+#   точечная сила — type = "point", P, x0, y0 (+ exact = true: ТОЧНАЯ δ
+#     вместо пятна; classic clamped | karman);
+#   пятно — type = "patch", q0 и подсекция [load.zone];
+#   гауссова — type = "gaussian", q0, x0, y0, sigma (Δq аналитичен);
+#   выражением — type = "expr", q0, expr = "sin(pi*x/2.0)";
+#   вдоль отрезка — type = "line", p0, p1, intensity.
+# термомомент M_T (аддитивен к равномерной q; при q0 = 0 — чистый термоизгиб):
+# требует: {{{_REQ_NONE}}}
+#: thermal_moment = 3.0   # не дефолт: без ключа термомомента нет
 
 [model]
 theory = "classic"       # classic (Кирхгоф) | karman (геом. нелинейность) |
                          #  ktn_linear (линейные поправки сдвига/обжатия) |
-                         #  ktn_full (полная нелинейная КТН). CLI --theory и
-                         #  --inplane-bc переопределяют этот блок.
-# E = 2.1e6              # дефолты Config — раскомментировать при необходимости
-# nu = 0.3
-# h = 1.0                # толщина (существенно для КТН-теорий)
-# winkler = 0.0          # упругое основание Винклера k_w ≥ 0 (v0.6.6)
-# h_expr = "0.5*(1+0.3*x)"  # переменная толщина (v0.7.0; вместо h, clamped)
-# [model.orthotropy]     # ортотропия классики (v0.7.0): D11/D12/D22/D66
-# --- только theory = "karman" (геометрическая нелинейность, docs/THEORY.md) --- #
-# inplane_bc = "immovable"  # immovable (u=v=0, основной) | movable (N·n=0)
-# n_load_steps = 1          # шагов по нагрузке (большой прогиб — увеличить)
-# karman_relax = 1.0        # недорелаксация θ ∈ (0, 1] итерации Пикара
-# karman_method = "picard"  # picard | newton (ускоритель, v0.6.4)
-
-# [supports]             # точечные упругие опоры (v0.7.0, CASE_SCHEMA#supports)
-# points = [[0.0, 0.0]]
-# stiffness = 2.0e5      # жёсткая опора ≈ 1e6·D/a³
-
-# [contact]              # односторонний контакт (МОР)
-# enabled = true
-# gap_factor = 0.5       # Δ = gap_factor·w_free; абсолютный gap = 5.0e-5;
-#                        #  профиль выражением: gap_expr = "..." (v0.7.0)
-# beta = 1.2             # 0 < β < 2 (теорема 4)
-# max_iter = 8000
-# force = 1.0            # силовой штамп: ∫r dΩ = P (уровень ищется)
-# scheme = "merged"      # нелин. контакт КТН: merged | nested (v0.6.3)
-# mor_anderson = 5       # ускорение Андерсона внешнего МОР (v0.6.5)
-# [contact.zone]         # зона препятствия (дефолт: вся Ω); плоский штамп:
-# kind = "rectangle"
-# x1 = 0.15
-# x2 = 0.45
-# y1 = 0.15
-# y2 = 0.45
-
-# [eigen]                # собственная задача (v0.6.4; без [load]/[contact])
-# kind = "vibration"     # vibration | buckling
-# n_modes = 6
-# prestress = false      # true: преднапряжение N(w) (karman + [load], v0.6.6)
+                         #  ktn_full (полная нелинейная КТН). Флаги CLI
+                         #  --theory и --inplane-bc переопределяют этот блок.
+# упругие постоянные, толщина и упругое основание:
+#: E = {_num(d.E)}
+#: nu = {_num(d.nu)}
+#: h = {_num(d.h)}                # толщина (существенна для КТН-теорий)
+#: winkler = {_num(d.winkler)}          # основание Винклера k_w ≥ 0 (0 — без основания)
+# геометрическая нелинейность (docs/THEORY.md):
+# требует: {{model.theory = "karman", {_REQ_NONE}}}
+#: inplane_bc = "immovable"   # immovable (u = v = 0, основной) | movable (N·n = 0)
+#: n_load_steps = {_num(d.n_load_steps)}           # шагов по нагрузке (большой прогиб — увеличить)
+#: karman_relax = {_num(d.karman_relax)}         # недорелаксация θ ∈ (0, 1] итерации Пикара
+#: karman_method = "{d.karman_method}"   # picard | newton (ускоритель)
+# переменная толщина h(x, y) вместо постоянной h:
+# требует: {{bc.type = "clamped", {_REQ_NONE}}}
+#: h_expr = "0.5*(1+0.3*x)"   # не дефолт: без ключа толщина постоянна
 
 [discretization]
 p = 10                   # степень Чебышёва по оси (N = (p+1)²)
@@ -181,8 +211,93 @@ grid_n = 80              # сетка вывода полей и графико�
 [output]
 dir = "results/{kind}_case"
 figures = false          # true — сохранить фигуры viz.py
-# vtk = false            # true — result.vtk (legacy VTK, v0.6.6)
+#: vtk = true             # не дефолт: result.vtk (legacy VTK, ParaView)
+
+# ─── расширения: снять «#: » с ОДНОГО блока (см. шапку файла) ─────────────── #
+
+# точечные упругие опоры (реакции R печатаются в сводке прогона):
+# требует: {{bc.type = "clamped", {_REQ_NONE}}}
+#: [supports]
+#: points = [[0.0, 0.0]]
+#: stiffness = 2.0e5      # не дефолт: жёсткая опора ≈ 1e6·D/a³
+
+# односторонний контакт с жёстким основанием (метод обобщённой реакции);
+# силовой штамп — force = P, профиль зазора выражением — gap_expr, а для
+# нелинейных теорий — scheme = "merged" | "nested" и mor_anderson > 0:
+# требует: {{{_REQ_NONE}}}
+#: [contact]
+#: enabled = true
+#: gap_factor = 0.5       # не дефолт: Δ = gap_factor·w_free (абсолютный — gap)
+#: beta = {_num(d.beta)}             # 0 < β < 2 (теорема 4)
+#: max_iter = {_num(d.max_iter)}
+
+# зона препятствия — плоский штамп (по умолчанию препятствие под всей Ω):
+# требует: {{contact.enabled = true, contact.gap_factor = 0.5, {_REQ_NONE}}}
+#: [contact.zone]
+#: kind = "rectangle"
+#: x1 = 0.15
+#: x2 = 0.45
+#: y1 = 0.15
+#: y2 = 0.45
+
+# собственная задача: частоты колебаний либо критические множители
+# (преднапряжение N(w) — prestress = true при theory = "karman" и [load]):
+# требует: {{{_REQ_NONE}}}; без секции: load
+#: [eigen]
+#: kind = "vibration"     # vibration | buckling
+#: n_modes = 6
+
+# ортотропия классической теории (прямой набор жёсткостей энергии; либо
+# инженерный набор Ex, Ey, nu_xy, Gxy):
+# требует: {{bc.type = "clamped", {_REQ_NONE}}}
+#: [model.orthotropy]
+#: D11 = 1.0e5            # не дефолты: без секции пластина изотропна
+#: D12 = 0.3e5
+#: D22 = 0.6e5
+#: D66 = 0.35e5
 '''
+
+
+def _template_blocks(text: str) -> list[dict]:
+    """Разобрать шаблон на блоки «``#:`` » с их аннотациями «``# требует:``».
+
+    Блок — максимальная непрерывная цепочка строк с сигилом; аннотация —
+    строка непосредственно НАД блоком. Возвращает список словарей
+    ``{title, start, end, requires, drop}``: ``requires`` — вложенный
+    словарь правок (точечные ключи TOML), ``drop`` — секции, которые блок
+    требует убрать. Обещание шаблона проверяется этим разбором в тестах.
+    """
+    import tomllib
+
+    lines = text.splitlines()
+    blocks: list[dict] = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].startswith(_SIGIL):
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and lines[j].startswith(_SIGIL):
+            j += 1
+        requires: dict = {}
+        drop: tuple[str, ...] = ()
+        m = _REQUIRES_RE.match(lines[i - 1]) if i else None
+        if m is not None:
+            requires = tomllib.loads(f"req = {m.group(1)}")["req"]
+            drop = tuple(s.strip() for s in (m.group(2) or "").split(",") if s.strip())
+        blocks.append({"title": lines[i][len(_SIGIL):].strip(),
+                       "start": i, "end": j, "requires": requires, "drop": drop})
+        i = j
+    return blocks
+
+
+def _uncomment_block(text: str, block: dict) -> str:
+    """Текст шаблона со снятым сигилом у ОДНОГО блока (остальные — как есть)."""
+    lines = text.splitlines()
+    for k in range(block["start"], block["end"]):
+        s = lines[k]
+        lines[k] = s[len(_SIGIL) + 1:] if s.startswith(_SIGIL + " ") else s[len(_SIGIL):]
+    return "\n".join(lines) + "\n"
 
 
 def write_template(kind: str, out: str | Path | None = None) -> Path:
@@ -265,6 +380,9 @@ def _sweep_rows(problem: Problem, sweeps: list[tuple[str, list[int]]],
 def _write_sweep_outputs(rows: list[dict], keys: list[str], out_dir: Path,
                          do_verify: bool) -> None:
     """md + csv + png (semilogy rel против параметра) — публикационный формат."""
+    # headless-дружественный бэкенд ТЕМ ЖЕ приёмом, что и в _run_case: явный
+    # matplotlib.use("Agg") молча ломал выбор пользователя (аудит S26).
+    os.environ.setdefault("MPLBACKEND", "Agg")
     out_dir.mkdir(parents=True, exist_ok=True)
     cols = list(rows[0].keys())
     md = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
@@ -275,9 +393,6 @@ def _write_sweep_outputs(rows: list[dict], keys: list[str], out_dir: Path,
     (out_dir / "sweep.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     (out_dir / "sweep.csv").write_text("\n".join(csv) + "\n", encoding="utf-8")
     try:
-        import matplotlib
-
-        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:                            # png — опциональный артефакт
         return
@@ -301,6 +416,41 @@ def _fmt(v) -> str:
     if isinstance(v, float):
         return f"{v:.6e}"
     return str(v)
+
+
+#: запасной перечень форматов фигур (когда matplotlib недоступен для опроса)
+_FIG_FORMATS_FALLBACK = ("eps", "pdf", "png", "ps", "raw", "rgba", "svg", "svgz")
+
+
+def _supported_fig_formats() -> tuple[str, ...]:
+    """Форматы, которые умеет писать matplotlib данной установки."""
+    try:
+        from matplotlib.backend_bases import FigureCanvasBase
+    except ImportError:                        # фигуры — опциональный артефакт
+        return _FIG_FORMATS_FALLBACK
+    return tuple(sorted(FigureCanvasBase.get_supported_filetypes()))
+
+
+def _parse_fig_formats(spec: str) -> tuple[str, ...]:
+    """Разобрать ``--fig-format png,pdf`` в кортеж форматов.
+
+    Пробелы вокруг значений отбрасываются (``"png, pdf"`` — законная запись
+    оболочки), регистр приводится к нижнему, ведущая точка отбрасывается.
+    Неизвестный формат отклоняется ЗДЕСЬ, до расчёта: прежде он доходил до
+    ``savefig`` и давал сырую трассировку ``ValueError`` matplotlib уже
+    после решения задачи (аудит S12).
+    """
+    items = [f.strip().lower().lstrip(".") for f in spec.split(",")]
+    items = [f for f in items if f]
+    if not items:
+        raise CaseError("--fig-format: пустой список форматов, "
+                        "ожидалось например png,pdf")
+    allowed = _supported_fig_formats()
+    bad = [f for f in items if f not in allowed]
+    if bad:
+        raise CaseError(f"--fig-format: получено {', '.join(bad)}, ожидалось "
+                        f"из {' | '.join(allowed)} (через запятую)")
+    return tuple(items)
 
 
 def _apply_model_overrides(args_problem, args):
@@ -357,6 +507,9 @@ def _run_case(args, do_verify: bool) -> int:
 
     from .dispatch import solve as _solve
 
+    # значения флагов разбираются ДО расчёта: ошибка в записи форматов не
+    # должна вскрываться после решения задачи (аудит S12)
+    formats = _parse_fig_formats(getattr(args, "fig_format", "png,pdf"))
     problem = Problem.from_toml(args.case)
     problem = _apply_model_overrides(problem, args)
     if getattr(args, "grid", None) is not None:
@@ -398,8 +551,6 @@ def _run_case(args, do_verify: bool) -> int:
                   "нет — вердикт не выносится (ворота — tests/test_eigenmodes.py)")
         print(f"допуск tol = {rep.tol:g}; вердикт: {'PASS' if rep.ok else 'FAIL'}")
         return 0 if rep.ok else 1
-    formats = tuple(f.strip() for f in getattr(args, "fig_format", "png,pdf")
-                    .split(",") if f.strip())
     path = res.save(out_dir, fig_formats=formats,
                     surface=getattr(args, "surface", "mid"))
     s = res.scalars()
@@ -420,7 +571,9 @@ def _run_case(args, do_verify: bool) -> int:
     if res.support_reactions is not None:
         rs = ", ".join(f"{v:.4e}" for v in res.support_reactions)
         print(f"опоры: реакции R = [{rs}]")
-    if problem.model.theory in ("karman", "ktn_linear", "ktn_full"):
+    if problem.model.theory in ("ktn_linear", "ktn_full"):
+        # только УТОЧНЁННЫЕ теории: у Кармана поправок сдвига и обжатия нет
+        # по построению (h_ψ² = h_*² = 0), и строка была шумом (аудит S22)
         tp = res.thickness_params()          # интроспекция §6.3
         print(f"толщина (КТН): h_ψ² = {tp['h_psi_sq']:.4e}, h_*² = {tp['h_star_sq']:.4e}, "
               f"h_c² = {tp['h_c_sq']:.4e}, h/L = {tp.get('h_over_L', float('nan')):.3f}")
@@ -497,25 +650,32 @@ def _base_parser(prog: str, descr: str) -> argparse.ArgumentParser:
     parser.add_argument("--sweep", action="append", metavar="p=2:12:2",
                         help="свип по p или Q (можно оба — декартово произведение)")
     parser.add_argument("--out", metavar="DIR", default=None,
-                        help="каталог результатов (по умолчанию output.dir case-файла)")
+                        help="каталог результатов (по умолчанию output.dir "
+                             "case-файла; у plate-verify — только артефакты --sweep)")
     parser.add_argument("--figures", action="store_true",
-                        help="форсировать output.figures = true (png 300 dpi + pdf)")
+                        help="форсировать output.figures = true (png 300 dpi + pdf); "
+                             "только plate-solve — верификация фигур не пишет")
     parser.add_argument("--fig-format", metavar="png,pdf", default="png,pdf",
-                        help="форматы фигур через запятую (по умолчанию png,pdf)")
+                        help="форматы фигур через запятую (по умолчанию png,pdf); "
+                             "только plate-solve")
     parser.add_argument("--grid", type=int, metavar="N", default=None,
                         help="сетка ВЫВОДА grid_n (полей и фигур); на числа "
                              "решения не влияет; целое ≥ 2")
     parser.add_argument("--surface", choices=("mid", "top", "bottom"),
                         default="mid",
                         help="поверхность на w-фигуре: срединная (mid) или "
-                             "лицевые top/bottom (лицевые величины КТН, NOTES §21)")
+                             "лицевые top/bottom (лицевые величины КТН, NOTES §21); "
+                             "только plate-solve")
     parser.add_argument("--theory",
                         choices=("classic", "karman", "ktn_linear", "ktn_full"),
                         default=None,
                         help="переопределить [model] theory: classic (Кирхгоф) | "
                              "karman (геометрическая нелинейность) | ktn_linear "
                              "(линейные поправки сдвига/обжатия) | ktn_full "
-                             "(полная нелинейная КТН). Устаревший 'ktn' = ktn_linear")
+                             "(полная нелинейная КТН). Устаревшее имя 'ktn' "
+                             "принимается только в case-файле (депрекация-алиас "
+                             "на ktn_linear, docs/MIGRATION.md), из CLI оно "
+                             "исключено — задавайте имя явно")
     parser.add_argument("--inplane-bc", dest="inplane_bc",
                         choices=("immovable", "movable"), default=None,
                         help="переопределить [model] inplane_bc (нелинейные теории): "
@@ -536,7 +696,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true",
                         help="только валидация постановки (схема + статические "
                              "несовместимости), НИЧЕГО не считает; exit 0/1 — "
-                             "для пользовательских CI")
+                             "для пользовательских CI. Проверяется постановка "
+                             "С УЧЁТОМ --theory/--inplane-bc/--grid — та же, "
+                             "что была бы посчитана")
     parser.add_argument("--report", action="store_true",
                         help="одностраничный md-отчёт по кейсу (постановка, "
                              "сводные числа, verify-таблица, фигуры) в каталог "
@@ -553,14 +715,48 @@ def main(argv: list[str] | None = None) -> int:
         if args.check:
             from . import __version__
 
-            Problem.from_toml(args.case)             # вся статика — валидатор
-            print(f"{args.case}: постановка валидна "
+            # Проверяется ТА ЖЕ постановка, которую посчитал бы plate-solve с
+            # теми же флагами: переопределения теории/КУ в плоскости и сетки
+            # вывода применяются ДО валидации (прежде --check их игнорировал и
+            # подтверждал другую постановку — аудит S14).
+            problem = Problem.from_toml(args.case)   # вся статика — валидатор
+            problem = _apply_model_overrides(problem, args)
+            if args.grid is not None:
+                problem = problem.with_discretization(grid_n=args.grid)
+            print(f"{args.case}: постановка валидна — theory = "
+                  f"{problem.model.theory}, grid_n = {problem.discretization.grid_n} "
                   f"(plate-solver {__version__}, схема — docs/CASE_SCHEMA.md)")
             return 0
         return _run_case(args, do_verify=False)
     except CaseError as e:
         print(f"ошибка: {e}", file=sys.stderr)
         return 1
+
+
+def _check_verify_flags(args) -> None:
+    """Флаги ``plate-verify``: отклонить недействующие, назвать молчащие (S16).
+
+    Верификация не сохраняет ни результата, ни фигур — она печатает таблицу
+    эталонов и возвращает код. Флаги ``--figures``/``--fig-format``/
+    ``--surface`` парсер принимал, но они не делали НИЧЕГО: пользователь
+    получал молчание вместо картинок. Действующие флаги команды —
+    ``--sweep``, ``--grid``, ``--theory``, ``--inplane-bc`` и ``--out``
+    (последний — только каталог артефактов свипа).
+    """
+    inert = [name for name, value, default in
+             (("--figures", args.figures, False),
+              ("--fig-format", args.fig_format, "png,pdf"),
+              ("--surface", args.surface, "mid"))
+             if value != default]
+    if inert:
+        raise CaseError(
+            f"plate-verify: {', '.join(inert)} не применяются — верификация "
+            "печатает таблицу эталонов и не сохраняет фигур; фигуры делает "
+            "plate-solve (или plate-replot по готовому fields.npz)")
+    if args.out and not args.sweep:
+        print("предупреждение: --out без --sweep верификацией не используется "
+              "(артефакты пишет свип; результат и фигуры — plate-solve)",
+              file=sys.stderr)
 
 
 def main_verify(argv: list[str] | None = None) -> int:
@@ -572,6 +768,7 @@ def main_verify(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
+        _check_verify_flags(args)
         return _run_case(args, do_verify=True)
     except CaseError as e:
         print(f"ошибка: {e}", file=sys.stderr)
@@ -662,13 +859,17 @@ def main_replot(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     from .viz import replot
 
+    try:                    # запись форматов проверяется ДО чтения полей (S12)
+        formats = _parse_fig_formats(args.fig_format)
+    except CaseError as e:
+        print(f"ошибка: {e}", file=sys.stderr)
+        return 1
     target = Path(args.dir)
     if not (target / "fields.npz").exists():
         print(f"plate-replot: в {target} нет fields.npz "
               "(укажите каталог результата [output] dir)", file=sys.stderr)
         return 1
-    paths = replot(target, formats=tuple(args.fig_format.split(",")),
-                   dpi=args.dpi, surface=args.surface)
+    paths = replot(target, formats=formats, dpi=args.dpi, surface=args.surface)
     for p in paths:
         print(p)
     return 0

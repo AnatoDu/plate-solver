@@ -174,7 +174,7 @@ class FaceParams:
                         terms: FaceTerms | None = None) -> np.ndarray:
         r"""Прогиб лицевой поверхности ``u_c`` (§6.1, КАНОН пакета NOTES §21.1).
 
-        .. math:: u_c = w + (h_c^2 - h_*^2)\,\Delta w - \kappa_q q_n - \kappa_r D r,
+        .. math:: u_c = w + (h_c^2 - h_*^2)\,\Delta w - \kappa_q q_n - \kappa_r r,
 
         (без контакта ``r = 0``). ``surface='bottom'`` — контактирующая (нижняя)
         грань: полная коррекция уточнённой теории (:meth:`ktn.contact_displacement`,

@@ -7,8 +7,14 @@
 ## Слои (направление зависимостей — сверху вниз)
 
 1. **Постановка и CLI** — `problem` (валидатор case-файлов, `CaseError`),
-   `cli` (plate-solve / plate-verify / plate-ladder), `references`
-   (верификация как свойство постановки).
+   `cli` — ПЯТЬ команд: `plate-solve` (решение case-файла; `--new` — шаблон,
+   `--check` — только валидация, `--sweep` — серия по параметру),
+   `plate-verify` (таблица эталонов, код возврата 0/1), `plate-ladder`
+   (каталог случаев → сводный отчёт), `plate-replot` (перерисовка фигур из
+   `fields.npz` без пересчёта), `plate-profile` (профиль поля вдоль сечения,
+   наложение результатов, выгрузка CSV); `references` (верификация как
+   свойство постановки: именованные эталоны плюс ворота инвариантов
+   контакта).
 2. **Диспетчер** — `dispatch`: `solve(problem) → Result`; маршрутизация
    по решателям и теориям (блок-схема — [dispatch_flow.md](dispatch_flow.md)).
 3. **Контакт** — `contact` (линейный МОР: `ContactMOR`, `TwoPlateMOR` над
@@ -27,10 +33,14 @@
    величины первым классом).
 5. **Решатели изгиба (ядро)** — `plate` (расщепление, мягкий шарнир),
    `clamped` (прямой Ритц, защемление; `MixedRectPlate` — смешанные КУ и
-   свободный край), `poisson` (кирпич расщепления), `radial` (1D по
-   радиусу, осесимметрия).
-6. **Геометрия и дискретизация** — `geometry` (R-функции, система R0),
-   `rfunctions` (R-операции `r_and`/`r_or`/`r_diff` — многосвязность),
+   свободный край), `poisson` (кирпич расщепления; каскад факторизации
+   `SPDFactorization`), `radial` (1D по радиусу, осесимметрия),
+   `eigenmodes` (собственные задачи: `buckling` — устойчивость,
+   `natural_frequencies` — колебания, обе — и вокруг преднапряжённого
+   кармановского состояния).
+6. **Геометрия и дискретизация** — `geometry` (система R0: СИМВОЛЬНЫЕ
+   R-операции `r_and`/`r_or`/`r_not`/`r_diff` над sympy-выражениями ω,
+   примитивы и реестр областей; ими же строится многосвязность),
    `basis` (Чебышёв), `quadrature` (гауссова квадратура с маской ω > 0),
    `assembler`.
 7. **Эталоны и верификация** — `analytic` (ручные замкнутые решения),
@@ -47,6 +57,17 @@
    `strip_contact`, `penalty`, `problems` (историческое ядро 1D-контакта
    и сравнений; используется эталонными воротами).
 
+**Где на самом деле живут R-операции.** Областями заведует `geometry`:
+ω собирается СИМВОЛЬНО (sympy), потому что структуре Ритца нужны точные
+`∇ω` и `∇∇ω`, а не конечные разности. Модуль `rfunctions` — ЧИСЛЕННЫЙ
+(numpy) дубль тех же операций системы R0 с ДРУГИМИ именами и сигнатурами:
+`r_conjunction` / `r_disjunction` / `difference` плюс отдельные примитивы.
+Ни одна ветка решателя его не импортирует (см. граф ниже); он остаётся
+ради примера `examples/circular_plate.py` и собственного теста
+`tests/test_rfunctions.py`. Как дублирующий — кандидат на депрекацию
+с переводом примера на `geometry`; до тех пор при чтении кода помнить,
+что `r_and`/`r_or`/`r_diff` — это `geometry`, а не `rfunctions`.
+
 ## Граф импортов (фактический; генератор — scripts/import_graph.py)
 
 ```mermaid
@@ -55,11 +76,14 @@ flowchart TD
     clamped --> basis
     clamped --> geometry
     clamped --> ladder
+    clamped --> poisson
+    clamped --> problem
     clamped --> quadrature
     clamped --> verify_fem
     cli --> dispatch
     cli --> problem
     cli --> references
+    cli --> viz
     contact --> config
     contact --> ktn
     contact --> plate
@@ -70,22 +94,33 @@ flowchart TD
     contact_face --> membrane
     contact_nl --> config
     contact_nl --> diagnostics
+    contact_nl --> faces
     contact_nl --> ktn_solver
     dispatch --> clamped
     dispatch --> config
     dispatch --> contact
+    dispatch --> contact_nl
+    dispatch --> eigenmodes
+    dispatch --> export
     dispatch --> faces
+    dispatch --> geometry
     dispatch --> ktn
     dispatch --> ktn_full
+    dispatch --> ktn_solver
     dispatch --> ladder
     dispatch --> membrane
     dispatch --> plate
+    dispatch --> poisson
     dispatch --> problem
+    dispatch --> quadrature
+    eigenmodes --> config
+    eigenmodes --> membrane
     faces --> ktn
     geometry --> problem
     ktn_full --> basis
     ktn_full --> faces
     ktn_full --> membrane
+    ktn_full --> poisson
     ktn_full --> quadrature
     ktn_solver --> basis
     ktn_solver --> ktn_full
@@ -95,7 +130,10 @@ flowchart TD
     ladder --> geometry
     membrane --> basis
     membrane --> clamped
+    membrane --> geometry
     membrane --> ladder
+    membrane --> poisson
+    membrane --> problem
     membrane --> quadrature
     mor1d --> green1d
     penalty --> basis
@@ -109,10 +147,12 @@ flowchart TD
     problem --> config
     problems --> ktn
     quadrature --> geometry
+    radial_ktn --> faces
     references --> analytic_auto
     references --> clamped
     references --> dispatch
     references --> geometry
+    references --> ktn_full
     references --> ladder
     references --> problem
     references --> radial
@@ -140,8 +180,46 @@ matplotlib в `viz`, scikit-fem в `verify_fem`, sympy-фабрика в
 читателя. «Нелоскость» достигается фасадом: `__init__.py` экспортирует
 публичные точки секциями (геометрия / решатели / контакт / верификация /
 ввод-вывод / графика), а навигацией служит граф выше и docs/API.md.
-Физическая перегруппировка по подпакетам сознательно отложена (вне
-freeze): она бы поменяла все ссылки без выигрыша в ясности.
+Физическая перегруппировка по подпакетам сознательно отложена: она бы
+поменяла все ссылки без выигрыша в ясности.
+
+## Честность расчёта: где решатель обязан сознаться (v0.8.0)
+
+Отдельный сквозной пояс — не «правильность числа», а ОТЧЁТНОСТЬ: ни одна
+деградация и ни одна непроверенная постановка не должны проходить молча.
+
+1. **Каскад факторизации** — `poisson.SPDFactorization`. Ступени включаются
+   только при отказе предыдущей: Холецкий (штатный путь, арифметика
+   бит-в-бит прежняя) → симметричное масштабирование Якоби → спектральное
+   псевдообращение с относительной отсечкой `λ ≤ τ·λ_max`. Третья ступень
+   МЕНЯЕТ дискретное пространство (решается усечённая задача), поэтому факт
+   усечения обязан быть виден: издаётся `poisson.FactorizationWarning`
+   (отдельная категория, а не голый `RuntimeWarning`), решатель несёт
+   `fallback` и `n_dropped`, а `dispatch.solve` перехватывает такие
+   предупреждения и переносит их текст в `Result.warnings` — не подавляя.
+2. **Ворота инвариантов контакта** — `references.contact_invariant_rows`.
+   Проверяется то, что верно при любом бюджете итераций: `r ≥ 0`,
+   проникание `max(u − Δ)₊/Δ ≤ 5 %`, существование контакта при
+   `w_free > Δ`, а в силовом режиме — замыкание `|∫r − P|/P ≤ 2 %`.
+   Строки добавляются к отчёту `verify_result` ВСЕГДА, когда в результате
+   есть контакт, поэтому постановка с `reference = "none"` больше не
+   проходит верификацию, не проверив ничего. Невязка комплементарности и
+   флаг сходимости МОР выводятся информационно (зависят от бюджета).
+3. **Ограда разрешения** — `dispatch._check_resolution`: узлов квадратуры
+   внутри Ω должно быть не меньше числа базисных функций: `M < N` —
+   ошибка, `M < 2N` — предупреждение (интегралы грубы). Иначе система
+   недоопределена, и решение — произвольный элемент ядра.
+4. **Лестница слагаемых лицевого условия** — `faces.FaceTerms` (ключи
+   `[model.face_terms]`): кривизна, нагрузка и реакция включаются ПО
+   ОТДЕЛЬНОСТИ в одном и том же тракте решателя, что и позволяет измерить
+   вклад каждого механизма. Все три включены по умолчанию (арифметика
+   штатная); все выключены — лицевая совпадает со срединной.
+5. **Диагностика внутренности зоны контакта** —
+   `diagnostics.contact_interior_stats`: узлы глубины зоны отделяются от
+   кромочных по расстоянию до ближайшего неконтактного узла, и по ним
+   считается плато `r/q ≈ 1` (среднее, разброс, доля в полосе) и
+   максимальная глубина зоны. Это отличает физическое плато от кромочной
+   сингулярности, которую видно по одному лишь пику.
 
 ## Как устроен регресс (для стороннего читателя)
 

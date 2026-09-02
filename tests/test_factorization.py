@@ -410,3 +410,67 @@ def test_ktn_plate_reports_no_fallback_on_healthy_run():
     assert np.all(np.isfinite(res.w_nodes))
     assert plate.fallback is None
     assert plate.n_dropped == 0
+
+
+# --------------------------------------------------------------------------- #
+#  (д) МАТРИЧНАЯ правая часть: k систем на одной факторизации
+# --------------------------------------------------------------------------- #
+def test_cascade_solves_matrix_rhs_on_every_stage():
+    r"""``solve`` принимает правую часть ``(n, k)`` на ВСЕХ трёх ступенях каскада.
+
+    Так решается, например, ``∂N/∂c`` в касательном операторе Ньютона
+    (`membrane._dN_dc`): одна факторизация, ``k = N`` правых частей столбцами.
+    Диагональные множители ступеней 2 (Якоби) и 3 (спектральной) действуют по
+    СТРОКАМ, и без явного разворота в столбец numpy либо транслировал их по
+    столбцам (иная арифметика), либо отказывал по формам — при p = 12…16 у
+    полной КТН это был обрыв прогона (``ValueError`` из ступени 3).
+
+    Проверяется тождество «матричное решение = поколоночное» на каждой ступени
+    (главные ворота), точность на здоровой SPD-матрице и совпадение ступени 3
+    с независимо собранным псевдообращением. Невязку на ступени 2 проверять
+    бессмысленно: она включается лишь на матрицах с ``cond ~ 1e17``, где
+    решение любой арифметикой не имеет верных знаков.
+    """
+    rng = np.random.default_rng(20260902)
+    n, k = 8, 5
+    B = rng.standard_normal((n, n))
+    spd = B @ B.T + n * np.eye(n)                       # ступень 1: Холецкий
+    lam = np.array([1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-17])
+    V = np.linalg.qr(rng.standard_normal((n, n)))[0]
+    M = V @ np.diag(lam) @ V.T
+    s = 10.0 ** np.array([-3, 2, -1, 4, 0, -4, 3, 1], dtype=float)
+    badly_scaled = ((0.5 * (M + M.T)) * s) * s[:, None]  # ступень 2 (если сработает)
+    singular = _singular_spd(n=n, k=2)                   # ступень 3: усечение
+    Bm = rng.standard_normal((n, k))
+    seen = set()
+    for name, A, healthy in (("SPD", spd, True), ("плохо масштабированная", badly_scaled, False),
+                             ("вырожденная", singular, False)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FactorizationWarning)
+            fact = SPDFactorization(A, warn=False)
+            X = fact.solve(Bm)
+            cols = np.column_stack([fact.solve(Bm[:, j]) for j in range(k)])
+        seen.add(fact.fallback)
+        assert X.shape == (n, k)
+        assert np.array_equal(X, cols), f"{name}: матричный путь разошёлся с поколоночным"
+        if healthy:                                      # здоровая SPD: точное решение
+            assert fact.fallback is None
+            assert np.allclose(A @ X, Bm, rtol=1e-10, atol=1e-12)
+        if fact.fallback == "pinv":                      # независимая сборка A⁺
+            lam_s, Vp = np.linalg.eigh(0.5 * (A + A.T))
+            keep = lam_s > REL_CUTOFF * lam_s[-1]
+            ref = Vp[:, keep] @ ((Vp[:, keep].T @ Bm) / lam_s[keep][:, None])
+            assert np.allclose(X, ref, rtol=1e-10, atol=1e-12)
+    # ступени 1 и 3 обязаны быть пройдены на любой платформе (ступень 2 —
+    # платформозависима: где-то её матрицу берёт ещё прямой Холецкий)
+    assert {None, "pinv"} <= seen
+
+
+def test_cascade_rejects_incompatible_rhs():
+    """Несогласованная правая часть — понятный отказ, а не молчаливая трансляция."""
+    A = _singular_spd()
+    fact = SPDFactorization(A, warn=False)
+    with pytest.raises(ValueError, match="несовместима"):
+        fact.solve(np.ones(A.shape[0] + 1))
+    with pytest.raises(ValueError, match="несовместима"):
+        fact.solve(np.ones((2, A.shape[0], 3)))

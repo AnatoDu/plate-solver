@@ -60,12 +60,28 @@ def test_circle_clamped_against_analytic():
 
 
 def test_rectangle_clamped_runs():
-    res = solve(_problem(geometry={"kind": "rectangle", "x1": 0.0, "x2": 1.0,
-                                   "y1": 0.0, "y2": 1.0},
-                         bc={"type": "clamped"}))
+    """Квадрат/защемление решается; фоновая сетка — то же поле, что и решение.
+
+    Проверка сетки по существу (прежде здесь стояло тождественно истинное
+    ``isnan(...) is False or True``): маска NaN обязана совпадать С ВНЕШНОСТЬЮ Ω
+    узел-в-узел, сетка — покрывать bbox, а её максимум — воспроизводить
+    ``w_max`` (сетка 24×24 грубее квадратуры, поэтому чуть меньше). Это ловит
+    и пустую/нулевую сетку, и сдвиг сетки относительно области.
+    """
+    prob = _problem(geometry={"kind": "rectangle", "x1": 0.0, "x2": 1.0,
+                              "y1": 0.0, "y2": 1.0},
+                    bc={"type": "clamped"})
+    res = solve(prob)
     assert res.w_max > 0.0 and np.isfinite(res.cond)
-    assert np.isnan(res.w_grid[0, 0]) is False or True   # сетка построена
     assert res.w_grid.shape == (24, 24)
+    dom = build_domain(prob.geometry)
+    outside = dom.omega(res.Xg, res.Yg) <= 0.0          # кромка квадрата ⇒ ω = 0
+    assert np.array_equal(np.isnan(res.w_grid), outside)
+    assert outside.any() and (~outside).any()           # маска нетривиальна
+    assert (res.Xg.min(), res.Xg.max()) == (0.0, 1.0)   # сетка по bbox области
+    assert (res.Yg.min(), res.Yg.max()) == (0.0, 1.0)
+    ratio = float(np.nanmax(np.abs(res.w_grid))) / res.w_max
+    assert 0.95 < ratio <= 1.0 + 1e-12, ratio           # факт 0.9955 (грубость сетки)
 
 
 def test_lshape_contact_vs_direct_api():
@@ -172,7 +188,7 @@ def test_ktn_bending_correction():
 
 
 def test_ktn_clamped_bending_works():
-    """Фаза 3 / A3.3: КТН при защемлении — кривизна из кэша Δ(ω²Φ)."""
+    """КТН при защемлении: кривизна берётся из кэша Δ(ω²Φ)."""
     base = dict(bc={"type": "clamped"}, model={"theory": "classic", "h": 0.2},
                 discretization={"p": 6, "Q": 64, "grid_n": 24})
     classic = solve(_problem(**base))
