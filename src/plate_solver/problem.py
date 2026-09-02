@@ -113,6 +113,11 @@ def _number(section: str, data: dict, key: str, anchor: str, *,
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         _fail(f"{section}.{key}", v, "число", anchor)
     v = float(v)
+    # TOML допускает nan и inf (±inf, ±nan): дальше по стеку это давало либо
+    # тихий мусор (h = inf ⇒ D = inf ⇒ w ≡ 0), либо сырое исключение LAPACK
+    # уже внутри факторизации (аудит S17). Отсекаем на входе.
+    if not math.isfinite(v):
+        _fail(f"{section}.{key}", v, "КОНЕЧНОЕ число (nan и inf недопустимы)", anchor)
     if positive and v <= 0:
         _fail(f"{section}.{key}", v, "положительное число", anchor)
     return v
@@ -246,7 +251,8 @@ class ModelSpec:
     n_load_steps: int | None = None         # нелин.: шагов по нагрузке (§5.2)
     karman_relax: float | None = None       # нелин.: недорелаксация θ ∈ (0, 1]
     karman_max_iter: int | None = None      # нелин.: предел итераций Пикара
-    karman_tol: float | None = None         # нелин.: относит. порог останова
+    karman_tol: float | None = None         # нелин.: относит. порог ‖R‖/‖b‖
+    karman_anderson: int | None = None      # нелин.: окно Андерсона (0 — выкл)
     karman_method: str | None = None        # karman: picard | newton
     ktn_method: str | None = None           # ktn_full: picard | newton
     winkler: float | None = None            # упругое основание Винклера k_w ≥ 0 (v0.6.6)
@@ -523,7 +529,8 @@ class Problem:
                 kw[key] = v
         # параметры нелинейной итерации Кармана/КТН (§5.4/§5.5); None ⇒ дефолт Config
         for attr in ("n_load_steps", "karman_relax", "karman_max_iter",
-                     "karman_tol", "karman_method", "ktn_method", "winkler"):
+                     "karman_tol", "karman_anderson", "karman_method",
+                     "ktn_method", "winkler"):
             v = getattr(self.model, attr)
             if v is not None:
                 kw[attr] = v
@@ -834,7 +841,7 @@ def _parse_model(data) -> ModelSpec:
                   {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
                    "karman_relax", "karman_max_iter", "karman_tol",
                    "karman_method", "ktn_method", "winkler", "orthotropy",
-                   "h_expr", "face_terms"},
+                   "h_expr", "face_terms", "karman_anderson"},
                   "model")
     raw_theory = data.get("theory", "classic")
     if raw_theory in THEORY_ALIASES:
@@ -860,7 +867,7 @@ def _parse_model(data) -> ModelSpec:
     # Закрепление кромки и параметры итерации осмысленны ТОЛЬКО для нелинейных
     # теорий (karman, ktn_full, §4); при classic/ktn_linear — ошибка постановки.
     nonlinear_only = {"inplane_bc", "n_load_steps", "karman_relax",
-                      "karman_max_iter", "karman_tol"}
+                      "karman_max_iter", "karman_tol", "karman_anderson"}
     provided = nonlinear_only & set(data)
     if provided and theory not in NONLINEAR_THEORIES:
         key = sorted(provided)[0]
@@ -868,6 +875,16 @@ def _parse_model(data) -> ModelSpec:
               "ключ осмыслен только для нелинейных теорий "
               f"({' | '.join(NONLINEAR_THEORIES)}); classic/ktn_linear — "
               "линейный изгиб без мембранной связи", "model")
+    # Ньютон не использует ни недорелаксацию, ни ускоритель Пикара: ключи были бы
+    # молча проигнорированы (аудит P21).
+    method = data.get("karman_method") or data.get("ktn_method")
+    if method == "newton":
+        for key in ("karman_relax", "karman_anderson"):
+            if key in data:
+                _fail(f"model.{key}", data[key],
+                      "отсутствие при методе newton (касательный шаг не "
+                      "использует ни недорелаксацию, ни ускорение Андерсона — "
+                      "ключ был бы молча потерян)", "model")
     if "karman_method" in data and theory != "karman":
         _fail("model.karman_method", data["karman_method"],
               "ключ осмыслен только при theory = 'karman' "
@@ -885,6 +902,7 @@ def _parse_model(data) -> ModelSpec:
         _fail("model.karman_relax", karman_relax,
               "0 < θ ≤ 1 (недорелаксация)", "model")
     karman_tol = _number("model", data, "karman_tol", "model", positive=True)
+    karman_anderson = _integer("model", data, "karman_anderson", "model", minimum=0)
     karman_method = data.get("karman_method")
     if karman_method is not None and karman_method not in KARMAN_METHODS:
         _fail("model.karman_method", karman_method, " | ".join(KARMAN_METHODS), "model")
@@ -920,7 +938,7 @@ def _parse_model(data) -> ModelSpec:
                      karman_max_iter=karman_max_iter, karman_tol=karman_tol,
                      karman_method=karman_method, ktn_method=ktn_method,
                      winkler=winkler, orthotropy=orthotropy, h_expr=h_expr,
-                     face_terms=face_terms)
+                     face_terms=face_terms, karman_anderson=karman_anderson)
 
 
 def _parse_face_terms(data, theory: str) -> tuple:
@@ -1154,6 +1172,11 @@ def _parse_supports(data) -> SupportsSpec:
     return SupportsSpec(points=tuple(pts), stiffness=float(k))
 
 
+#: ключи [plate2.model], которые тракт пары ДЕЙСТВИТЕЛЬНО переносит на вторую
+#: пластину (остальные молча терялись — аудит D05)
+PLATE2_MODEL_KEYS = ("theory", "E", "nu", "h", "inplane_bc")
+
+
 def _parse_plate2(data) -> Plate2Spec:
     """Секция ``[plate2]`` (A4): bc и load обязательны, прочее — от первой."""
     if not isinstance(data, dict):
@@ -1164,6 +1187,25 @@ def _parse_plate2(data) -> Plate2Spec:
         if key not in data:
             _fail(f"plate2.{key}", None, f"обязательная подсекция [plate2.{key}]",
                   "plate2")
+    # Белый список переносимых ключей второй пластины (v0.8.0): всё, что тракт
+    # пары не умеет переносить, отклоняется ЯВНО — раньше такие ключи
+    # принимались и молча терялись, а физика первой пластины (Винклер и др.)
+    # при этом молча наследовалась второй.
+    raw_model = data.get("model")
+    if isinstance(raw_model, dict):
+        extra = sorted(set(raw_model) - set(PLATE2_MODEL_KEYS))
+        if extra:
+            _fail(f"plate2.model.{extra[0]}", raw_model[extra[0]],
+                  "тракт пары переносит на вторую пластину только "
+                  f"{' | '.join(PLATE2_MODEL_KEYS)}; ключ {extra[0]!r} был бы "
+                  "молча потерян (основание Винклера, ортотропия, переменная "
+                  "толщина и параметры итерации у пары — направление развития)",
+                  "plate2")
+    raw_load = data.get("load")
+    if isinstance(raw_load, dict) and "thermal_moment" in raw_load:
+        _fail("plate2.load.thermal_moment", raw_load["thermal_moment"],
+              "термоизгиб второй пластины не реализован — ключ был бы молча "
+              "потерян (направление развития)", "plate2")
     return Plate2Spec(
         bc=_parse_bc(data["bc"]),
         load=_parse_load(data["load"]),
@@ -1532,6 +1574,47 @@ def _validate_cross(p: Problem) -> None:
                       "силовой/парный контакт с опорами — направление "
                       "развития)", "supports")
         # prestress×supports проверяется в ветке [eigen] выше (ранний return)
+    if p.contact.enabled:
+        # Знак и величина нагрузки в контакте: МОР «прижимает» пластину к
+        # основанию, поэтому q0 ≤ 0 бессмысленно (q0 = 0 давало NaN в
+        # безразмерных KKT-метриках, q0 < 0 — недостижимое основание и
+        # отрицательное усиление; аудит D15, K03/K07).
+        q0 = p.load.q0
+        if p.load.type in ("uniform", "patch", "gaussian", "expr") and q0 is not None:
+            if q0 <= 0.0:
+                _fail("load.q0", q0,
+                      "положительную нагрузку при [contact] (МОР прижимает "
+                      "пластину к основанию: при q0 ≤ 0 контакт недостижим, а "
+                      "безразмерные KKT-метрики не определены)", "contact")
+    if p.plate2 is not None:
+        # Теория пары ЕДИНА: оба решателя строятся по теории первой пластины,
+        # поэтому отличная [plate2.model] theory была бы молча потеряна.
+        if p.plate2.model is not None and p.plate2.model.theory != p.model.theory:
+            _fail("plate2.model.theory", p.plate2.model.theory,
+                  f"совпадение с model.theory ({p.model.theory}) — тракт пары "
+                  "строит обе пластины по ОДНОЙ теории", "plate2")
+        # Физика ПЕРВОЙ пластины, которую тракт пары не переносит на вторую:
+        # раньше она молча наследовалась (cfg2 = replace(cfg, …)) — вторая
+        # пластина «получала» чужое основание Винклера, ортотропию, переменную
+        # толщину, термомомент и опоры (аудит D05).
+        inherited = []
+        if p.model.winkler is not None and p.model.winkler > 0.0:
+            inherited.append("model.winkler")
+        if p.model.orthotropy is not None:
+            inherited.append("model.orthotropy")
+        if p.model.h_expr is not None:
+            inherited.append("model.h_expr")
+        if p.load.thermal_moment is not None:
+            inherited.append("load.thermal_moment")
+        if p.supports.points:
+            inherited.append("supports.points")
+        if inherited:
+            _fail(inherited[0], "present",
+                  "отсутствие при [plate2]: тракт пары не переносит эту физику "
+                  "на вторую пластину и молча применил бы её к обеим "
+                  f"(ключи первой пластины: {', '.join(inherited)}); "
+                  "пара с таким основанием/конститутивом — направление развития",
+                  "plate2")
     if (p.model.winkler is not None and p.model.winkler > 0.0
             and p.verify.reference == "mms"):
         # MMS-эталон (ladder.mms_load_and_exact) НЕ учитывает основание k_w —
@@ -1719,6 +1802,41 @@ def _validate_cross(p: Problem) -> None:
         _fail("verify.reference", "mms",
               "clamped-постановка на rectangle | circle (изготовленное решение —"
               " MMS-ступени лестницы; для ktn_full — MMS полной КТН при фикс. N)", "verify")
+    # ЭТАЛОН ↔ ТЕОРИЯ (v0.8.0, аудит S06/S09). Реестр эталонов знает ДВА
+    # оператора: классический Кирхгоф (analytic | fem | cross_1d | mms) и полную
+    # КТН при замороженных усилиях (mms + ktn_full). Для прочих теорий сравнение
+    # было бы подменой: `analytic`/`cross_1d` гейтили бы КИРХГОФА против
+    # поправленного (ktn_linear) или нелинейного (karman) w_max — это МОДЕЛЬНЫЙ
+    # разрыв, а не погрешность дискретизации (ложный FAIL или ложный PASS в
+    # зависимости от уровня нагрузки); `mms` при karman/ktn_linear вовсе
+    # сертифицировал ЧУЖОЙ (классический) решатель, не касаясь результата case.
+    if ref != "none" or p.verify.cross_1d:
+        theory = p.model.theory
+        classic_ref = ref in ("analytic", "fem") or p.verify.cross_1d
+        if theory != "classic" and classic_ref:
+            _fail("verify.reference" if ref != "none" else "verify.cross_1d",
+                  ref if ref != "none" else True,
+                  "none при theory ≠ classic: эталоны analytic | fem | cross_1d — "
+                  "решения КИРХГОФА, а w_max уточнённой/нелинейной теории от них "
+                  "отличается МОДЕЛЬНО (это не погрешность дискретизации). Для "
+                  "информационной сверки с Кирхгофом — [verify] model_gap = true; "
+                  "ворота теорий — редукционная лестница tests/test_ktn_full.py, "
+                  "tests/test_karman.py", "verify")
+        if ref == "mms" and theory in ("karman", "ktn_linear"):
+            _fail("verify.reference", "mms",
+                  "none | (mms при theory = classic либо ktn_full): изготовленные "
+                  "решения построены для классического оператора и для полной КТН "
+                  "при замороженных усилиях; для karman/ktn_linear MMS-поля не "
+                  "выведены, а прежний путь сертифицировал классический решатель, "
+                  "не касаясь результата постановки", "verify")
+    if (p.model.winkler is not None and p.model.winkler > 0.0
+            and (p.verify.reference in ("analytic", "fem") or p.verify.cross_1d)):
+        # Реестр аналитических эталонов и 1D-оракул не знают основания Винклера
+        # (аудит S10): гейт сравнивал бы решение с k_w против решения без него.
+        _fail("verify.reference", p.verify.reference,
+              "none при model.winkler > 0 для analytic | fem | cross_1d "
+              "(эталоны реестра — без упругого основания; сертификаты Винклера — "
+              "MMS с k_w и сдвиг частот, tests/test_winkler_prestress.py)", "verify")
 
 
 __all__ = [

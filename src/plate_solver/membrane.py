@@ -34,7 +34,17 @@ Gate L). Слоистая архитектура: КТН-члены полной
 3. решить внеплоскостное уравнение с ЗАМОРОЖЕННЫМИ ``N_k``:
    ``(D·S_bend + K_geo(N_k)) c = b`` → ``w_new``;
 4. недорелаксация ``w_{k+1} = (1-θ)w_k + θ w_new``;
-5. останов ``‖w_{k+1}-w_k‖_{L2} / ‖w_{k+1}‖ < karman_tol``.
+5. останов по ИСТИННОЙ невязке ``‖R(c_k)‖ / ‖b‖ < karman_tol``, где
+   ``R(c) = (D·S_bend + K_geo(N(c)))·c − b`` (v0.8.0).
+
+Почему невязка, а не шаг (аудит P08). Норма шага ``‖Δw‖/‖w‖`` МЕРОЙ НЕВЯЗКИ
+не является: при ускорении Андерсона (см. :meth:`KarmanPlate.solve`) шаг
+``c_{k+1}-c_k = f_k - ΔG·γ_k`` может обнулиться за счёт взаимного
+погашения экстраполяции даже там, где ``f_k = T(c_k)-c_k`` НЕ мал. Измерено на
+ступени Gate M (``P̄=10³``, p=12, Q=80, 20 шагов по нагрузке, tol=1e-6): старый
+критерий объявлял сходимость при ``‖R‖/‖b‖ = 3.4·10⁻⁴`` — на 2.5 порядка хуже
+объявленного допуска. Критерий по невязке этого не допускает и, сверх того,
+делает смысл ``karman_tol`` ОДИНАКОВЫМ у Пикара и Ньютона (аудит P21).
 
 Геометрическая жёсткость берётся в СИММЕТРИЧНОЙ форме (интегрирование по
 частям члена ``N:∇∇w`` при ``v=0`` на ∂Ω, §5.1):
@@ -64,7 +74,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-import scipy.linalg as sla
 
 from .basis import ChebyshevBasis
 from .clamped import _basis_second_derivs, _cheb_value_tables, _OmegaHessian
@@ -201,23 +210,26 @@ def _disp_structure(domain, basis: ChebyshevBasis, X, Y, immovable: bool):
     return om * T, omx * T + om * Tx, omy * T + om * Ty
 
 
-def _spd_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
+def _spd_solve(A: np.ndarray, b: np.ndarray, *, label: str = "K (Карман)") -> np.ndarray:
     """Решение симметричной системы с диагональным предобуславливанием.
 
     Нормировка на ``√A_kk`` (NOTES §2) + Холецкий; при потере положительной
-    определённости (сжатие, округление) — линейный МНК. ``b`` — вектор или
-    матрица столбцов правых частей.
+    определённости (сжатие, округление) — КАСКАД с отчётностью
+    (:class:`~plate_solver.poisson.SPDFactorization`: масштабирование Якоби,
+    затем спектральное псевдообращение с относительной отсечкой), а не
+    молчаливый МНК: факт усечения дискретного пространства сообщается
+    предупреждением ``FactorizationWarning`` и попадает в ``Result.warnings``
+    (аудит P02). ``b`` — вектор или матрица столбцов правых частей.
     """
     d = np.diag(A)
     if np.all(d > 0.0):
         s = 1.0 / np.sqrt(d)
         An = (A * s).T * s
         bn = (b.T * s).T if b.ndim > 1 else b * s
-        try:
-            xn = sla.cho_solve(sla.cho_factor(An), bn)
-            return (xn.T * s).T if b.ndim > 1 else xn * s
-        except (sla.LinAlgError, np.linalg.LinAlgError):
-            pass
+        from .poisson import SPDFactorization
+
+        xn = SPDFactorization(An, label=label).solve(bn)
+        return (xn.T * s).T if b.ndim > 1 else xn * s
     return np.linalg.lstsq(A, b, rcond=1e-13)[0]
 
 
@@ -239,10 +251,15 @@ class KarmanResult:
     cw_classic : коэффициенты этого линейного решения.
     cu, cv : коэффициенты перемещений ``u, v`` в плане.
     Nx, Ny, Nxy : мембранные усилия в узлах квадратуры.
-    converged : достигнут ли ``karman_tol`` на ПОСЛЕДНЕМ уровне нагрузки.
+    converged : достигнут ли ``karman_tol`` на ПОСЛЕДНЕМ уровне нагрузки
+        (у ОБОИХ методов — по относительной невязке ``‖R‖/‖b‖``).
     n_iter : суммарное число итераций Пикара по всем уровням.
-    history : по одному кортежу ``(доля нагрузки, итераций, финальная невязка)``
-        на каждый уровень (диагностика сходимости, §5.2).
+    history : по одному кортежу на уровень нагрузки (диагностика, §5.2):
+        ``(доля нагрузки, итераций, ‖R‖/‖b‖, ‖Δw‖/‖w‖)`` у Пикара и
+        ``(доля нагрузки, итераций, ‖R‖/‖b‖)`` у Ньютона. Элемент [2] — всегда
+        та величина, что сравнивается с ``karman_tol``; элемент [3] (Пикар) —
+        норма ПОСЛЕДНЕГО шага, ТОЛЬКО диагностика: критерием останова она была
+        до v0.8.0 и давала ложную сходимость под ускорением Андерсона (P08).
     """
 
     cw: np.ndarray
@@ -275,6 +292,15 @@ class KarmanPlate:
     quad : узлы квадратуры внутри Ω.
     cfg : параметры (``E, nu, h, q0``; итерация — ``n_load_steps``,
         ``karman_tol``, ``karman_max_iter``, ``karman_relax``, ``karman_method``).
+
+        * ``karman_tol`` — ЕДИНЫЙ для обоих методов порог по ОТНОСИТЕЛЬНОЙ
+          невязке ``‖R(c)‖/‖b‖`` (v0.8.0; до этого у Пикара он означал норму
+          шага ``‖Δw‖/‖w‖`` — иную величину, аудит P21).
+        * ``karman_relax`` — недорелаксация θ ∈ (0, 1] шага Пикара; при
+          ``karman_method="newton"`` НЕ используется (глобализация Ньютона —
+          бэктрекинг по норме невязки, шаг подбирается сам).
+        * ``karman_anderson`` — окно ускорения Андерсона (по умолчанию 6,
+          ``0`` — чистый Пикар); осмысленно только для Пикара.
     bc_type : изгибная кромка ``clamped`` (``w=ω²Φ``) | ``soft_hinge`` (``w=ωΦ``).
     inplane_bc : закрепление в плане ``immovable`` (u=v=0) | ``movable`` (N·n=0).
 
@@ -592,6 +618,13 @@ class KarmanPlate:
         (робастно от нулевого старта); наращивание нагрузки — по ``n_load_steps``.
         ``b_extra`` — готовый ДОБАВОК к вектору нагрузки (линейная нагрузка
         вдоль отрезка, v0.7.0); ``None`` — путь кода буквально прежний.
+
+        Останов — ``‖R(c)‖/‖b‖ < karman_tol`` с ФИКСИРОВАННОЙ нормировкой
+        ``‖b‖`` по ПОЛНОЙ нагрузке (та же величина, что у Пикара с v0.8.0).
+        ⚠️ ``karman_relax`` Ньютоном НЕ используется: длину шага задаёт
+        бэктрекинг ``α``; параметр остаётся в силе только для Пикара
+        (валидатор case-схемы его при ``karman_method="newton"`` пока
+        принимает молча — см. docs/CASE_SCHEMA.md#model).
         """
         b_full = self._load_vector(np.asarray(f_values, float))
         if b_extra is not None:
@@ -657,9 +690,23 @@ class KarmanPlate:
         старт каждого уровня — предыдущим решением; на уровне — неподвижная
         точка отображения Пикара ``T`` (§5.1) с УСКОРЕНИЕМ АНДЕРСОНА
         (смешивание истории невязок ``f=T(c)-c`` по окну ``m``): то же
-        отображение, но сходимость из линейной становится сверхлинейной, что
-        делает достижимым мембранный предел Gate M (``w/h ~ 6``). При
-        ``m=0`` — чистый Пикар. Останов ``‖Δw‖_{L2}/‖w‖ < karman_tol``.
+        отображение, но с существенно меньшим числом итераций, что делает
+        достижимым мембранный предел Gate M (``w/h ~ 6``). При ``m=0`` —
+        чистый Пикар.
+
+        Останов (v0.8.0, аудит P08) — по ИСТИННОЙ относительной невязке
+
+        .. math:: \|R(c_k)\| / \|b\| < \texttt{karman\_tol}, \quad
+                  R(c) = \bigl(D S_\text{bend} + K_\text{geo}(N(c))\bigr) c - b,
+
+        с нормировкой ``‖b‖`` по ПОЛНОЙ нагрузке (та же, что у Ньютона, ⇒
+        ``karman_tol`` у обоих методов означает ОДНО И ТО ЖЕ, аудит P21).
+        Невязка берётся В ТЕКУЩЕЙ точке ``c_k`` и БЕЗ пересборки усилий:
+        ``N(c_k)`` уже вычислены шагом Пикара, поэтому цена критерия — одно
+        применение оператора. Норма шага ``‖Δw‖_{L2}/‖w‖`` сохранена как
+        ДИАГНОСТИКА (4-й элемент записи ``history``); критерием останова она
+        была до v0.8.0 и под ускорением Андерсона давала ЛОЖНУЮ сходимость
+        (шаг гасился экстраполяцией при немалой невязке).
 
         ``c0`` — тёплый старт коэффициентов прогиба (например, решение с
         предыдущего шага внешнего цикла МОР, `contact_nl.py`): при заданном
@@ -688,6 +735,9 @@ class KarmanPlate:
         max_iter = int(cfg.karman_max_iter)
         n_steps = max(1, int(cfg.n_load_steps))
         m_win = int(getattr(cfg, "karman_anderson", 6))      # окно ускорения Андерсона
+        # нормировка невязки — по ПОЛНОЙ нагрузке (как у Ньютона): karman_tol
+        # означает одно и то же у обоих методов и не «плывёт» по уровням
+        scale = max(float(np.linalg.norm(b_full)), 1e-30)
         W = self._W
         if c0 is None:
             c = np.zeros(self.basis.N)                       # тёплый старт по уровням
@@ -701,13 +751,21 @@ class KarmanPlate:
         for step in range(1, n_steps + 1):
             b_level = (step / n_steps) * b_full
             converged = False
-            rel = float("nan")
+            rn = float("nan")                  # ‖R‖/‖b‖ — КРИТЕРИЙ останова
+            rel = float("nan")                 # ‖Δw‖/‖w‖ — только диагностика
             g_hist: list[np.ndarray] = []
             f_hist: list[np.ndarray] = []
             it = 0
             for it in range(1, max_iter + 1):  # noqa: B007 — it нужен после цикла
-                w_old = c @ self._psi
                 g, forces = self._picard_map(c, b_level, theta)
+                # усилия N(c) собраны ЭТИМ ЖЕ шагом ⇒ истинная невязка в текущей
+                # точке R(c) = A(N(c))·c − b получается без их пересчёта
+                rn = float(np.linalg.norm(
+                    self._nonlinear_operator(c, forces) - b_level)) / scale
+                if rn < tol:
+                    converged = True           # возвращается ИМЕННО c: ‖R(c)‖ мала
+                    break
+                w_old = c @ self._psi
                 f = g - c
                 g_hist.append(g)
                 f_hist.append(f)
@@ -725,11 +783,8 @@ class KarmanPlate:
                 denom = np.sqrt(np.sum(W * w_new**2))
                 rel = (float(np.sqrt(np.sum(W * (w_new - w_old) ** 2)) / denom)
                        if denom > 0 else 0.0)
-                if rel < tol:
-                    converged = True
-                    break
             total_iter += it
-            history.append((step / n_steps, it, rel))
+            history.append((step / n_steps, it, rn, rel))
         a, b, Nx, Ny, Nxy = forces
         # финальные поля на достигнутом уровне (полная нагрузка)
         w_nodes = c @ self._psi

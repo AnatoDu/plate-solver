@@ -78,7 +78,7 @@ class VerifyReport:
 
     def table(self) -> str:
         """Markdown-таблица «эталон | значение | rel | статус»."""
-        lines = ["| эталон | w_max эталона | w_max расчёта | rel | статус |",
+        lines = ["| эталон / инвариант | эталон | значение | rel | статус |",
                  "|---|---|---|---|---|"]
         for r in self.rows:
             status = ("PASS" if r.passed else "FAIL") if r.gated else "инфо"
@@ -562,8 +562,77 @@ def resolve_reference(problem: Problem, cfg=None) -> list[Reference]:
     return refs
 
 
+#: допуск ПРОНИКАНИЯ (доля зазора) для ворот инвариантов контакта (v0.8.0)
+PENETRATION_TOL = 5.0e-2
+#: допуск замыкания ∫r = P в силовом режиме
+FORCE_CLOSURE_TOL = 2.0e-2
+
+
+def contact_invariant_rows(result: Result) -> list[RefRow]:
+    r"""Ворота ИНВАРИАНТОВ контакта (v0.8.0) — то, что верно при ЛЮБОМ бюджете.
+
+    Контактных эталонов у большинства постановок нет (``reference = "none"``),
+    и ``plate-verify`` выносил PASS, не проверив НИЧЕГО: расходящийся МОР с
+    ``r ≡ 0`` был неотличим от решения (аудит S04, T01). Инварианты ниже не
+    зависят от числа итераций и ловят именно этот класс отказов:
+
+    * ``r ≥ 0`` — односторонняя связь (структурное свойство проекции);
+    * ПРОНИКАНИЕ ``max(u − Δ)₊/Δ ≤ 5 %`` — условие непроникания выполняется
+      с точностью шага; при развале итерации (``r ≡ 0``) проникание равно
+      относительному перелёту свободного решения и заведомо велико;
+    * НЕТРИВИАЛЬНОСТЬ: если свободное решение перекрывает зазор
+      (``w_free > Δ``), контакт ОБЯЗАН существовать (``n_contact > 0``);
+    * СИЛОВОЙ режим: замыкание ``|∫r − P|/P ≤ 2 %``.
+
+    Невязка комплементарности и флаг сходимости выводятся строками
+    ИНФОРМАЦИОННО: они зависят от бюджета итераций, и CI-копии случаев
+    сознательно считаются дёшево.
+    """
+    c = result.contact
+    if c is None:
+        return []
+    rows: list[RefRow] = []
+    r_min = float(np.min(c.r_nodes)) if c.r_nodes.size else 0.0
+    rows.append(RefRow(name="инвариант: r ≥ 0 (односторонняя связь)",
+                       reference=0.0, value=min(r_min, 0.0), rel=abs(min(r_min, 0.0)),
+                       gated=True, passed=r_min >= 0.0))
+    over = float(c.gap_overshoot)
+    if np.isfinite(over):
+        pen = max(over, 0.0)
+        rows.append(RefRow(name="инвариант: проникание (доля зазора)",
+                           reference=0.0, value=pen, rel=pen,
+                           gated=True, passed=pen <= PENETRATION_TOL))
+    n_contact = int((c.r_nodes > 0).sum())
+    if result.w_free_max is not None and result.delta is not None:
+        expect = float(result.w_free_max) > float(result.delta)
+        if expect:
+            rows.append(RefRow(name="инвариант: контакт существует (w_free > Δ)",
+                               reference=1.0, value=float(n_contact > 0),
+                               rel=0.0 if n_contact > 0 else 1.0,
+                               gated=True, passed=n_contact > 0))
+    if result.force_total is not None and result.problem.contact.force is not None:
+        P = float(result.problem.contact.force)
+        rel = abs(float(result.force_total) - P) / abs(P) if P else 0.0
+        rows.append(RefRow(name="инвариант: замыкание ∫r = P",
+                           reference=P, value=float(result.force_total), rel=rel,
+                           gated=True, passed=rel <= FORCE_CLOSURE_TOL))
+    # информационные строки (зависят от бюджета итераций)
+    rows.append(RefRow(name="инфо: KKT-невязка комплементарности",
+                       reference=0.0, value=float(c.comp_residual),
+                       rel=float(c.comp_residual), gated=False, passed=None))
+    rows.append(RefRow(name=f"инфо: сходимость МОР ({c.iters} итер.)",
+                       reference=1.0, value=float(bool(c.converged)),
+                       rel=0.0 if c.converged else 1.0, gated=False, passed=None))
+    return rows
+
+
 def verify_result(result: Result) -> VerifyReport:
-    """Сравнить Result со всеми эталонами постановки; собрать отчёт."""
+    """Сравнить Result со всеми эталонами постановки; собрать отчёт.
+
+    Для контактных задач к строкам эталонов ДОБАВЛЯЮТСЯ ворота инвариантов
+    (:func:`contact_invariant_rows`) — иначе постановка без эталона
+    (``reference = "none"``) проходила бы верификацию, не проверив ничего.
+    """
     problem = result.problem
     refs = resolve_reference(problem, result.config)
     tol = problem.verify.tol
@@ -584,7 +653,9 @@ def verify_result(result: Result) -> VerifyReport:
         rows.append(RefRow(name=ref.name, reference=ref.w_max, value=value,
                            rel=rel, gated=ref.gated,
                            passed=(rel <= tol) if ref.gated else None))
+    rows.extend(contact_invariant_rows(result))
     return VerifyReport(rows=tuple(rows), tol=tol)
 
 
-__all__ = ["Reference", "RefRow", "VerifyReport", "resolve_reference", "verify_result"]
+__all__ = ["Reference", "RefRow", "VerifyReport", "contact_invariant_rows",
+           "resolve_reference", "verify_result"]

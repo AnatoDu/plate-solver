@@ -5,6 +5,10 @@ r"""Ньютон-ускорение итерации Пикара (Карман/
 нагрузки). Ключевая проверка корректности — КОНЕЧНЫЕ РАЗНОСТИ: ``J·δ`` совпадает
 с ``(R(c+εδ) − R(c−εδ))/2ε`` до ~1e-10 (иначе Ньютон не сходился бы квадратично).
 Плюс: Ньютон даёт ТО ЖЕ решение, что Пикар, за меньшее число итераций.
+
+С v0.8.0 (аудит P21) ``karman_tol`` означает у обоих методов ОДНУ величину —
+относительную невязку ``‖R‖/‖b‖``, поэтому «то же решение при том же допуске»
+проверяется здесь количественно; ``karman_relax`` Ньютоном не используется.
 """
 
 from __future__ import annotations
@@ -87,6 +91,59 @@ def test_newton_soft_hinge_ktn_runs():
     r = KTNPlate.from_config(dom, _cfg("ktn_method", "newton", h=0.2, Pbar=0.02, p=8, Q=64),
                              bc_type="soft_hinge").solve_uniform()
     assert np.isfinite(r.w_max) and r.n_iter < 300
+
+
+@pytest.mark.parametrize("Pbar,tol", [(6.0, 1e-6), (12.0, 1e-8)])
+def test_same_tol_same_meaning_picard_newton(Pbar, tol):
+    r"""P21: ``karman_tol`` у Пикара и Ньютона — ОДНА И ТА ЖЕ величина (v0.8.0).
+
+    До v0.8.0 Пикар сравнивал с ``karman_tol`` норму шага ``‖Δw‖/‖w‖``, Ньютон —
+    относительную невязку ``‖R‖/‖b‖``: одно имя означало разное, и «тот же
+    допуск» давал разную точность. Теперь у обоих критерий — ``‖R‖/‖b‖`` с
+    нормировкой по ПОЛНОЙ нагрузке, поэтому при одинаковом ``tol``
+
+    * оба сообщают ``converged`` и оба сертифицируют ``‖R‖/‖b‖ ≤ tol``
+      (проверяем НЕЗАВИСИМЫМ пересчётом ``_residual`` в возвращённой точке);
+    * решения совпадают с точностью, соизмеримой с самим ``tol``
+      (факт: 3.5e-7 при tol=1e-6 и 1.3e-9 при tol=1e-8).
+    """
+    dom = make_circle(1.0)
+    out = {}
+    for method in ("picard", "newton"):
+        cfg = _cfg("karman_method", method, Pbar=Pbar)
+        cfg.karman_tol = tol
+        plate = KarmanPlate.from_config(dom, cfg, bc_type="clamped",
+                                        inplane_bc="immovable")
+        r = plate.solve_uniform()
+        b = plate._load_vector(np.full(plate.quad.x.size, Pbar))
+        res = float(np.linalg.norm(plate._residual(r.cw, b)) / np.linalg.norm(b))
+        out[method] = (r, res)
+    for method, (r, res) in out.items():
+        assert r.converged, method
+        assert res <= tol, (method, res)               # один tol — одна величина
+        assert r.history[-1][2] == pytest.approx(res, rel=1e-6), method
+    wp, wn = out["picard"][0].w_max, out["newton"][0].w_max
+    assert abs(wp - wn) / wn <= 10.0 * tol             # то же решение
+
+
+def test_newton_ignores_karman_relax():
+    r"""P21: при ``karman_method='newton'`` параметр ``karman_relax`` НЕ действует.
+
+    Длину шага Ньютона задаёт бэктрекинг по норме невязки (``c ← c + αδc``),
+    а не недорелаксация θ Пикара: θ в этот тракт не входит вовсе, поэтому два
+    прогона с θ = 1.0 и θ = 0.3 обязаны совпасть БИТ-В-БИТ. Тест фиксирует
+    молчаливое игнорирование параметра (валидатор case-схемы его при Ньютоне
+    пока принимает — предупреждение схемы вне области этого файла).
+    """
+    dom = make_circle(1.0)
+    runs = []
+    for theta in (1.0, 0.3):
+        cfg = _cfg("karman_method", "newton", Pbar=12.0)
+        cfg.karman_relax = theta
+        runs.append(KarmanPlate.from_config(dom, cfg, bc_type="clamped",
+                                            inplane_bc="immovable").solve_uniform())
+    assert runs[0].n_iter == runs[1].n_iter
+    assert runs[0].w_max == runs[1].w_max          # бит-точно: θ в тракт не входит
 
 
 def test_bad_method_rejected():

@@ -294,13 +294,24 @@ def levy_rect_uniform(x, y, x1: float, x2: float, y1: float, y2: float,
         al = m * np.pi / Lx
         qm = 4.0 * q / (np.pi * m)
         yp = qm / (D * al**4)
-        ch, sh = np.cosh(al * c), np.sinh(al * c)
-        a11, a12, b1 = ch, c * sh, -yp
-        a21, a22, b2 = al * sh, sh + al * c * ch, 0.0
-        det = a11 * a22 - a12 * a21
-        aa = (b1 * a22 - a12 * b2) / det
-        bb = (a11 * b2 - b1 * a21) / det
-        ym = yp + aa * np.cosh(al * eta) + bb * eta * np.sinh(al * eta)
+        # УСТОЙЧИВАЯ форма (v0.8.0). Прямое вычисление ch(αc), sh(αc)
+        # переполняется при αc > 710, то есть уже при отношении сторон
+        # Ly/Lx ≳ 1.9 и n_terms = 60: эталон обращался в NaN, и plate-verify
+        # «проваливал» ВЕРНЫЙ расчёт (аудит V01). Ниже числитель и знаменатель
+        # поделены на ch²(αc); остаются ограниченные величины
+        #   th = th(αc),  sech² = 1/ch²(αc),  ch(u)/ch(s), sh(u)/ch(s),
+        # вычисляемые через exp(u−s) и exp(−u−s) с неположительными
+        # показателями (|u| ≤ s). Тождественность прежней формуле проверена
+        # численно (расхождение ≤ 6e-14 при s ≤ 300, tests/test_analytic.py).
+        sc = al * c                                   # s = αc
+        u = al * eta                                  # |u| ≤ s
+        e2 = np.exp(-2.0 * sc)                        # ≤ 1
+        sech2 = 4.0 * e2 / (1.0 + e2) ** 2            # 1/ch²(s)
+        th = np.tanh(sc)
+        den = th + sc * sech2                         # (ch·sh + s)/ch²
+        r_ch = (np.exp(u - sc) + np.exp(-u - sc)) / (1.0 + e2)      # ch(u)/ch(s)
+        r_sh = (np.exp(u - sc) - np.exp(-u - sc)) / (1.0 + e2)      # sh(u)/ch(s)
+        ym = yp * (1.0 - ((th + sc) * r_ch - u * th * r_sh) / den)
         out = out + ym * np.sin(al * X)
     return out
 

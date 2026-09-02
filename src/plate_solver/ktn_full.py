@@ -38,12 +38,15 @@ r"""ktn_full.py — ПОЛНАЯ нелинейная теория Карман�
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import scipy.linalg as sla
 
 from .basis import ChebyshevBasis
 from .faces import FaceParams
 from .membrane import KarmanPlate
+from .poisson import FactorizationWarning
 from .quadrature import interior_nodes
 
 
@@ -178,22 +181,71 @@ def _boundary_quad(domain):
     return _contour_boundary_quad(domain)
 
 
-def _lin_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Решение НЕсимметричной системы (член B несимметричен) с диаг. предобусл.
+def _lin_solve(A: np.ndarray, b: np.ndarray, *, sink: list | None = None) -> np.ndarray:
+    r"""Решение НЕсимметричной системы (член B несимметричен) с диаг. предобусл.
 
     Симметричное диагональное масштабирование ``D_s A D_s`` (``s = 1/√|A_kk|``) +
-    LU; при потере обусловленности — линейный МНК. Матрица КТН — малое
-    (``O(h²)``) несимметричное возмущение SPD-матрицы Кармана.
+    LU; при вырождении — линейный МНК. Матрица КТН — малое (``O(h²)``)
+    несимметричное возмущение SPD-матрицы Кармана.
+
+    Нечисловые ``A``/``b`` (расходящийся Пикар, вырожденная постановка)
+    отсекаются СРАЗУ явным ``LinAlgError``: это не вопрос обусловленности, и
+    фолбэк тут не помощник (прежде отсюда прилетал непрозрачный ``ValueError``
+    из внутренней проверки LAPACK).
+
+    ⚠️ Отбор фолбэка идёт ПО КОНЕЧНОСТИ РЕШЕНИЯ и ПО ``LinAlgWarning``, а не по
+    исключению. ``scipy.linalg.lu_factor`` на вырожденной матрице НЕ бросает
+    ``LinAlgError``: при точно нулевом пивоте он возвращает разложение с
+    предупреждением ``LinAlgWarning`` («Diagonal number k is exactly zero»), а
+    ``lu_solve`` затем даёт ``inf``/``NaN``. Прежний ``except LinAlgError`` был
+    поэтому мёртвой веткой, и решение молча становилось нечисловым (находка
+    аудита P04). Оба признака перехватываются: неконечное решение — всегда, и
+    отдельно нулевой пивот (LU может дать конечные числа при нулевой компоненте
+    правой части — они всё равно не решение).
+
+    МНК (``rcond = 1e-13``) даёт минимально-нормальное решение на подпространстве
+    сингулярных направлений с ``σ > rcond·σ_max``: как и спектральная отсечка
+    :class:`~plate_solver.poisson.SPDFactorization`, он МЕНЯЕТ дискретное
+    пространство — решение проецируется, ``n_dropped = N − rank``. Факт
+    сообщается предупреждением ``FactorizationWarning`` и (при передаче
+    ``sink``) записью ``("lstsq", n_dropped)``.
     """
+    if not (np.all(np.isfinite(A)) and np.all(np.isfinite(b))):
+        # расходящийся Пикар/вырожденная постановка: до правки сюда приходил
+        # непрозрачный ValueError из LAPACK-проверки asarray_chkfinite
+        raise np.linalg.LinAlgError(
+            "КТН, внеплоскостной шаг: матрица или правая часть содержит "
+            "NaN/Inf — это не обусловленность, а расходимость итерации либо "
+            "вырожденная постановка (проверьте шаги по нагрузке, θ и h)")
     d = np.abs(np.diag(A))
+    x = None
     if np.all(d > 0.0):
         s = 1.0 / np.sqrt(d)
         An = (A * s) * s[:, None]                    # D_s A D_s
-        try:
-            return sla.lu_solve(sla.lu_factor(An), b * s) * s
-        except (sla.LinAlgError, np.linalg.LinAlgError):
-            pass
-    return np.linalg.lstsq(A, b, rcond=1e-13)[0]
+        # LU о вырождении СООБЩАЕТ предупреждением LinAlgWarning («нулевой
+        # пивот»), а не исключением: перехватываем его как признак отказа
+        # наравне с неконечным решением
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            try:
+                x = sla.lu_solve(sla.lu_factor(An), b * s) * s
+            except (sla.LinAlgError, np.linalg.LinAlgError):
+                x = None
+        singular = any(issubclass(w.category, sla.LinAlgWarning) for w in rec)
+        if x is not None and not singular and np.all(np.isfinite(x)):
+            return x
+    x, _res, rank, _sv = np.linalg.lstsq(A, b, rcond=1e-13)
+    n_dropped = int(A.shape[1] - rank)
+    if sink is not None:
+        sink.append(("lstsq", n_dropped))
+    warnings.warn(
+        "КТН, внеплоскостной шаг: LU по масштабированной матрице не дал "
+        f"конечного решения — включён линейный МНК, отсечено {n_dropped} из "
+        f"{A.shape[1]} направлений (ДИСКРЕТНОЕ ПРОСТРАНСТВО УСЕЧЕНО). Обычная "
+        "причина — избыточная степень базиса p либо вырожденное состояние "
+        "мембранных усилий N",
+        FactorizationWarning, stacklevel=3)
+    return x
 
 
 class KTNPlate(KarmanPlate):
@@ -228,6 +280,8 @@ class KTNPlate(KarmanPlate):
         super().__init__(domain, basis, quad, cfg, bc_type=bc_type,
                          inplane_bc=inplane_bc, sides=sides)
         self._include_ktn = bool(include_ktn_terms)
+        # журнал деградаций внеплоскостного решателя: записи ("lstsq", n_dropped)
+        self._lin_fallbacks: list[tuple[str, int]] = []
         self._faces = FaceParams(E=cfg.E, nu=cfg.nu, h=cfg.h)
         self._h_psi_sq = self._faces.h_psi_sq
         self._h_star_sq = self._faces.h_star_sq
@@ -392,7 +446,7 @@ class KTNPlate(KarmanPlate):
                     np.broadcast_to(np.asarray(Ny).ravel()[0], nb),
                     np.broadcast_to(np.asarray(Nxy).ravel()[0], nb))
         self.set_load_laplacian(lap_q)
-        return _lin_solve(A, self._load_vector(q_values))
+        return _lin_solve(A, self._load_vector(q_values), sink=self._lin_fallbacks)
 
     def _picard_map(self, c, b_level, theta):
         r"""Шаг Пикара с КТН-членом (B). При выключенных членах — тождественно Карман."""
@@ -407,7 +461,7 @@ class KTNPlate(KarmanPlate):
         if self._soft_hinge_bnd:
             # мягкий шарнир: +h_ψ²∫ v ΔL = +h_ψ²(M_2 − B_∂Ω) (формула Грина, §3.5)
             A = A - self._h_psi_sq * self._ktn_boundary_term(a, b, c)
-        c_raw = _lin_solve(A, b_level)
+        c_raw = _lin_solve(A, b_level, sink=self._lin_fallbacks)
         g = (1.0 - theta) * c + theta * c_raw
         return g, (a, b, Nx, Ny, Nxy)
 
@@ -416,6 +470,21 @@ class KTNPlate(KarmanPlate):
     def face_params(self) -> FaceParams:
         """Параметры лицевых величин (§6.3): h_ψ², h_*², h_c²."""
         return self._faces
+
+    @property
+    def fallback(self) -> str | None:
+        """Деградация внеплоскостного решателя: ``None`` | ``"lstsq"``.
+
+        ``None`` — все шаги Пикара/Ньютона прошли штатным LU; ``"lstsq"`` —
+        хотя бы на одном шаге LU дал нечисловое решение и включился МНК
+        (пространство усечено, см. :func:`_lin_solve`).
+        """
+        return self._lin_fallbacks[-1][0] if self._lin_fallbacks else None
+
+    @property
+    def n_dropped(self) -> int:
+        """Число направлений, отсечённых МНК на ПОСЛЕДНЕЙ деградации (0, если её не было)."""
+        return self._lin_fallbacks[-1][1] if self._lin_fallbacks else 0
 
 
 __all__ = ["KTNPlate"]

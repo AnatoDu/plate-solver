@@ -191,8 +191,38 @@ class NonlinearContactMOR:
         self.beta_eff = cfg.beta / self.gain
         self.max_iter = int(cfg.max_iter)
         self.tol = float(cfg.tol)
+        # Критерий останова (v0.8.0): "dr" — относительная невязка неподвижной
+        # точки ‖F(r)−r‖/‖F(r)‖ (прежнее поведение), "comp" — БЕЗРАЗМЕРНАЯ
+        # KKT-невязка Синьорини, как в классическом ContactMOR. Ключ
+        # contact.stop прежде молча игнорировался нелинейными трактами (аудит S07).
+        stop = getattr(cfg, "stop", "dr")
+        if stop not in ("dr", "comp"):
+            raise ValueError(
+                f"Неизвестный критерий останова stop={stop!r} (ожидается 'dr' или 'comp')."
+            )
+        self.stop = stop
+        gap_arr = np.atleast_1d(np.asarray(self.gap, float))
+        self._gap_ref = float(np.min(gap_arr[gap_arr > 0.0])) if np.any(gap_arr > 0.0) else 0.0
+        self._q_ref = max(abs(q0), float(np.max(np.abs(self._f_load))), 1e-300)
         #: несходимость ВНУТРЕННЕГО решателя КТН (вложенная схема) — в флаг результата
         self._inner_failed = not bool(getattr(self._free, "converged", True))
+
+    def _kkt_residual(self, u_c, r) -> float:
+        r"""Безразмерная KKT-невязка Синьорини состояния (r, u_c) — как в ContactMOR.
+
+        .. math:: \eta = \max\left(\frac{\max_i |r_i (u_i - z)|}{q_{ref} z_{ref}},
+                  \ \frac{\max_i (u_i - z)_+}{z_{ref}}\right)
+
+        (комплементарность + проникание). При нулевом зазоре нормировка
+        невозможна — возвращается ``inf`` (критерий "comp" в таком режиме
+        неприменим; используйте "dr").
+        """
+        if self._gap_ref <= 0.0:
+            return float("inf")
+        comp = float(np.max(np.abs(r * (u_c - self.gap))) / (self._q_ref * self._gap_ref))
+        pen = float(np.max(np.maximum(u_c[self.fmask] - self._gap_f, 0.0), initial=0.0)
+                    / self._gap_ref)
+        return max(comp, pen)
 
     def _face_deflection(self, cw, r=None) -> np.ndarray:
         r"""Лицевой прогиб ``u_c = w + c_curv·Δw − κ_q·q⁺ − κ_r·r`` в узлах.
@@ -268,6 +298,8 @@ class NonlinearContactMOR:
             dr = float(np.sqrt(np.sum(q.w * f ** 2)))
             r_scale = float(np.sqrt(np.sum(q.w * g ** 2)))
             res = dr / r_scale if r_scale > 0.0 else dr
+            if self.stop == "comp":                     # безразмерная KKT-невязка
+                res = self._kkt_residual(u_c, r_new)
             hist.append(res)
             r = r_new
             if res < self.tol:
@@ -338,6 +370,8 @@ class NonlinearContactMOR:
             wn = float(np.sqrt(np.sum(q.w * w_new ** 2)))
             res_w = float(np.sqrt(np.sum(q.w * (w_new - w_old) ** 2)) / wn) if wn > 0 else 0.0
             res = max(res_r, res_w)
+            if self.stop == "comp":                     # безразмерная KKT-невязка
+                res = max(self._kkt_residual(u_c, r_new), res_w)
             hist.append(res)
             r = r_new
             if res < self.tol:
@@ -396,6 +430,12 @@ class NonlinearTwoPlateResult:
     iters: int
     converged: bool
     residual_history: np.ndarray
+    #: коэффициенты перемещений в плане (u, v) обеих пластин на сошедшемся
+    #: прогибе — источник мембранных усилий N для экспорта полей (v0.8.0)
+    cu1: np.ndarray | None = None
+    cv1: np.ndarray | None = None
+    cu2: np.ndarray | None = None
+    cv2: np.ndarray | None = None
 
 
 class NonlinearTwoPlateMOR:
@@ -573,6 +613,13 @@ class NonlinearTwoPlateMOR:
         u2 = self._face(self.s2, c2, self._c2)
         contact = r > 0.0
         peak = int(np.argmax(r)) if r.size else 0
+        # мембрана сошедшегося состояния: по одному дешёвому плоскому подшагу на
+        # пластину — иначе усилия N после контакта ПАРЫ невосстановимы и поля
+        # σ выводились бы без мембранной части (аудит O05)
+        cu1, cv1, *_ = self.s1._membrane_forces(c1 @ self.s1._psi_x,
+                                                c1 @ self.s1._psi_y)
+        cu2, cv2, *_ = self.s2._membrane_forces(c2 @ self.s2._psi_x,
+                                                c2 @ self.s2._psi_y)
         return NonlinearTwoPlateResult(
             r_nodes=r, w1_nodes=w1, w2_nodes=w2, u_c1_nodes=u1, u_c2_nodes=u2,
             cw1=c1, cw2=c2, w1_max=float(np.max(np.abs(w1))),
@@ -581,7 +628,8 @@ class NonlinearTwoPlateMOR:
             peak_xy=(float(q.x[peak]), float(q.y[peak])),
             n_contact=int(contact.sum()),
             n_components=contact_components(q.x, q.y, contact),
-            iters=it, converged=converged, residual_history=np.array(hist))
+            iters=it, converged=converged, residual_history=np.array(hist),
+            cu1=cu1, cv1=cv1, cu2=cu2, cv2=cv2)
 
 
 def _rel_change(w, new, old) -> float:

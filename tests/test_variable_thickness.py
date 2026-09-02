@@ -152,17 +152,46 @@ def test_varh_karman_linear_limit():
 
 
 def test_varh_karman_hardening_and_newton():
-    """Умеренная нагрузка: мембранное ужесточение (знак) + Пикар = Ньютон."""
+    """Мембранное ужесточение при h(x, y) + тождество Пикар = Ньютон.
+
+    Регламент нагрузки (v0.8.0). Прежний уровень ``q0 = 50`` при этой толщине
+    (h ≈ 0.5, то есть w/h ~ 1e-5) давал ужесточение 3.9e-10 — ЧИСЛЕННЫЙ ШУМ, а
+    не геометрическую нелинейность; «строгий знак» тест ловил лишь потому, что
+    итерация Пикара останавливалась по норме ШАГА и добирала эти знаки. После
+    перевода останова на истинную невязку (‖R‖/‖b‖ < karman_tol) такая
+    постановка ЧЕСТНО сходится к линейному решению: мембранный вклад ниже
+    допуска. Нагрузка поднята до режима, где нелинейность реальна:
+    ``w/h ≈ 0.19``, ужесточение 2.3 % (при ``q0 = 1e6`` — 11 %).
+    """
     dp = _rect_case(8, 48, q_expr="1.0")
-    dp["load"] = {"type": "uniform", "q0": 50.0}
+    dp["load"] = {"type": "uniform", "q0": 4.0e5}
     dp["model"] = {"theory": "karman", "E": _E, "nu": _NU, "h_expr": _HE,
-                   "karman_method": "picard"}
+                   "karman_method": "picard", "karman_tol": 1e-10,
+                   "karman_max_iter": 300}
     dn = copy.deepcopy(dp)
     dn["model"]["karman_method"] = "newton"
     rp = dispatch.solve(Problem.from_dict(dp))
     rn = dispatch.solve(Problem.from_dict(dn))
-    assert rp.w_max < rp.w_max_classic             # ужесточение — строгий знак
-    assert abs(rn.w_max - rp.w_max) / rp.w_max < 1e-8   # измерено 3.9e-10
+    hardening = 1.0 - rp.w_max / rp.w_max_classic
+    assert hardening > 1.0e-2                      # ужесточение ЗАМЕТНО (изм. 2.3 %)
+    assert rp.w_max < rp.w_max_classic             # знак: мембрана ужесточает
+    assert abs(rn.w_max - rp.w_max) / rp.w_max < 1e-6   # Пикар ≡ Ньютон
+
+
+def test_varh_karman_small_load_is_linear():
+    """Малая нагрузка при h(x, y): решение СОВПАДАЕТ с линейным в пределах допуска.
+
+    Обратная сторона предыдущих ворот: при ``w/h ~ 1e-5`` мембранный вклад
+    (∝ (w/h)²) ниже ``karman_tol``, и честный критерий по невязке
+    останавливается на линейном решении. Ворота фиксируют именно это —
+    отсутствие «ужесточения из шума».
+    """
+    d = _rect_case(8, 48, q_expr="1.0")
+    d["load"] = {"type": "uniform", "q0": 50.0}
+    d["model"] = {"theory": "karman", "E": _E, "nu": _NU, "h_expr": _HE,
+                  "karman_method": "picard"}
+    r = dispatch.solve(Problem.from_dict(d))
+    assert abs(r.w_max - r.w_max_classic) <= 1e-8 * r.w_max_classic
 
 
 def test_varh_moments_local_D():

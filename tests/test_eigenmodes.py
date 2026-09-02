@@ -23,8 +23,8 @@ from plate_solver.geometry import make_circle, make_rectangle
 _A = 1.0                                                  # характерный размер (сторона/радиус)
 
 
-def _cfg(p=12, Q=72):
-    return Config(E=1.0, nu=0.3, h=0.01, q0=0.0, p=p, Q=Q)
+def _cfg(p=12, Q=72, E=1.0):
+    return Config(E=E, nu=0.3, h=0.01, q0=0.0, p=p, Q=Q)
 
 
 def _D():
@@ -145,6 +145,96 @@ def test_vibration_under_real_load_raises_frequency():
         freqs.append(natural_frequencies(kp, n_modes=1, prestress=res).values[0])
     assert freqs[0] > w_unstressed                        # натяжение повышает частоту
     assert freqs[0] < freqs[1] < freqs[2]                 # монотонно с нагрузкой
+
+
+# --------------------------------------------------------------------------- #
+#  Масштабная инвариантность отбора собственных пар (находка аудита V02, v0.8.0)
+# --------------------------------------------------------------------------- #
+#  Безразмерные ``λ = ω·a²·√(ρh/D)`` и ``k = N_cr·b²/(π²D)`` ОБЯЗАНЫ не зависеть
+#  от размерных масштабов ``E`` и ``ρh``: замена ``E → cE`` умножает обе части
+#  ``Kφ = ω²Mφ`` на ``c`` и спектр ``ω²`` — тоже, оставляя ``λ`` на месте.
+#  Прежний фильтр в ``_gen_eig`` сравнивал РАЗМЕРНЫЕ ``ω²`` с абсолютным порогом
+#  ``1e-9`` и при малой ``D/ρh`` МОЛЧА терял основной тон (для квадрата SSSS при
+#  ``E = 1e-5``: точное ``ω₁² = 3.57e-10`` отбрасывалось, первой возвращалась
+#  мода (1,2) ⇒ λ₁ = 49.35 вместо 19.74).  Допуск на согласие с эталоном —
+#  дискретизационный (p, Q); допуск на РАЗБРОС по масштабам — машинный.
+_SCALES = [(1.0, 1.0), (1e-2, 1.0), (1e-4, 1.0), (1e-6, 1.0), (1.0, 1e-4), (1e-6, 1e4)]
+
+
+def _lambda1_vibration(dom, bc, Q, E, rho_h, n_modes=1):
+    """Безразмерный частотный параметр λ₁ = ω₁·a²·√(ρh/D) при заданных E, ρh."""
+    cfg = _cfg(p=8, Q=Q, E=E)
+    plate = linear_plate(dom, cfg, bc_type=bc)
+    w1 = natural_frequencies(plate, rho_h=rho_h, n_modes=n_modes).values[0]
+    return w1 * _A**2 * np.sqrt(rho_h / cfg.D)
+
+
+def test_vibration_scale_invariant_square():
+    """SSSS-квадрат: λ₁ = 2π² при E и ρh, меняющихся на 6 и 4 порядка."""
+    dom = make_rectangle(0, _A, 0, _A)
+    lam = np.array([_lambda1_vibration(dom, "soft_hinge", 32, E, rho) for E, rho in _SCALES])
+    assert abs(lam[0] - 2 * np.pi**2) / (2 * np.pi**2) < 1e-2      # эталон (дискретизация)
+    assert np.ptp(lam) / lam[0] < 1e-9                               # инвариантность (машинная)
+
+
+def test_vibration_scale_invariant_circle():
+    """Круг CCCC: λ₁ = 10.2158 (Лейсса) не зависит от масштабов E, ρh."""
+    lam = np.array([_lambda1_vibration(make_circle(_A), "clamped", 48, E, rho)
+                    for E, rho in _SCALES])
+    assert abs(lam[0] - 10.2158) / 10.2158 < 1e-2
+    assert np.ptp(lam) / lam[0] < 1e-9
+
+
+def test_buckling_scale_invariant_square():
+    """Ветвь устойчивости (B = −K_geo, знак другой): k = 4 не зависит от E."""
+    dom = make_rectangle(0, _A, 0, _A)
+    ks = []
+    for E in (1.0, 1e-2, 1e-4, 1e-6):
+        cfg = _cfg(p=8, Q=32, E=E)
+        ncr = buckling(linear_plate(dom, cfg, bc_type="soft_hinge"), Nx=-1.0).values[0]
+        ks.append(ncr * _A**2 / (np.pi**2 * cfg.D))
+    ks = np.array(ks)
+    assert abs(ks[0] - 4.0) / 4.0 < 1e-2
+    assert np.ptp(ks) / ks[0] < 1e-9
+
+
+@pytest.mark.parametrize("E", [1.0, 1e-6])
+@pytest.mark.parametrize("dom,bc,Q", [(make_rectangle(0, _A, 0, _A), "soft_hinge", 32),
+                                      (make_circle(_A), "clamped", 48)])
+def test_vibration_matches_symmetric_definite_solver(dom, bc, Q, E):
+    """Отобранные ω² совпадают с независимым решателем ``sla.eigh(K, M)``.
+
+    Матрица масс ``M = ρh∫ψψ`` положительно определена, поэтому пару ``(K, M)``
+    можно решить симметрично-определённым алгоритмом (разложение Холецкого) —
+    он не проходит через фильтр ``_gen_eig`` и служит НЕЗАВИСИМЫМ сертификатом
+    того, что фильтр не выбрасывает физические моды ни при каком масштабе.
+    (Для ветви устойчивости такой сверки нет: ``B = −K_geo`` знакопеременна при
+    немонотонном поле ``N``, Холецкий неприменим — потому общий тракт идёт через
+    ``sla.eig``.)
+    """
+    import scipy.linalg as sla
+
+    from plate_solver.eigenmodes import _bending_stiffness, _mass_matrix
+
+    plate = linear_plate(dom, _cfg(p=8, Q=Q, E=E), bc_type=bc)
+    K, M = _bending_stiffness(plate), _mass_matrix(plate, 1.0)
+    w2 = natural_frequencies(plate, rho_h=1.0, n_modes=4).values**2
+    ref = np.sort(sla.eigh(K, M, eigvals_only=True))[:4]
+    assert np.max(np.abs(w2 - ref) / ref) < 1e-9
+
+
+def test_vibration_overcritical_compression_raises():
+    """Сжатие сверх наибольшего критического множителя: честный отказ, не пустой ответ.
+
+    При ``N`` сжимающем сверх критического ``K + K_geo(N)`` теряет положительную
+    определённость, положительных ``ω²`` не остаётся — колебаний около этого
+    положения равновесия нет. Требуется внятная ошибка (прежде — молча пустой
+    массив значений и ``IndexError`` у вызывающего).
+    """
+    plate = linear_plate(make_rectangle(0, _A, 0, _A), _cfg(p=8, Q=32), bc_type="soft_hinge")
+    lam_max = buckling(plate, Nx=-1.0, Ny=-1.0, n_modes=10**4).values[-1]
+    with pytest.raises(ValueError, match="устойчивость"):
+        natural_frequencies(plate, n_modes=1, prestress=(-2 * lam_max, -2 * lam_max, 0.0))
 
 
 def test_buckling_field_matches_uniform_scalar():

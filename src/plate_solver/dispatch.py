@@ -30,6 +30,7 @@ import json
 import math
 import subprocess
 import time
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +46,11 @@ from .plate import PlateBending
 from .problem import MIN_ZONE_NODES, CaseError, GeometrySpec, Problem
 
 _SCHEMA_DOC = "docs/CASE_SCHEMA.md"
+
+#: непереносимые в файл ссылки Result (держатели решателей/коэффициентов),
+#: которые обязан сохранять :meth:`Result.regrid` — ЕДИНЫЙ перечень (v0.8.0)
+_RESULT_REFS = ("_plate_ref", "_c_ref", "_plate2_ref", "_cfg2_ref",
+                "_karman_ref", "_force_calls", "_force_iters_total")
 
 
 # --------------------------------------------------------------------------- #
@@ -92,7 +98,134 @@ def build_domain(spec: GeometrySpec) -> geometry.Domain:
             f"geometry.{spec.kind}: ПУСТАЯ область — нет внутренних точек "
             f"(compose difference/intersect не должны давать пустое множество); "
             f"см. {_SCHEMA_DOC}#geometry")
+    if spec.kind == "compose":
+        _check_union_overlap(spec.tree, dom)
     return dom
+
+
+def _check_resolution(cfg, dom, warn: list) -> None:
+    r"""Ограда РАЗРЕШЕНИЯ квадратуры (v0.8.0): узлов внутри Ω должно хватать базису.
+
+    Ритц ищет ``N = (p+1)²`` коэффициентов, а интегралы берутся по ``M`` узлам
+    квадратуры ВНУТРИ Ω (маска ``ω > 0`` от тензорной сетки ``Q×Q``). При
+    ``M < N`` система недоопределена: ранг матрицы ≤ M, и решение —
+    произвольный элемент ядра. Раньше это проходило молча: защемление и
+    нелинейные тракты уходили в МНК-фолбэк (cond ~1e20, прогиб неверного
+    ЗНАКА, пустые warnings), мягкий шарнир падал сырым ``LinAlgError`` — при
+    том что ``plate-solve --check`` только что ответил «постановка валидна»
+    (аудит S02). Валидатор схемы этого поймать не может: ``M`` зависит от
+    ГЕОМЕТРИИ (доля bbox, занятая областью).
+
+    Порог: ``M < N`` — ошибка; ``M < 2N`` — предупреждение (аппроксимация
+    возможна, но интегралы грубы: узлов едва хватает на моменты базиса).
+    """
+    from .quadrature import gauss_legendre_grid, interior_mask
+
+    n_basis = (int(cfg.p) + 1) ** 2
+    X, Y, _ = gauss_legendre_grid(int(cfg.Q), dom.bbox)
+    m_nodes = int(np.count_nonzero(interior_mask(dom, X, Y)))
+    if m_nodes < n_basis:
+        raise CaseError(
+            f"discretization: узлов квадратуры внутри области M = {m_nodes} "
+            f"МЕНЬШЕ числа базисных функций N = (p+1)² = {n_basis} — система "
+            "Ритца недоопределена (решение произвольно в ядре). Увеличьте Q "
+            f"(ориентир Q ≳ 2(p+1)·√(|bbox|/|Ω|) ≈ {_suggest_Q(cfg, m_nodes, n_basis)}) "
+            f"или уменьшите p; см. {_SCHEMA_DOC}#discretization")
+    if m_nodes < 2 * n_basis:
+        warn.append(
+            f"дискретизация на грани: узлов квадратуры M = {m_nodes} при "
+            f"N = {n_basis} базисных функциях (M < 2N) — интегралы Ритца грубы, "
+            "точность не гарантирована; увеличьте Q")
+
+
+def _suggest_Q(cfg, m_nodes: int, n_basis: int) -> int:
+    """Ориентир Q, при котором M ≳ 2N (доля области в bbox — из текущего M)."""
+    frac = max(m_nodes / max(int(cfg.Q) ** 2, 1), 1e-6)
+    return int(np.ceil(np.sqrt(2.0 * n_basis / frac)))
+
+
+def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
+    r"""Ограда операндов ``union`` (v0.8.0): внутренние линии ``ω = 0`` и связность.
+
+    R-дизъюнкция ``ω₁ ∨₀ ω₂ = ω₁ + ω₂ + √(ω₁² + ω₂²)`` обращается в НОЛЬ там,
+    где ``ω₁ = ω₂ = 0`` — то есть на общем участке ГРАНИЦЫ операндов, если те
+    лишь соприкасаются, а не перекрываются. Структура решения ``w = ω·Φ``
+    (и ``ω²·Φ``) зануляет прогиб вдоль такой линии: пластина считается с
+    НЕВИДИМОЙ внутренней опорой. Измерено: объединение двух смежных полос в
+    единичный квадрат даёт ``w_max`` в 6.4 раза меньше квадрата при пустом
+    ``Result.warnings`` (аудит S01).
+
+    Критерий (устойчив к положению шва относительно пробной сетки): операнды
+    должны перекрываться ПО МЕРЕ, ``max min(ω_i, ω_j) > 0``. Строим граф
+    «перекрываются» и требуем его СВЯЗНОСТИ: иначе область либо распадается на
+    независимые пластины (сводные w_max и зона контакта бессмысленны), либо
+    склеена по линии нулевой меры. Узкое перекрытие (< 10 % масштаба ``ω``,
+    т.е. примерно < 3 % размера пластины) — предупреждение: в «долине» почти
+    нулевой ``ω`` структура вырождается, прогиб занижается (при 10 %
+    перекрытия и p = 8 — на 18 %), обусловленность падает.
+    """
+    from .geometry import _compose_node
+
+    x0, x1, y0, y1 = dom.bbox
+    gx, gy = np.linspace(x0, x1, probe), np.linspace(y0, y1, probe)
+    XX, YY = np.meshgrid(gx, gy)
+    scale = float(np.max(dom.omega(XX, YY)))          # масштаб ω самой области
+
+    def walk(node: dict) -> None:
+        if "op" not in node:
+            return
+        for child in node["children"]:
+            walk(child)
+        if node["op"] != "union":
+            return
+        parts = [_compose_node(ch) for ch in node["children"]]
+        n = len(parts)
+        parent = list(range(n))
+
+        def find(a: int) -> int:
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        min_ov = float("inf")
+        for i in range(n):
+            for j in range(i + 1, n):
+                (e1, b1), (e2, b2) = parts[i], parts[j]
+                lo_x, hi_x = max(b1[0], b2[0]), min(b1[1], b2[1])
+                lo_y, hi_y = max(b1[2], b2[2]), min(b1[3], b2[3])
+                if hi_x <= lo_x or hi_y <= lo_y:       # bbox не имеют общей внутренности
+                    continue
+                d1 = geometry.Domain(e1, b1)
+                d2 = geometry.Domain(e2, b2)
+                px = np.linspace(lo_x, hi_x, probe)
+                py = np.linspace(lo_y, hi_y, probe)
+                PX, PY = np.meshgrid(px, py)
+                ov = float(np.max(np.minimum(d1.omega(PX, PY), d2.omega(PX, PY))))
+                if ov > 0.0:                            # перекрытие ненулевой меры
+                    min_ov = min(min_ov, ov)
+                    ri, rj = find(i), find(j)
+                    if ri != rj:
+                        parent[ri] = rj
+        if len({find(k) for k in range(n)}) > 1:
+            raise CaseError(
+                "geometry.compose: операнды union не образуют ОДНУ область — "
+                "они лишь соприкасаются либо не пересекаются. R-дизъюнкция "
+                "даёт на общей границе ω = 0, и структура w = ω·Φ зануляет "
+                "прогиб вдоль этой линии (пластина считалась бы с невидимой "
+                "внутренней опорой: w_max занижается в разы); непересекающиеся "
+                "операнды — это две независимые пластины, для которых сводные "
+                "величины бессмысленны. Задайте примитивы с ПЕРЕКРЫТИЕМ; "
+                f"см. {_SCHEMA_DOC}#compose")
+        if np.isfinite(min_ov) and min_ov < 0.1 * scale:
+            warnings.warn(
+                "geometry.compose: операнды union перекрываются УЗКО "
+                f"(max min(ω_i, ω_j) = {min_ov:.2e} против масштаба ω {scale:.2e}): "
+                "в «долине» почти нулевой ω структура вырождается — прогиб "
+                "занижается, обусловленность падает. Увеличьте перекрытие.",
+                RuntimeWarning, stacklevel=2)
+
+    walk(tree)
 
 
 # --------------------------------------------------------------------------- #
@@ -147,14 +280,19 @@ class Result:
         }
         if self.contact is not None:
             c = self.contact
+            # История невязок ПУСТА, когда критерий выполнен на первой же
+            # проверке (stop="comp" без касания: KKT-невязка нулевая ⇒ выход
+            # до первого шага). Раньше это давало IndexError в scalars()/save()
+            # на законной постановке (аудит D01).
+            hist = np.asarray(c.residual_history, float).ravel()
             out.update({
                 "iters": c.iters,
                 "converged": c.converged,
-                "residual_first": float(c.residual_history[0]),
-                "residual_last": float(c.residual_history[-1]),
+                "residual_first": float(hist[0]) if hist.size else None,
+                "residual_last": float(hist[-1]) if hist.size else None,
                 # полная история сходимости МОР — для самостоятельных графиков
                 # сходимости из result.json (v0.6.6)
-                "residual_history": [float(v) for v in c.residual_history],
+                "residual_history": [float(v) for v in hist],
                 "comp_residual": c.comp_residual,
                 "gap_overshoot": c.gap_overshoot,
                 "r_max": float(c.r_nodes.max()),
@@ -273,7 +411,7 @@ class Result:
         Ветвление по ВСЕМ типам нагрузки — общего else нет (у expr/line
         нет x0, их нельзя трактовать как точечное пятно).
         ``line`` и точная δ (``point exact``) — МЕРЫ, а не поверхностные
-        плотности: q_top ≡ 0 (поправка обжатия ν/(1−ν)·q_n к ним неприменима).
+        плотности: q_top ≡ 0 (поправка обжатия −ν/(1−ν)·q_n к ним неприменима).
         """
         load = self.problem.load
         inside = np.isfinite(self.w_grid)
@@ -402,8 +540,11 @@ class Result:
                                 contact_zone=zone)
             new = _dc.replace(self, config=cfg2, Xg=Xg, Yg=Yg, w_grid=W,
                               contact=new_c)
-        for ref in ("_plate_ref", "_c_ref", "_plate2_ref", "_cfg2_ref",
-                    "_force_calls", "_force_iters_total"):
+        # ПЕРЕНОСИМЫЕ ссылки результата: единый перечень (v0.8.0). Раньше
+        # список вёлся вручную и терял `_karman_ref` — после regrid пропадали
+        # мембранные усилия N и мембранная часть σ (аудит D02). Тест
+        # «regrid сохраняет всё» — tests/test_regrid.py.
+        for ref in _RESULT_REFS:
             try:
                 object.__setattr__(new, ref,
                                    object.__getattribute__(self, ref))
@@ -434,7 +575,7 @@ class Result:
         Nxy = np.nan_to_num(forces["Nxy"], nan=0.0) if has_N else Nz
         q_top, q_bot = self._q_faces_on_grid()
         if self.config.ortho_D is not None:
-            # ортотропия (v0.7.0): изотропная поправка обжатия ν/(1−ν)·q_n в
+            # ортотропия (v0.7.0): изотропная поправка обжатия −ν/(1−ν)·q_n в
             # σ выведена из изотропного 3D-закона — для ортотропа опускается
             # (σ = 6M/h² от ОРТОТРОПНЫХ моментов)
             q_top = np.zeros_like(q_top)
@@ -585,28 +726,48 @@ def _sanitize_nan(obj):
 
 
 def _provenance() -> dict:
-    """git-хеш и версии зависимостей для result.json."""
+    """Провенанс прогона: версия пакета, git-хеш ИСХОДНИКОВ, версии зависимостей.
+
+    git-хеш берётся ТОЛЬКО если пакет запущен из своего репозитория
+    (в дереве исходников есть каталог ``.git`` и внутри него — этот файл).
+    Раньше команда выполнялась в ``parents[2]`` безусловно: при установке из
+    wheel это каталог ``<venv>/lib/pythonX.Y``, и в ``result.json`` мог попасть
+    HEAD ЧУЖОГО репозитория, оказавшегося выше по дереву (аудит D06). Кроме
+    того, фиксируется ЧИСТОТА дерева (``dirty``): расчёт из изменённого рабочего
+    дерева не воспроизводится по одному хешу.
+    """
     import numpy
     import scipy
     import sympy
 
     from . import __version__
 
-    try:
-        git = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[2],
-            capture_output=True, text=True, timeout=10, check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        git = None
-    return {
+    git = None
+    dirty = None
+    root = Path(__file__).resolve().parents[2]
+    if (root / ".git").exists() and (root / "src" / "plate_solver").exists():
+        try:
+            git = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root,
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.strip()
+            status = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=root,
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.strip()
+            dirty = bool(status)
+        except (OSError, subprocess.SubprocessError):
+            git = None
+    out = {
         "plate_solver": __version__,
         "git": git,
         "numpy": numpy.__version__,
         "scipy": scipy.__version__,
         "sympy": sympy.__version__,
     }
+    if dirty is not None:
+        out["git_dirty"] = dirty
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -693,6 +854,16 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
 
     # point: регуляризованный patch, круговое пятно радиуса eps_eff
     x0, x1, y0, y1 = dom.bbox
+    # Точка приложения обязана лежать ВНУТРИ области (симметрично exact = true):
+    # иначе q0_eff = P/(πε²) нормируется по полной площади пятна, а маска
+    # берётся по узлам внутри Ω, и прикладывается лишь ЧАСТЬ силы — молча
+    # (на круге a = 1, ε = 0.1: x0 = 1.05 даёт 0.18·P, x0 = 1.5 — 0.002·P;
+    # аудит D08).
+    if float(dom.omega(np.array([load.x0]), np.array([load.y0]))[0]) <= 0.0:
+        raise CaseError(
+            f"load: точка приложения ({load.x0}, {load.y0}) вне области "
+            "(ω ≤ 0) — приложилась бы лишь часть силы P; задайте точку внутри Ω, "
+            f"см. {_SCHEMA_DOC}#load")
     eps = load.eps if load.eps is not None else 0.05 * min(x1 - x0, y1 - y0)
     d2 = (quad.x - load.x0) ** 2 + (quad.y - load.y0) ** 2
     inside = d2 <= eps**2
@@ -712,6 +883,16 @@ def _load_values_spec(load, dom, quad, warnings: list[str]):
         eps = eps_eff
         inside = d2 <= eps**2
     q0_eff = float(load.P) / (np.pi * eps**2)       # q = P/(π·eps²)
+    # Пятно у КРОМКИ: часть его лежит вне Ω, и равнодействующая меньше P.
+    # Нормировку не меняем (это сдвинуло бы замороженные point-эталоны, где
+    # пятно внутри), но о потере доли силы сообщаем явно (аудит D08).
+    covered = float(np.sum(quad.w[inside])) / (np.pi * eps**2)
+    if covered < 0.98:
+        warnings.append(
+            f"load.point: пятно радиуса {eps:.4g} выходит за границу области — "
+            f"приложено ≈ {covered * 100:.1f} % силы P "
+            f"(равнодействующая {covered * float(load.P):.4g} вместо {float(load.P):.4g}); "
+            "сдвиньте точку внутрь или уменьшите eps")
     return q0_eff * inside.astype(float), q0_eff, float(eps)
 
 
@@ -724,13 +905,40 @@ def solve(problem: Problem, grid_n: int | None = None) -> Result:
     ``grid_n`` — программный override сетки ВЫВОДА (эквивалент
     ``problem.with_discretization(grid_n=…)``): на числа решения не
     влияет, меняет только фоновую сетку полей и фигур.
+
+    Деградации ФАКТОРИЗАЦИИ (:class:`~plate_solver.poisson.FactorizationWarning`:
+    масштабирование Якоби или спектральное псевдообращение вместо Холецкого)
+    перехватываются здесь и попадают в ``Result.warnings`` — иначе усечение
+    дискретного пространства осталось бы незамеченным в отчёте (аудит P02, P03).
+    Предупреждения при этом НЕ подавляются: они переиздаются как обычно.
     """
+    from .poisson import FactorizationWarning
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = _solve_routed(problem, grid_n)
+    factorization: list[str] = []
+    for w in caught:                                   # переиздать всё как было
+        warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+        if issubclass(w.category, FactorizationWarning):
+            text = str(w.message)
+            if text not in factorization:
+                factorization.append(text)
+    if factorization:
+        object.__setattr__(result, "warnings",
+                           tuple(result.warnings) + tuple(factorization))
+    return result
+
+
+def _solve_routed(problem: Problem, grid_n: int | None = None) -> Result:
+    """Маршрутизация постановки (тело :func:`solve` без перехвата предупреждений)."""
     if grid_n is not None:
         problem = problem.with_discretization(grid_n=grid_n)
     warnings: list[str] = []
     t0 = time.perf_counter()
     cfg = problem.to_config()
     dom = build_domain(problem.geometry)
+    _check_resolution(cfg, dom, warnings)                 # M ≥ N (v0.8.0)
     if problem.supports.points:                           # точечные опоры (v0.7.0)
         _check_support_points(problem, cfg, dom, warnings)
     if problem.model.h_expr is not None:                  # перем. толщина (v0.7.0)
@@ -1585,6 +1793,13 @@ def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
             f"ожидалось ≥ {MIN_ZONE_NODES} — увеличьте Q или пересечение, "
             f"см. {_SCHEMA_DOC}#plate2")
     cres = mor.solve()
+    if not cres.converged:                          # честность (аудит D04)
+        last = (float(cres.residual_history[-1]) if len(cres.residual_history)
+                else float("nan"))
+        warnings.append(
+            "contact.target = plate2: МОР пары не достиг tol за max_iter "
+            f"(последняя невязка {last:.2e}); увеличьте contact.max_iter "
+            "или уменьшите contact.beta")
     delta_repr = (float(np.min(gap_val[mor.mask])) if np.ndim(gap_val)
                   else float(gap_val))
     res = Result(problem=problem, config=cfg,
@@ -1766,6 +1981,11 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
     object.__setattr__(res, "_c_ref", nres.cw1)
     object.__setattr__(res, "_plate2_ref", solver2)
     object.__setattr__(res, "_cfg2_ref", cfg2)
+    if nres.cu1 is not None:
+        # мембранные усилия ПЕРВОЙ пластины после контакта пары (v0.8.0):
+        # снимок (cu, cv, cw) — источник N для forces_on_grid и σ (аудит O05)
+        object.__setattr__(res, "_karman_ref", SimpleNamespace(
+            cu=nres.cu1, cv=nres.cv1, cw=nres.cw1))
     return res
 
 
@@ -1798,14 +2018,26 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
     fm = zone_mask if zone_mask is not None else np.ones(q.x.size, dtype=bool)
     w_free_nodes = solver.w_at_quad(state_free)
     shape_fm = shape[fm] if np.ndim(shape) else shape
-    # Верхняя граница: level + shape ≥ w_free на основании ⇒ контакта нет.
-    level_hi = float(np.max(w_free_nodes[fm] - shape_fm)) * (1.0 + 1e-9) + 1e-30
+    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn_linear" else None
+    # Брекет строится по ТОЙ величине, по которой ставится условие непроникания:
+    # классика — срединный прогиб, уточнённая теория — ЛИЦЕВОЙ (u_c при r = 0).
+    # Раньше верхняя граница бралась по срединному прогибу и при ktn_linear
+    # могла оказаться НЕ уровнем непроникания (лицевая поверхность опускается
+    # ниже срединной): F(level_hi) > 0, и brentq падал сырым ValueError
+    # «f(a) and f(b) must have different signs» (аудит D03).
+    if ktn is None:
+        u_free_nodes = w_free_nodes
+    else:
+        lap_free = solver.lap_w_at_quad(state_free)
+        q_load = cfg.q0 if f_values is None else f_values
+        u_free_nodes = ktn.contact_displacement(w_free_nodes, lap_free, q_load, 0.0,
+                                                terms=_face_terms(cfg))
+    # Верхняя граница: level + shape ≥ u_free на основании ⇒ контакта нет.
+    level_hi = float(np.max(u_free_nodes[fm] - shape_fm)) * (1.0 + 1e-9) + 1e-30
     # Нижняя: почти касание в нижней точке штампа (min Δ = 1e-8 масштаба).
     scale = float(np.max(np.abs(w_free_nodes)))
     min_shape = float(np.min(shape_fm)) if np.ndim(shape) else shape
     level_lo = 1e-8 * scale - min_shape
-
-    ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn_linear" else None
     state = {"r": None, "res": None, "iters": 0, "calls": 0}
 
     def F(level: float) -> float:
@@ -1824,10 +2056,24 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
             f"contact.force: получено P = {P:g}, ожидалось 0 < P ≤ "
             f"{F_lo + P:.6g} (максимум ∫r при касании штампа), "
             f"см. {_SCHEMA_DOC}#contact")
-    level_star = brentq(F, level_lo, level_hi, xtol=1e-8 * scale)
+    try:
+        level_star = brentq(F, level_lo, level_hi, xtol=1e-8 * scale)
+    except ValueError as e:                         # брекет не охватывает корень
+        raise CaseError(
+            f"contact.force: не удалось локализовать уровень штампа для P = {P:g} "
+            f"({e}); проверьте, что 0 < P ≤ {F_lo + P:.6g} (максимум ∫r при "
+            f"касании) и что зона [contact.zone] задана верно, "
+            f"см. {_SCHEMA_DOC}#contact") from None
     F_star = F(level_star)                          # финальный прогон на level*
     cres = state["res"]
     force_total = F_star + P
+    if not cres.converged:                          # честность (аудит D04)
+        last = (float(cres.residual_history[-1]) if len(cres.residual_history)
+                else float("nan"))
+        warnings.append(
+            "contact.force: МОР на найденном уровне штампа не достиг tol за "
+            f"max_iter (последняя невязка {last:.2e}) — уровень и ∫r = P "
+            "получены на НЕсошедшемся решении; увеличьте contact.max_iter")
 
     delta_min = float(level_star + min_shape)
     w_nodes = cres.w_ktn_nodes if cres.w_ktn_nodes is not None else cres.w_nodes

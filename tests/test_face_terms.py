@@ -30,6 +30,8 @@ curvature+reaction 15.48      28   да (4220)
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -39,6 +41,8 @@ from plate_solver.contact import ContactMOR
 from plate_solver.faces import FaceTerms
 from plate_solver.ktn import KTNParams
 from plate_solver.plate import PlateBending
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 H = 0.12
 BUDGET = 6000
@@ -170,3 +174,28 @@ def test_case_schema_routes_face_terms(tmp_path):
     bad = {**case, "model": {"theory": "classic", "face_terms": {"load": False}}}
     with pytest.raises(CaseError, match="face_terms"):
         Problem.from_dict(bad)
+
+
+def test_exported_face_matches_mor_constraint_for_ktn_full():
+    """ВОРОТА СОГЛАСОВАННОСТИ (v0.8.0): экспортируемая w_bot = величина условия МОР.
+
+    Нелинейный тракт держал непроникание по УСЕЧЁННОЙ лицевой поверхности
+    (только кривизный член), а поля ``faces_on_grid`` считались по ПОЛНОМУ
+    канону с κ_q, κ_r: в зоне контакта экспортируемая ``w_bot`` отстояла от
+    препятствия на десятки зазоров (аудит O04/D09). После включения κ-членов в
+    условие обе величины — одна и та же: в зоне ``w_bot ≈ Δ`` с точностью шага
+    МОР, тогда как СРЕДИННЫЙ прогиб от Δ отличается на порядок больше.
+    """
+    from plate_solver.dispatch import solve
+    from plate_solver.problem import Problem
+
+    res = solve(Problem.from_toml(
+        _ROOT / "cases" / "ci" / "ktn_full_circle_clamped_contact.toml"))
+    _, w_bot, _ = res.faces_on_grid()
+    zone = res.contact.contact_zone
+    assert zone.any()
+    delta = float(res.delta)
+    err_face = float(np.nanmax(np.abs(w_bot[zone] - delta))) / delta
+    err_mid = float(np.nanmax(np.abs(res.w_grid[zone] - delta))) / delta
+    assert err_face < 1e-2, "экспортируемая лицевая не совпадает с условием МОР"
+    assert err_face < err_mid, "лицевая обязана лежать к препятствию ближе срединной"

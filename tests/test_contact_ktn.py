@@ -263,3 +263,35 @@ def test_two_plate_both_deformable_share_reaction():
     assert two.w2_max > 1e-3 * two.w1_max               # 2-я заметно откликнулась на r
     # прогиб 1-й под реакцией меньше её свободного значения (реакция размягчает)
     assert two.w1_max < s1.solve_uniform().w_max
+
+
+def test_stop_comp_routed_in_nonlinear_tract():
+    """ВОРОТА (v0.8.0): `contact.stop = "comp"` действует и в нелинейном тракте.
+
+    Прежде ключ молча игнорировался: нелинейный МОР всегда останавливался по
+    относительной невязке неподвижной точки, а безразмерная KKT-невязка
+    Синьорини (та же, что в классическом `ContactMOR`) не вычислялась вовсе
+    (аудит S07). Проверяется маршрутизация ключа и СМЫСЛ величины: история
+    невязок при "comp" — это KKT-невязка состояния, а не норма шага.
+    """
+    import dataclasses
+
+    cfg = _cfg(Q=48)
+    s = _solver(cfg)
+    free = s.solve(np.full(s.quad.x.size, cfg.q0))
+    gap = 0.5 * float(np.max(np.abs(free.w_nodes)))
+
+    cfg_dr = dataclasses.replace(cfg, stop="dr", max_iter=200, tol=1e-12)
+    cfg_cp = dataclasses.replace(cfg, stop="comp", max_iter=200, tol=1e-12)
+    r_dr = NonlinearContactMOR(s, cfg_dr, gap=gap, scheme="merged").solve()
+    r_cp = NonlinearContactMOR(s, cfg_cp, gap=gap, scheme="merged").solve()
+
+    # одна и та же неподвижная точка, разные МЕРЫ близости к ней
+    assert r_dr.n_contact == r_cp.n_contact > 0
+    assert r_cp.residual_history[-1] != r_dr.residual_history[-1]
+    # KKT-невязка безразмерна и неотрицательна
+    assert np.all(r_cp.residual_history >= 0.0)
+    # неизвестный критерий отвергается
+    bad = dataclasses.replace(cfg, stop="quadratic")
+    with pytest.raises(ValueError, match="stop"):
+        NonlinearContactMOR(s, bad, gap=gap, scheme="merged")

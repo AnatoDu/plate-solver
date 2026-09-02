@@ -24,9 +24,19 @@ r"""poisson.py — решатель одной задачи Дирихле −Δ
 Для «больших» квадратур (N·M > ``CACHE_NM_MAX`` = 5e7, т.е. кэш > ~0.8 ГБ;
 напр. круг Q=1024, p=10: N·M ≈ 1e8) кэш по умолчанию ВЫКЛЮЧЕН — поведение
 и арифметика прежние.
+
+Каскад факторизации (:class:`SPDFactorization`). Матрица Ритца ``A``
+положительно определена ТОЧНО, но при росте ``p`` на криволинейной границе или
+во входящем угле она вырождается численно (``cond(A) ~ 1e16…1e18`` уже при
+p ≈ 12 на L-форме) — тогда ``cho_factor`` бросает ``LinAlgError`` и законный
+случай падает сырой ошибкой LAPACK (причём платформозависимо: исход зависит от
+BLAS). Поэтому решение системы проходит ЧЕСТНЫЙ каскад с отчётностью, а не
+одиночный Холецкий; см. докстринг :class:`SPDFactorization`.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import scipy.linalg as sla
@@ -40,6 +50,153 @@ from .assembler import (
 
 # Порог включения кэша: N·M ≤ CACHE_NM_MAX (≈ 0.4 ГБ на одну матрицу float64).
 CACHE_NM_MAX = 50_000_000
+
+# Относительная отсечка спектра в псевдообращении: λ_k ≤ REL_CUTOFF·λ_max
+# считаются шумом округления (‖A‖·ε_машинное ≈ 2e-16·λ_max — отсечка на
+# полтора-два порядка выше пола округления сборки).
+REL_CUTOFF = 1e-12
+
+
+class FactorizationWarning(RuntimeWarning):
+    """Штатная факторизация Холецкого не удалась — включена ступень фолбэка.
+
+    Отдельная категория (а не голый ``RuntimeWarning``), чтобы вызывающий код
+    мог перехватить факт деградации:
+    ``warnings.catch_warnings(record=True)`` + фильтр по этой категории, либо
+    прямое чтение атрибутов ``fallback`` / ``n_dropped`` решателя.
+    """
+
+
+def _cho_try(A):
+    """Попытка Холецкого: фактор или ``None`` при потере положительной определённости."""
+    try:
+        return sla.cho_factor(A)
+    except (sla.LinAlgError, np.linalg.LinAlgError):
+        return None
+
+
+class SPDFactorization:
+    r"""Каскад решения симметричной системы ``A c = b`` с ЧЕСТНОЙ отчётностью.
+
+    Ступени (следующая включается только при отказе предыдущей):
+
+    1. **Холецкий** ``A = L Lᵀ``. Штатный путь; арифметика и результат
+       ТОЖДЕСТВЕННЫ прямому ``cho_solve(cho_factor(A), b)`` (бит-в-бит) —
+       свойство обязательное: замороженные эталоны не должны сдвигаться.
+    2. **Симметричное масштабирование Якоби** ``Ā = S A S``,
+       ``S = diag(1/\sqrt{A_{kk}})``, затем Холецкий по ``Ā``; решение
+       ``c = S\,\bar c``, ``\bar b = S b``. По теореме ван дер Слёйса такое
+       масштабирование минимизирует ``cond`` с точностью до множителя ``n``
+       среди всех диагональных, т.е. это наилучшая дешёвая попытка спасти
+       положительную определённость; иногда её хватает, когда вырождение —
+       следствие разброса масштабов строк, а не ранга.
+    3. **Спектральное псевдообращение**: ``A = V Λ Vᵀ`` (``eigh`` по
+       симметризованной ``½(A + Aᵀ)``), отбрасываются направления
+       ``λ_k ≤ τ·λ_max`` (``τ = REL_CUTOFF``), и
+       ``c = V_+ Λ_+^{-1} V_+^{ᵀ} b``.
+
+    ⚠️ Ступень 3 МЕНЯЕТ ДИСКРЕТНОЕ ПРОСТРАНСТВО. Решение ищется не во всём
+    ``span{ψ_k}``, а в его подпространстве, отвечающем ``span V_+`` в
+    координатах коэффициентов: ``n_dropped`` направлений с почти нулевой
+    энергией из аппроксимации исключены. Это не «то же решение, посчитанное
+    иначе», а решение УСЕЧЁННОЙ задачи. Отбрасывание ``λ ≤ τλ_max``
+    эквивалентно возмущению оператора нормы ``≤ τ‖A‖``; отбрасываемые
+    направления — почти-нулевые моды структуры ``ω·T`` (линейно зависимые с
+    точностью округления при большом ``p``), их вклад в энергию ниже пола
+    сборки, поэтому прогиб меняется в пределах процентов, а НЕ порядков.
+    Тем не менее факт усечения обязан быть виден вызывающему: он сообщается
+    предупреждением :class:`FactorizationWarning` и атрибутами.
+
+    Attributes
+    ----------
+    fallback : ``None`` (штатный Холецкий) | ``"jacobi"`` | ``"pinv"``.
+    n_dropped : число отсечённых спектральных направлений (0 вне ступени 3).
+    warning_message : текст для журнала вызывающего (``None`` на штатном пути).
+    """
+
+    def __init__(self, A, *, label: str = "A", rel_cutoff: float = REL_CUTOFF,
+                 warn: bool = True):
+        A = np.asarray(A, dtype=float)
+        if A.ndim != 2 or A.shape[0] != A.shape[1]:
+            raise ValueError("SPDFactorization: ожидалась квадратная матрица, "
+                             f"получено {A.shape}")
+        self.label = str(label)
+        self.rel_cutoff = float(rel_cutoff)
+        self.n = int(A.shape[0])
+        self.fallback: str | None = None
+        self.n_dropped: int = 0
+        self.warning_message: str | None = None
+        self._chol = None
+        self._scale = None
+        self._spec = None                       # (V_+, 1/λ_+) для ступени 3
+        # -- ступень 1: Холецкий (штатный путь, бит-в-бит как раньше) ------ #
+        chol = _cho_try(A)
+        if chol is not None:
+            self._chol = chol
+            return
+        if not np.all(np.isfinite(A)):
+            raise np.linalg.LinAlgError(
+                f"{self.label}: матрица содержит NaN/Inf — вырождение не "
+                "численное, а следствие некорректной постановки (нулевая "
+                "толщина, вырожденная геометрия, неопределённые параметры)")
+        # -- ступень 2: масштабирование Якоби ------------------------------ #
+        d = np.diag(A)
+        if np.all(d > 0.0):
+            s = 1.0 / np.sqrt(d)
+            chol = _cho_try((A * s) * s[:, None])
+            if chol is not None:
+                self._chol, self._scale = chol, s
+                self.fallback = "jacobi"
+                self._emit(warn, "Холецкий не прошёл; спасло симметричное "
+                                 "масштабирование Якоби (решение полное, "
+                                 "пространство не усечено)")
+                return
+        # -- ступень 3: спектральное псевдообращение ----------------------- #
+        lam, V = np.linalg.eigh(0.5 * (A + A.T))
+        lam_max = float(lam[-1])
+        if not lam_max > 0.0:
+            raise np.linalg.LinAlgError(
+                f"{self.label}: матрица не положительно полуопределена "
+                f"(λ_max = {lam_max:.3e} ≤ 0) — ошибка постановки, а не "
+                "обусловленности")
+        keep = lam > self.rel_cutoff * lam_max
+        self.n_dropped = int(self.n - np.count_nonzero(keep))
+        self._spec = (np.ascontiguousarray(V[:, keep]), 1.0 / lam[keep])
+        self.fallback = "pinv"
+        self._emit(warn, (
+            f"Холецкий и масштабирование Якоби не прошли; включено "
+            f"спектральное псевдообращение с отсечкой {self.rel_cutoff:.0e}·λ_max: "
+            f"отсечено {self.n_dropped} из {self.n} направлений — ДИСКРЕТНОЕ "
+            "ПРОСТРАНСТВО УСЕЧЕНО (решение спроецировано). Причина обычно — "
+            "избыточная степень базиса p при данной квадратуре; уменьшите p "
+            "либо увеличьте Q"))
+
+    def _emit(self, warn: bool, msg: str) -> None:
+        """Зафиксировать факт фолбэка: атрибут + предупреждение модуля warnings."""
+        self.warning_message = f"{self.label}: {msg}"
+        if warn:
+            warnings.warn(self.warning_message, FactorizationWarning, stacklevel=4)
+
+    @property
+    def degraded(self) -> bool:
+        """Сработал ли фолбэк (любая ступень, кроме штатного Холецкого)."""
+        return self.fallback is not None
+
+    @property
+    def cho(self):
+        """Фактор Холецкого ШТАТНОГО пути (``cho_factor``) либо ``None`` при фолбэке."""
+        return self._chol if self.fallback is None else None
+
+    def solve(self, b) -> np.ndarray:
+        """Решить ``A c = b`` той ступенью каскада, что удалась при построении."""
+        b = np.asarray(b, dtype=float)
+        if self._chol is not None:
+            if self._scale is None:
+                return sla.cho_solve(self._chol, b)          # штатный путь
+            s = self._scale
+            return sla.cho_solve(self._chol, b * s) * s
+        V, inv_lam = self._spec
+        return V @ ((V.T @ b) * inv_lam)
 
 
 class PoissonSolver:
@@ -72,12 +229,32 @@ class PoissonSolver:
         else:
             self.psiW = self._phi_quad = self._om_quad = None
             self.A = assemble_stiffness(domain, basis, quad)
-        self.chol = sla.cho_factor(self.A)          # факторизация ОДИН раз
+        # Факторизация ОДИН раз — каскадом (Холецкий → Якоби → псевдообращение).
+        # На штатном пути арифметика тождественна прежнему cho_factor/cho_solve.
+        self._fact = SPDFactorization(self.A, label="A (Ритц, −Δ)")
+        # cho-фактор оставлен публичным для совместимости; None, если Холецкий
+        # не прошёл (раньше в этом случае конструктор бросал LinAlgError).
+        self.chol = self._fact.cho
 
     @property
     def cond(self) -> float:
         """Число обусловленности cond(A) — диагностика устойчивости (NOTES.md §2)."""
         return float(np.linalg.cond(self.A))
+
+    @property
+    def fallback(self) -> str | None:
+        """Ступень каскада факторизации: ``None`` | ``"jacobi"`` | ``"pinv"``."""
+        return self._fact.fallback
+
+    @property
+    def n_dropped(self) -> int:
+        """Число отсечённых спектральных направлений (усечение пространства)."""
+        return self._fact.n_dropped
+
+    @property
+    def fallback_message(self) -> str | None:
+        """Текст о деградации факторизации для журнала вызывающего (или ``None``)."""
+        return self._fact.warning_message
 
     def solve(self, f_values) -> np.ndarray:
         """Коэффициенты ``c`` разложения Φ: решить ``A c = b(f)``.
@@ -89,7 +266,7 @@ class PoissonSolver:
             b = self.psiW @ np.asarray(f_values, dtype=float)
         else:
             b = assemble_load(self.domain, self.basis, self.quad, f_values)
-        return sla.cho_solve(self.chol, b)
+        return self._fact.solve(b)
 
     def load_vector(self, f_values) -> np.ndarray:
         """Вектор нагрузки ``b[k] = ∫ f ψ_k`` (для внешних правых частей, A4)."""
@@ -99,7 +276,7 @@ class PoissonSolver:
 
     def solve_b(self, b) -> np.ndarray:
         """Решение по ГОТОВОМУ вектору нагрузки (две подстановки Холецкого; A4)."""
-        return sla.cho_solve(self.chol, np.asarray(b, dtype=float))
+        return self._fact.solve(np.asarray(b, dtype=float))
 
     def evaluate(self, c, X, Y) -> np.ndarray:
         """Значения ``v = ω·Σ_k c_k T_k`` в точках (X, Y)."""
@@ -124,4 +301,10 @@ class PoissonSolver:
         return self.evaluate(self.solve(f_values), X, Y)
 
 
-__all__ = ["PoissonSolver", "CACHE_NM_MAX"]
+__all__ = [
+    "PoissonSolver",
+    "SPDFactorization",
+    "FactorizationWarning",
+    "CACHE_NM_MAX",
+    "REL_CUTOFF",
+]

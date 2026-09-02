@@ -189,3 +189,27 @@ def test_f0_2_pair_summary_has_w2_panel(tmp_path):
     res.save_fields(tmp_path / "fields.npz")
     res._save_figures(tmp_path, formats=("png",))
     assert (tmp_path / "two_plates_ring_contact_summary.png").is_file()
+
+
+def test_nonlinear_pair_exports_membrane_forces():
+    """ВОРОТА (v0.8.0): после НЕЛИНЕЙНОГО контакта пары экспортируются усилия N.
+
+    Результат пары не нёс коэффициентов (u, v), и `forces_on_grid` отдавал
+    только моменты и реакцию: σ обеих пластин выводились без мембранной части
+    `N/h` — вопреки обещанию API (аудит O05). Теперь на сошедшемся прогибе
+    делается по одному плоскому подшагу на пластину.
+    """
+    from pathlib import Path
+
+    from plate_solver.dispatch import solve
+    from plate_solver.export import forces_on_grid
+    from plate_solver.problem import Problem
+
+    root = Path(__file__).resolve().parents[1]
+    res = solve(Problem.from_toml(root / "cases" / "ci" / "ktn_full_two_plates_contact.toml"))
+    fields = forces_on_grid(res)
+    for key in ("Nx", "Ny", "Nxy"):
+        assert key in fields, f"после контакта пары нет {key}"
+        assert np.isfinite(fields[key][np.isfinite(fields[key])]).all()
+    # мембранная часть σ существует и конечна
+    assert np.isfinite(fields["Nx"]).any()

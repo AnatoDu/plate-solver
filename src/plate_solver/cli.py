@@ -222,6 +222,15 @@ def _parse_sweep(spec: str) -> tuple[str, list[int]]:
     if len(parts) != 3 or s <= 0 or b < a:
         raise CaseError(f"--sweep {spec!r}: ожидался формат КЛЮЧ=нач:кон:шаг, "
                         "шаг > 0, кон ≥ нач")
+    # Значения свипа обязаны удовлетворять тем же ограничениям схемы, что и
+    # ключи [discretization] (p ≥ 1, Q ≥ 2): раньше свип шёл В ОБХОД валидатора
+    # (p = 0 считался молча, p < 0 давал сырую трассировку; аудит S05).
+    low = 1 if key == "p" else 2
+    if a < low:
+        raise CaseError(
+            f"--sweep {spec!r}: получено {key} = {a}, ожидалось {key} ≥ {low} "
+            "(та же ограда, что у ключей [discretization]), "
+            "см. docs/CASE_SCHEMA.md#discretization")
     return key, list(range(a, b + 1, s))
 
 
@@ -321,6 +330,22 @@ def _apply_model_overrides(args_problem, args):
                         "--theory karman|ktn_full, см. docs/CASE_SCHEMA.md#model")
 
     problem = dataclasses.replace(args_problem, model=model)
+    # Смена теории обесценивает эталоны КИРХГОФА, записанные в case-файле
+    # (analytic | fem | cross_1d, а также mms для karman/ktn_linear): гейт
+    # сравнивал бы разные МОДЕЛИ. Верификация в этом прогоне отключается — с
+    # явной записью в stderr, чтобы «зелёный» вывод не выглядел сертификатом
+    # (v0.8.0; сама ограда — в _validate_cross, аудит S06/S09).
+    v = problem.verify
+    kirchhoff_ref = v.reference in ("analytic", "fem") or v.cross_1d
+    mms_wrong = v.reference == "mms" and model.theory in ("karman", "ktn_linear")
+    if theory is not None and model.theory != "classic" and (kirchhoff_ref or mms_wrong):
+        dropped = v.reference if v.reference != "none" else "cross_1d"
+        problem = dataclasses.replace(
+            problem, verify=dataclasses.replace(v, reference="none", cross_1d=False))
+        print(f"внимание: --theory {model.theory} — эталон '{dropped}' относится к "
+              "другой модели (решение Кирхгофа), верификация в этом прогоне "
+              "отключена; для информационной сверки — [verify] model_gap = true",
+              file=sys.stderr)
     _validate_cross(problem)                          # рамки karman (§1) после override
     return problem
 
@@ -592,7 +617,14 @@ def main_ladder(argv: list[str] | None = None) -> int:
                          f"{'PASS' if ok else 'FAIL'} |")
         except CaseError as e:
             ok = False
-            lines.append(f"| {case.name} | — | ошибка: {e} | FAIL |")
+            lines.append(f"| {case.name} | — | ошибка постановки: {e} | FAIL |")
+        except Exception as e:                    # noqa: BLE001 — лестница не должна
+            # обрушиваться на ОДНОМ случае: численный сбой (LinAlgError,
+            # переполнение ряда эталона) раньше уносил весь прогон без сводки
+            # (аудит S21). Фиксируем строкой FAIL и идём дальше.
+            ok = False
+            lines.append(f"| {case.name} | — | сбой расчёта: "
+                         f"{type(e).__name__}: {str(e)[:120]} | FAIL |")
         all_ok &= ok
         print(f"{case.name}: {'PASS' if ok else 'FAIL'}")
     prov = _provenance()

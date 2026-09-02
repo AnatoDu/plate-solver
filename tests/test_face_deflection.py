@@ -326,10 +326,10 @@ def test_pair_fields_second_plate_canon(tmp_path):
     assert need2 <= set(data.files)
     h2, nu2 = float(data["h"]), float(data["nu"])      # у пары h/ν общие (Config)
     k = 6.0 / h2**2
-    c = nu2 / (1.0 - nu2)
+    c = -nu2 / (1.0 - nu2)                             # обжатие СЖИМАЕТ (v0.8.0)
     r_fld = data["r"]
     in2 = np.isfinite(data["My2"])
-    # верх второй получает реакцию: sy_top2 = −6My2/h² + ν/(1−ν)·r
+    # верх второй получает реакцию: sy_top2 = −6My2/h² − ν/(1−ν)·r
     lhs = data["sy_top2"][in2]
     rhs = -k * data["My2"][in2] + c * r_fld[in2]
     scale = float(np.max(np.abs(rhs))) or 1.0

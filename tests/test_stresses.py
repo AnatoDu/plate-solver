@@ -23,7 +23,7 @@ from plate_solver.ladder import bending_moments, bending_moments_full
 def test_b0_full_formula_reduces_to_kernel():
     r"""B0: полный вид (11) при T = 0 редуцируется к ядру (по первоисточнику).
 
-    σ±ᵢᵢ = Tᵢᵢ/h ± 6Mᵢᵢ/h̊² + ν/(1−ν)·q±ₙ ∓ 3b·Tᵢᵢ/h̊²: мембранный член —
+    σ±ᵢᵢ = Tᵢᵢ/h ± 6Mᵢᵢ/h̊² − ν/(1−ν)·q±ₙ ∓ 3b·Tᵢᵢ/h̊²: мембранный член —
     с толщиной h, изгибный и b-поправка — с h̊² (h̊ — толщина с учётом
     обжатия); знак b-поправки ПРОТИВОПОЛОЖЕН изгибному. При T ≡ 0 обе
     T-поправки исчезают, h̊ → h — остаётся ядро stresses_faces.
@@ -31,9 +31,9 @@ def test_b0_full_formula_reduces_to_kernel():
     T, M, b, qn = sp.symbols("T M b q_n", real=True)
     h, h_ring, nu = sp.symbols("h h_ring nu", positive=True)
     for sign in (+1, -1):
-        full = (T / h + sign * 6 * M / h_ring**2 + nu / (1 - nu) * qn
+        full = (T / h + sign * 6 * M / h_ring**2 - nu / (1 - nu) * qn
                 - sign * 3 * b * T / h_ring**2)
-        kernel = sign * 6 * M / h**2 + nu / (1 - nu) * qn
+        kernel = sign * 6 * M / h**2 - nu / (1 - nu) * qn
         assert sp.simplify(full.subs(T, 0).subs(h_ring, h) - kernel) == 0
         # b-поправка — строго мембранной природы: при T=0 её нет при любом b
         assert sp.diff(full.subs(T, 0), b) == 0
@@ -44,7 +44,8 @@ def test_b3_t1_strip_signs_fixed_by_hand():
 
     Шарнирная полоса [0, L], q = const: w(x) = q x (L³ − 2Lx² + x³)/(24D),
     M(x) = −D w'' = q x (L − x)/2 ≥ 0. По таблице §19 (ось z вниз):
-    низ (z=+h/2) растянут: σ = +6M/h² > 0; верх сжат: −6M/h² (+ обжатие).
+    низ (z=+h/2) растянут: σ = +6M/h² > 0; верх сжат: −6M/h² (и обжатие
+    добавляет СЖАТИЕ: −ν/(1−ν)·q, v0.8.0 — см. stresses_faces).
     """
     x = sp.symbols("x", positive=True)
     L, q0, D, h, nu = 1.0, 4.0, 100.0, 0.06, 0.3
@@ -56,15 +57,44 @@ def test_b3_t1_strip_signs_fixed_by_hand():
     s = stresses_faces(Mx=Mv, My=nu * Mv, Mxy=np.zeros_like(Mv),
                        h=h, nu=nu, q_top=q0, q_bottom=0.0)
     manual_bot = +6.0 * Mv / h**2                          # низ: растяжение
-    manual_top = -6.0 * Mv / h**2 + nu / (1 - nu) * q0     # верх: сжатие + обжатие
+    manual_top = -6.0 * Mv / h**2 - nu / (1 - nu) * q0     # верх: сжатие + обжатие
     assert np.allclose(s["sx_bot"], manual_bot, rtol=0, atol=1e-12 * np.max(manual_bot))
     assert np.allclose(s["sx_top"], manual_top, rtol=0, atol=1e-12 * np.max(np.abs(manual_top)))
     assert np.all(s["sx_bot"] > 0.0)                       # физика: низ растянут
     assert np.all(s["sx_top"] < 0.0)                       # верх сжат (обжатие мало́)
 
 
+def test_compression_sign_from_hooke_constrained_layer():
+    """ГЛАВНЫЕ ВОРОТА ЗНАКА (v0.8.0): давление СЖИМАЕТ, а не растягивает.
+
+    Независимая от формулы кода проверка. Стеснённый слой: ``ε_x = ε_y = 0``,
+    на грань действует давление ``p`` (то есть ``σ_z = −p``). Обобщённый закон
+    Гука в трёх измерениях даёт тогда ``σ_x = σ_y = ν σ_z/(1−ν) = −ν p/(1−ν)``
+    — СЖАТИЕ. Именно этот вклад несёт член обжатия лицевых напряжений; до
+    v0.8.0 он входил со знаком «+» (давление давало растяжение).
+
+    Эталон выводится sympy ИЗ ЗАКОНА ГУКА, а не переписыванием формулы (11).
+    """
+    sx, sy, sz, eps_x, eps_y, E_, nu_, p_ = sp.symbols(
+        "sigma_x sigma_y sigma_z eps_x eps_y E nu p", real=True)
+    hooke = [sp.Eq(eps_x, (sx - nu_ * (sy + sz)) / E_),
+             sp.Eq(eps_y, (sy - nu_ * (sx + sz)) / E_)]
+    sol = sp.solve([h.subs({eps_x: 0, eps_y: 0}) for h in hooke], [sx, sy], dict=True)[0]
+    expected = sp.simplify(sol[sx].subs(sz, -p_))
+    assert sp.simplify(expected + nu_ * p_ / (1 - nu_)) == 0          # −νp/(1−ν)
+
+    nu_val, p_val = 0.3, 7.0
+    ref = float(expected.subs({nu_: nu_val, p_: p_val}))
+    zero = np.zeros(1)
+    s = stresses_faces(Mx=zero, My=zero, Mxy=zero, h=0.1, nu=nu_val,
+                       q_top=p_val, q_bottom=p_val)
+    assert float(s["sx_top"][0]) == pytest.approx(ref, rel=1e-14)
+    assert float(s["sx_bot"][0]) == pytest.approx(ref, rel=1e-14)
+    assert ref < 0.0                                                  # именно СЖАТИЕ
+
+
 def test_b3_t2_clamped_circle_center_identity():
-    """т2: σr в центре круга через stresses_faces ≡ 6M_центр/h² (+обжатие), 1e-12."""
+    """т2: σr в центре круга через stresses_faces ≡ 6M_центр/h² (−обжатие), 1e-12."""
     a, q0 = 1.0, 4.0
     cfg = Config(q0=q0, h=0.06, p=8, Q=128)
     cp = ClampedPlate.from_config(geometry.make_circle(a), cfg)
@@ -74,7 +104,7 @@ def test_b3_t2_clamped_circle_center_identity():
     s = stresses_faces(Mx, My, np.zeros(1), h=cfg.h, nu=cfg.nu,
                        q_top=q0, q_bottom=0.0)
     manual_bot = 6.0 * float(Mx[0]) / cfg.h**2
-    manual_top = -6.0 * float(Mx[0]) / cfg.h**2 + cfg.nu / (1 - cfg.nu) * q0
+    manual_top = -6.0 * float(Mx[0]) / cfg.h**2 - cfg.nu / (1 - cfg.nu) * q0
     assert float(s["sx_bot"][0]) == pytest.approx(manual_bot, rel=1e-12)
     assert float(s["sx_top"][0]) == pytest.approx(manual_top, rel=1e-12)
     # физика: центр — низ растянут (M > 0 в центре при q > 0)

@@ -328,7 +328,7 @@ def replot(result_dir, formats=("png",), dpi: int = 300,
         in_zone = zone[j, :] & keep
         if in_zone.any():
             ax2.plot(data["x"][in_zone], data["sy_bot"][j, :][in_zone], "rs",
-                     ms=5, label="зона контакта (+ν/(1−ν)·r)")
+                     ms=5, label="зона контакта (−ν/(1−ν)·r)")
         ax2.set_xlabel("x")
         ax2.set_ylabel("σy на нижней лицевой")
         ax2.grid(alpha=0.3)

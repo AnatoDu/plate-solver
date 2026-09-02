@@ -142,3 +142,36 @@ def test_cli_grid_flag(tmp_path):
     assert main([case, "--out", str(out3), "--grid", "24"]) == 0
     c = np.load(out3 / "fields.npz")
     assert c["w"].shape == (24, 24)
+
+
+def test_regrid_preserves_all_references():
+    """ВОРОТА (v0.8.0): regrid сохраняет ВСЕ непереносимые ссылки результата.
+
+    Перечень вёлся вручную и терял ``_karman_ref``: после регрида пропадали
+    мембранные усилия N и мембранная часть σ = N/h (аудит D02). Проверяется
+    и сам факт переноса, и наблюдаемое следствие — forces_on_grid отдаёт N.
+    """
+    import tomllib
+
+    from plate_solver.dispatch import _RESULT_REFS
+    from plate_solver.export import forces_on_grid
+
+    d = tomllib.loads((_ROOT / "cases" / "ci" / "karman_circle_clamped_immovable.toml")
+                      .read_text(encoding="utf-8"))
+    d.pop("output", None)
+    res = solve(Problem.from_dict(d))
+    assert getattr(res, "_karman_ref", None) is not None
+    before = forces_on_grid(res)
+    assert "Nx" in before and np.isfinite(before["Nx"][np.isfinite(before["Nx"])]).all()
+
+    r2 = res.regrid(24)
+    for ref in _RESULT_REFS:                       # перенесено всё, что было
+        assert hasattr(r2, ref) == hasattr(res, ref), ref
+    after = forces_on_grid(r2)
+    assert "Nx" in after, "после regrid мембранные усилия потеряны"
+    assert after["Nx"].shape == (24, 24)
+    # максимум |N| — величина решения, от сетки вывода не зависит (в пределах
+    # интерполяции на более грубую сетку)
+    m_before = float(np.nanmax(np.abs(before["Nx"])))
+    m_after = float(np.nanmax(np.abs(after["Nx"])))
+    assert m_after == pytest.approx(m_before, rel=0.15)

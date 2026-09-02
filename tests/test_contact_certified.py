@@ -70,9 +70,14 @@ def test_certified_contact_matrix_gates(tmp_path, bc):
     res = _solve(tmp_path, bc=bc, theory="classic")
     rep = verify_result(res)
     assert rep.ok                                        # гейт пройден
-    (row,) = rep.rows
+    # строка АБСОЛЮТНОГО эталона (к ней v0.8.0 добавляет ворота инвариантов
+    # контакта — r ≥ 0, проникание, существование зоны: см. test_ci_cases)
+    ref_rows = [r for r in rep.rows if "инвариант" not in r.name
+                and not r.name.startswith("инфо")]
+    (row,) = ref_rows
     assert row.gated and row.rel < 2e-2                  # абсолютный эталон, не инвариант
     assert "Кирхгоф" in row.name and bc in row.name
+    assert any("инвариант" in r.name and r.gated for r in rep.rows)
 
 
 def test_certified_contact_gap_out_of_range_rejected(tmp_path):

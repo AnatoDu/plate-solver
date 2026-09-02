@@ -44,12 +44,12 @@ from __future__ import annotations
 
 import numpy as np
 import numpy.polynomial.chebyshev as _cheb
-import scipy.linalg as sla
 import sympy as sp
 
 from .basis import ChebyshevBasis
 from .geometry import x as _sx
 from .geometry import y as _sy
+from .poisson import SPDFactorization
 from .quadrature import interior_nodes
 
 
@@ -295,16 +295,29 @@ class ClampedPlate:
             self.S = self.S + (kw / self.D) * 0.5 * (M + M.T)
         self.S = _add_point_supports(self.S, self.D, cfg, self.structure_at)
         # Факторизация ОДИН раз (A3.1): диагональное предобуславливание
-        # (нормировка на √S_kk, NOTES §2) + Холецкий; решение произвольной
-        # правой части далее — две треугольные подстановки (solve_rhs).
+        # (нормировка на √S_kk, NOTES §2) + КАСКАД (Холецкий → Якоби →
+        # спектральное псевдообращение, см. poisson.SPDFactorization); решение
+        # произвольной правой части далее — две треугольные подстановки
+        # (solve_rhs). Прежний МОЛЧАЛИВЫЙ переход на МНК заменён каскадом с
+        # отчётностью: атрибуты fallback / n_dropped и FactorizationWarning.
         self._d = 1.0 / np.sqrt(np.diag(self.S))
         Sn = (self.S * self._d).T * self._d       # diag(d) S diag(d)
-        try:
-            self._chol = sla.cho_factor(Sn * self.D)
-            self._Sn_D = None
-        except (sla.LinAlgError, np.linalg.LinAlgError):
-            self._chol = None                     # потеря ПД — путь МНК
-            self._Sn_D = Sn * self.D
+        self._fact = SPDFactorization(Sn * self.D, label="D·S (защемление)")
+
+    @property
+    def fallback(self) -> str | None:
+        """Ступень каскада факторизации: ``None`` | ``"jacobi"`` | ``"pinv"``."""
+        return self._fact.fallback
+
+    @property
+    def n_dropped(self) -> int:
+        """Число отсечённых спектральных направлений (усечение пространства)."""
+        return self._fact.n_dropped
+
+    @property
+    def fallback_message(self) -> str | None:
+        """Текст о деградации факторизации для журнала вызывающего (или ``None``)."""
+        return self._fact.warning_message
 
     @classmethod
     def from_config(cls, domain, cfg) -> ClampedPlate:
@@ -327,11 +340,7 @@ class ClampedPlate:
         что делает защемлённый решатель пригодным для итераций МОР (A3).
         """
         b = (self._psi * self._W) @ np.asarray(f_values, float)   # b[k] = ∫ f ψ_k
-        bn = b * self._d
-        if self._chol is not None:
-            cn = sla.cho_solve(self._chol, bn)
-        else:
-            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        cn = self._fact.solve(b * self._d)
         return cn * self._d                       # c = diag(d) ĉ
 
     def solve(self, q_values) -> np.ndarray:
@@ -345,11 +354,14 @@ class ClampedPlate:
 
     @staticmethod
     def _solve_spd(A, b) -> np.ndarray:
-        """Решение SPD-системы; при потере положительной определённости — лин. МНК."""
-        try:
-            return sla.cho_solve(sla.cho_factor(A), b)
-        except (sla.LinAlgError, np.linalg.LinAlgError):
-            return np.linalg.lstsq(A, b, rcond=1e-13)[0]
+        """Решение SPD-системы каскадом (Холецкий → Якоби → псевдообращение).
+
+        Одноразовый фасад :class:`~plate_solver.poisson.SPDFactorization`:
+        на штатном пути тождественен ``cho_solve(cho_factor(A), b)``, при
+        потере положительной определённости фолбэк не молчит (предупреждение
+        :class:`~plate_solver.poisson.FactorizationWarning`).
+        """
+        return SPDFactorization(A, label="SPD-система").solve(b)
 
     def deflection(self, c, X, Y) -> np.ndarray:
         """Прогиб ``w = ω²·Σ c_k T_k`` в точках (X, Y)."""
@@ -376,11 +388,7 @@ class ClampedPlate:
 
     def solve_from_b(self, b) -> np.ndarray:
         """Решить по ГОТОВОМУ вектору нагрузки (факторизация уже сделана; A4)."""
-        bn = np.asarray(b, float) * self._d
-        if self._chol is not None:
-            cn = sla.cho_solve(self._chol, bn)
-        else:
-            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        cn = self._fact.solve(np.asarray(b, float) * self._d)
         return cn * self._d
 
     def structure_at(self, X, Y) -> np.ndarray:
@@ -619,12 +627,23 @@ class MixedRectPlate:
         self._lap_psi = lap
         self._d = 1.0 / np.sqrt(np.diag(self.S))
         Sn = (self.S * self._d).T * self._d
-        try:
-            self._chol = sla.cho_factor(Sn * self.D)
-            self._Sn_D = None
-        except (sla.LinAlgError, np.linalg.LinAlgError):
-            self._chol = None
-            self._Sn_D = Sn * self.D
+        # каскад с отчётностью вместо молчаливого перехода на МНК (см. P02)
+        self._fact = SPDFactorization(Sn * self.D, label="D·S (смешанные КУ)")
+
+    @property
+    def fallback(self) -> str | None:
+        """Ступень каскада факторизации: ``None`` | ``"jacobi"`` | ``"pinv"``."""
+        return self._fact.fallback
+
+    @property
+    def n_dropped(self) -> int:
+        """Число отсечённых спектральных направлений (усечение пространства)."""
+        return self._fact.n_dropped
+
+    @property
+    def fallback_message(self) -> str | None:
+        """Текст о деградации факторизации для журнала вызывающего (или ``None``)."""
+        return self._fact.warning_message
 
     def _ev(self, name, X, Y):
         X = np.asarray(X, float)
@@ -642,11 +661,7 @@ class MixedRectPlate:
 
     def solve_rhs(self, f_values) -> np.ndarray:
         b = (self._psi * self._W) @ np.asarray(f_values, float)
-        bn = b * self._d
-        if self._chol is not None:
-            cn = sla.cho_solve(self._chol, bn)
-        else:
-            cn = np.linalg.lstsq(self._Sn_D, bn, rcond=1e-13)[0]
+        cn = self._fact.solve(b * self._d)
         return cn * self._d
 
     solve = solve_rhs

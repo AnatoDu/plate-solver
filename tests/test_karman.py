@@ -7,6 +7,9 @@ r"""Ворота теории Кармана (v0.4.0): переключател�
   ``ktn_full`` (:class:`NotImplementedError`), ограда рамок v0.4.0.
 * Gate L/M/K/B и воспроизводимые модульные тесты (Hencky, Тимошенко) —
   добавляются на вехах K1/K2 (числа эталонов — из ``benchmarks.py``).
+* Критерий останова Пикара (v0.8.0, аудит P08/P21): флаг ``converged``
+  сертифицирует ИСТИННУЮ невязку ``‖R‖/‖b‖`` (не норму шага после смешения
+  Андерсона), а ``karman_tol`` означает у Пикара и Ньютона одно и то же.
 
 Правило ``CLAUDE.md``: каждый численный метод — с тестом И мат.
 обоснованием; эталоны подобраны РАЗНОЙ математической природы
@@ -18,6 +21,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from plate_solver import benchmarks as bm
@@ -266,6 +270,95 @@ def test_karman_stiffer_than_classic():
     """Мембранное ужесточение: при умеренной нагрузке w_karman < w_classic."""
     r = _karman_circle(3.196, Q=140, n_load_steps=2, tol=1e-6, max_iter=200)
     assert r.w_max < r.w_max_classic                  # загиб «нагрузка–прогиб» вниз
+
+
+# --------------------------------------------------------------------------- #
+#  Критерий останова Пикара: ИСТИННАЯ невязка, а не норма шага (аудит P08/P21)
+# --------------------------------------------------------------------------- #
+def _picard_circle(P_bar, *, Q, p=12, n_load_steps=1, tol=1e-6, max_iter=300,
+                   relax=1.0, anderson=6):
+    r"""Круг под Пикаром с ЯВНО закреплёнными параметрами ускорителя.
+
+    Окно Андерсона ``m`` и недорелаксация ``θ`` задаются здесь ЯВНО (а не
+    берутся из дефолтов), чтобы тесты критерия останова не зависели от выбора
+    дефолтов и проверяли именно контракт «флаг ``converged`` ⇔ малость
+    невязки». Возвращает ``(решатель, результат, ‖R(c)‖/‖b‖)``, где невязка
+    вычислена НЕЗАВИСИМО от цикла — через :meth:`KarmanPlate._residual`.
+    """
+    cfg = Config(E=1.0, h=1.0, nu=0.3, a=1.0, q0=P_bar, p=p, Q=Q,
+                 n_load_steps=n_load_steps, karman_tol=tol,
+                 karman_max_iter=max_iter, karman_relax=relax)
+    cfg.karman_anderson = anderson
+    kp = KarmanPlate.from_config(make_circle(1.0), cfg, bc_type="clamped",
+                                 inplane_bc="immovable")
+    r = kp.solve_uniform()
+    b = kp._load_vector(np.full(kp.quad.x.size, P_bar))
+    res = float(np.linalg.norm(kp._residual(r.cw, b)) / np.linalg.norm(b))
+    return kp, r, res
+
+
+@pytest.mark.parametrize("P_bar,p,Q,ns,tol", [(20.0, 10, 128, 1, 1e-7),
+                                              (200.0, 8, 48, 4, 1e-6)])
+def test_picard_stop_certifies_true_residual(P_bar, p, Q, ns, tol):
+    r"""P08: ``converged`` Пикара означает малость ИСТИННОЙ невязки ``‖R‖/‖b‖``.
+
+    До v0.8.0 останов шёл по норме шага ПОСЛЕ смешения Андерсона — величине,
+    невязку не мажорирующей (см. ``test_picard_step_norm_is_not_residual`` и
+    Gate M ниже). Теперь критерий — ``‖R(c)‖/‖b‖ < karman_tol`` с
+    ``R(c) = (D S_bend + K_geo(N(c)))c − b``; проверяем это НЕЗАВИСИМЫМ
+    пересчётом невязки в возвращённой точке (``_residual`` заново собирает
+    ``N(c)``), а также что доложенное в ``history`` число — та же величина.
+    """
+    _, r, res = _picard_circle(P_bar, Q=Q, p=p, n_load_steps=ns, tol=tol)
+    assert r.converged
+    assert res <= tol                                  # сертификат останова
+    assert r.history[-1][2] == pytest.approx(res, rel=1e-6)   # [2] — та же невязка
+
+
+def test_picard_step_norm_is_not_residual():
+    r"""P21: норма шага ``‖Δw‖/‖w‖`` и невязка ``‖R‖/‖b‖`` — РАЗНЫЕ величины.
+
+    На круге ``P̄=200`` в точке останова невязка ``7.7e-7 ≤ tol = 1e-6``, тогда
+    как норма последнего шага ``8.2e-6`` — в 8 раз БОЛЬШЕ того же ``tol``
+    (отношение шаг/невязка ≈ 10). Отсюда: одно и то же число ``karman_tol``
+    под двумя критериями задаёт разную точность, и сравнивать с ним норму шага
+    (как делал Пикар до v0.8.0, тогда как Ньютон — невязку) — некорректно.
+    Шаг сохранён 4-м элементом ``history`` как диагностика.
+    """
+    tol = 1e-6
+    _, r, res = _picard_circle(200.0, Q=48, p=8, n_load_steps=4, tol=tol)
+    _frac, _it, rn_hist, dw_hist = r.history[-1]
+    assert r.converged and res <= tol and rn_hist <= tol
+    assert dw_hist > 3.0 * tol                         # факт 8.18e-6 (запас 2.7×)
+    assert dw_hist > 3.0 * rn_hist                     # факт: отношение ≈ 10.7
+
+
+@pytest.mark.big
+def test_gate_m_picard_no_false_convergence():
+    r"""P08 (сторож): на ступени Gate M ускорение Андерсона СТАГНИРУЕТ — и это видно.
+
+    Параметры ступени ``cases/ladder/karman_circle_hencky_limit.toml``
+    (``P̄=10³``, p=12, Q=80, 20 шагов по нагрузке, tol=1e-6, θ=1, m=6). Факт:
+    ускоренная итерация упирается в ``‖R‖/‖b‖ ≈ 1.3e-4`` (6 уровней из 20 не
+    добирают допуск), тогда как ДЕМПФИРОВАННЫЙ Пикар без ускорителя (m=0,
+    θ=0.5) даёт ``4.5e-7`` за 284 итерации. До v0.8.0 первый вариант сообщал
+    ``converged=True`` — ложная сходимость: норма шага после смешения гасилась
+    экстраполяцией (``7.7e-7``) при невязке на 2.5 порядка хуже допуска.
+
+    Тест сторожит ФАКТ дефекта ускорителя; если ускоритель починят (защита
+    от неудачной экстраполяции, иные дефолты m/θ), тест обязан быть
+    ПЕРЕФОРМУЛИРОВАН по факту новой сходимости, а не ослаблен.
+    """
+    tol = 1e-6
+    _, r_acc, res_acc = _picard_circle(1000.0, Q=80, p=12, n_load_steps=20,
+                                       tol=tol, max_iter=250, relax=1.0, anderson=6)
+    assert res_acc > 1e-5                     # факт 1.34e-4: допуск НЕ достигнут
+    assert not r_acc.converged                # ⇒ решатель обязан доложить отказ
+    # демпфированный Пикар (m=0, θ=0.5) сходится честно и даёт ТО ЖЕ решение
+    _, r_dmp, res_dmp = _picard_circle(1000.0, Q=80, p=12, n_load_steps=20,
+                                       tol=tol, max_iter=4000, relax=0.5, anderson=0)
+    assert r_dmp.converged and res_dmp <= tol
+    assert abs(r_acc.w_max - r_dmp.w_max) / r_dmp.w_max < 1e-3   # факт 4.5e-5
 
 
 # --------------------------------------------------------------------------- #
