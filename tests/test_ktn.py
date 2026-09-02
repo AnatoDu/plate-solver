@@ -127,6 +127,37 @@ def test_gate_ktn_effect_scales_as_h4():
         ratios[0.10], rel=1e-10)
 
 
+def test_gate_mor_step_normalized_by_face_operator():
+    """ГЛАВНЫЕ ВОРОТА: шаг МОР нормируется по ТОЙ поверхности, по которой стоит
+    условие Синьорини (v0.8.0).
+
+    Итерация МОР «щупает» лицевой прогиб ``u_c``, значит и оценка нормы
+    оператора (``gain``) обязана быть откликом ЛИЦЕВОЙ поверхности на единичную
+    нагрузку плюс диагональная податливость ``κ_r``. Прежде нормировка бралась
+    по СРЕДИННОМУ прогибу: на L-форме при h/a = 0.3 это занижало оценку в 1.6
+    раза (у входящего угла кривизна лицевой велика), т.е. фактический множитель
+    сжатия выходил за границу теоремы 4 при формально допустимом β.
+
+    Классический тракт (``ktn=None``) нормируется как прежде — бит-в-бит.
+    """
+    dom = geometry.make_L(1.0, 0.5)
+    cfg = Config(nu=0.3, q0=4.0, h=0.3, p=8, Q=36, beta=1.2, max_iter=10, tol=1e-12)
+    pb = PlateBending.from_config(dom, cfg)
+    st = pb.solve(np.ones(pb.quad.x.size))
+    w_unit, lap_unit = pb.w_at_quad(st), pb.lap_w_at_quad(st)
+    gain_mid = float(np.max(np.abs(w_unit)))
+    kp = KTNParams.from_config(cfg)
+    face_unit = kp.contact_displacement(w_unit, lap_unit, 0.0, 0.0)
+    expected = float(np.max(np.abs(face_unit))) + kp.kappa_r
+
+    mor = ContactMOR(pb, cfg, gap=1e-4, ktn=kp)
+    assert mor.gain == pytest.approx(expected, rel=1e-14)
+    assert mor.beta_eff * mor.gain == pytest.approx(cfg.beta, rel=1e-14)
+    assert mor.gain > 1.5 * gain_mid                  # различие существенно при h/a = 0.3
+    # классика: нормировка по срединному прогибу, бит-в-бит как прежде
+    assert ContactMOR(pb, cfg, gap=1e-4).gain == gain_mid
+
+
 def test_ktn_effect_vanishes_for_thin_plate():
     """Редукция: при вчетверо меньшей толщине эффект КТН падает на порядки.
 

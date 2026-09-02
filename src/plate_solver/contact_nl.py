@@ -34,6 +34,7 @@ import numpy as np
 
 from .config import Config
 from .diagnostics import contact_components
+from .faces import FaceParams
 from .ktn_solver import KTNSolver
 
 
@@ -116,7 +117,7 @@ class NonlinearContactMOR:
 
     def __init__(self, solver: KTNSolver, cfg: Config, *, gap,
                  foundation_mask=None, scheme: str | None = None,
-                 gain_mode: str = "secant", f_values=None):
+                 gain_mode: str = "secant", f_values=None, face_terms=None):
         self.solver = solver
         self.cfg = cfg
         self.scheme = scheme if scheme is not None else getattr(cfg, "contact_scheme", "nested")
@@ -148,29 +149,70 @@ class NonlinearContactMOR:
         self.gain_mode = gain_mode
         q0 = float(cfg.q0)
         # нагрузка: поле f(x, y) в узлах квадратуры (v0.7.0: гауссова/expr)
-        # либо равномерная cfg.q0; нормировка усиления остаётся по амплитуде
-        # q0 = cfg.q0 (свойство ОПЕРАТОРА, семантика как у классического МОР)
+        # либо равномерная cfg.q0
         self._f_load = (np.full(q.x.size, q0) if f_values is None
                         else np.asarray(f_values, float))
-        self._free = solver.solve(self._f_load)
-        if q0 == 0.0:
+        self._free = solver.solve(self._f_load)          # тёплый старт МОР
+        # переключатели слагаемых лицевого условия (лестница слагаемых, v0.8.0)
+        self.face_terms = face_terms
+        use_curv = face_terms is None or face_terms.curvature
+        use_q = face_terms is None or face_terms.load
+        use_r = face_terms is None or face_terms.reaction
+        self._c_curv = solver.params.face_curv_coeff if use_curv else 0.0  # §4.1
+        # алгебраические члены формулы (9): κ_q·q⁺ и κ_r·r, масштаб — теорией
+        # (в classic/karman нули по построению). До v0.8.0 они были опущены,
+        # из-за чего экспортируемая лицевая w_bot не совпадала с величиной,
+        # по которой МОР держал условие непроникания (аудит O04).
+        kq, kr = solver.params.face_kappas(FaceParams.from_config(cfg))
+        self._kappa_q = kq if use_q else 0.0
+        self._kappa_r = kr if use_r else 0.0
+        # УСИЛЕНИЕ ОПЕРАТОРА (β_eff = β/gain, теорема 4). Норма ‖G‖ — свойство
+        # ОПЕРАТОРА, поэтому отклик берётся на РАВНОМЕРНУЮ опорную нагрузку
+        # амплитуды |q0| (как в NonlinearTwoPlateMOR), а не на фактическое поле:
+        # для локализованной нагрузки (гауссиана, точечное пятно) отклик мал, и
+        # нормировка «по полю» занижала ‖G‖ в разы ⇒ β_eff‖G‖ ≫ 2 и расходимость
+        # (аудит K01). Отклик берётся по ЛИЦЕВОЙ поверхности + диагональ κ_r —
+        # по той же величине, по которой ставится условие Синьорини.
+        ref_amp = max(abs(q0), float(np.max(np.abs(self._f_load))))
+        if ref_amp == 0.0:
             self.gain = 1.0
-        elif gain_mode == "linear":
-            self.gain = self._free.w_max_classic / q0
         else:
-            self.gain = self._free.w_max / q0
+            ref = (self._free if f_values is None and q0 > 0.0
+                   else solver.solve(np.full(q.x.size, ref_amp)))
+            cw_ref = ref.cw if gain_mode == "secant" else ref.cw_classic
+            if cw_ref is None:                              # старый результат без cw_classic
+                base = ref.w_max_classic / ref_amp
+            else:
+                w_ref = cw_ref @ solver._psi
+                if self._c_curv != 0.0:
+                    w_ref = w_ref + self._c_curv * (cw_ref @ solver._lap_psi)
+                base = float(np.max(np.abs(w_ref))) / ref_amp
+            self.gain = base + self._kappa_r
         self.beta_eff = cfg.beta / self.gain
         self.max_iter = int(cfg.max_iter)
         self.tol = float(cfg.tol)
-        self._c_curv = solver.params.face_curv_coeff        # масштаб теории (§4.1)
+        #: несходимость ВНУТРЕННЕГО решателя КТН (вложенная схема) — в флаг результата
+        self._inner_failed = not bool(getattr(self._free, "converged", True))
 
-    def _face_deflection(self, cw) -> np.ndarray:
-        r"""Лицевой прогиб ``u_c = w + (h_c²−h_*²)Δw`` в узлах (§4.1, масштаб теории)."""
+    def _face_deflection(self, cw, r=None) -> np.ndarray:
+        r"""Лицевой прогиб ``u_c = w + c_curv·Δw − κ_q·q⁺ − κ_r·r`` в узлах.
+
+        Полная формула (9) (§4.1, NOTES §21.1); коэффициенты масштабированы
+        теорией: для ``classic``/``karman`` все три нуля ⇒ ``u_c = w``
+        (контакт по срединной поверхности). ``r`` — текущая реакция; ``None``
+        (или выключенный флаг) — член реакции не входит.
+        """
         w = cw @ self.solver._psi
-        if self._c_curv == 0.0:
+        if self._c_curv == 0.0 and self._kappa_q == 0.0 and self._kappa_r == 0.0:
             return w                                        # classic/karman: u_c = w
-        lap_w = cw @ self.solver._lap_psi                   # Δw в узлах (кэш структуры)
-        return w + self._c_curv * lap_w
+        out = w
+        if self._c_curv != 0.0:
+            out = out + self._c_curv * (cw @ self.solver._lap_psi)   # Δw из кэша структуры
+        if self._kappa_q != 0.0:
+            out = out - self._kappa_q * self._f_load
+        if self._kappa_r != 0.0 and r is not None:
+            out = out - self._kappa_r * np.asarray(r, float)
+        return out
 
     def solve(self) -> NonlinearContactResult:
         """Решить нелинейную контактную задачу выбранной схемой (§4.2)."""
@@ -195,8 +237,10 @@ class NonlinearContactMOR:
             # q0−r меняется слабо между шагами МОР ⇒ внутренняя итерация дёшева.
             res_k = solver.solve(self._f_load - r, c0=cw)   # полный нелинейный КТН
             n_inner += res_k.n_iter
+            if not getattr(res_k, "converged", True):
+                self._inner_failed = True                   # честность флага (аудит K05)
             cw = res_k.cw
-            u_c = self._face_deflection(cw)
+            u_c = self._face_deflection(cw, r)
             g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
             g[self.fmask] = (r[self.fmask]
                              + self.beta_eff * (u_c[self.fmask] - self._gap_f))
@@ -231,9 +275,11 @@ class NonlinearContactMOR:
                 break
         # финальное состояние на сошедшейся реакции
         res_k = solver.solve(self._f_load - r, c0=cw)
+        if not getattr(res_k, "converged", True):
+            self._inner_failed = True
         cw = res_k.cw
         w = res_k.w_nodes
-        u_c = self._face_deflection(cw)
+        u_c = self._face_deflection(cw, r)
         return self._package(r, w, u_c, cw, it, converged, hist, n_inner)
 
     # -- совмещённая схема (рабочая, предмет T7; прил. C.2) -------------- #
@@ -261,7 +307,7 @@ class NonlinearContactMOR:
             w_old = c @ solver._psi
             b_level = solver._load_vector(self._f_load - r)  # нагрузка при текущей реакции
             c, _forces = solver._picard_map(c, b_level, theta)  # ОДИН шаг Пикара
-            u_c = self._face_deflection(c)
+            u_c = self._face_deflection(c, r)
             g = r.copy()                                    # F(r): проекц. фикс. шаг МОР
             g[self.fmask] = (r[self.fmask]
                              + self.beta_eff * (u_c[self.fmask] - self._gap_f))
@@ -298,11 +344,14 @@ class NonlinearContactMOR:
                 converged = True
                 break
         w = c @ solver._psi
-        u_c = self._face_deflection(c)
+        u_c = self._face_deflection(c, r)
         return self._package(r, w, u_c, c, it, converged, hist, it)
 
     def _package(self, r, w, u_c, cw, iters, converged, hist, n_inner):
         q = self.solver.quad
+        # честность флага: несходимость ВНУТРЕННЕГО нелинейного решателя (или
+        # свободного решения) снимает признак сходимости всей задачи (аудит K05)
+        converged = bool(converged and not self._inner_failed)
         contact = r > 0.0
         peak = int(np.argmax(r)) if r.size else 0
         # мембрана сошедшегося состояния: один дешёвый плоский подшаг от

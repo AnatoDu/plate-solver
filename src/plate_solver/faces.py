@@ -23,10 +23,12 @@ r"""faces.py — лицевые величины уточнённой теори
 коэффициенты ``c_curv, κ_q, κ_r`` берутся из :class:`~plate_solver.ktn.KTNParams`
 (мост :meth:`FaceParams.ktn`); тождество коэффициентов проверяется тестом.
 
-Знак члена обжатия ``h_*²Δw`` в напряжениях ПРОТИВОПОЛОЖЕН на верхней и нижней
-гранях — это и есть подпись КТН: ``Δw = −(M_x+M_y)/(D(1+ν))`` меняется по
-области даже под РАВНОМЕРНОЙ нагрузкой, поэтому лицевые напряжения КТН
-отличаются от классических, тогда как срединный прогиб не меняется (Δq = 0).
+Подпись КТН в НАПРЯЖЕНИЯХ — член поперечного обжатия ``ν/(1−ν)·q_n``
+(канон §19): он входит с РАЗНЫМИ ``q_n`` на верхней (внешняя нагрузка) и нижней
+(реакция основания) гранях, поэтому лицевые напряжения различаются даже там,
+где изгибные моменты совпадают. Члена ``h_*²Δw`` в напряжениях НЕТ — он
+относится к КИНЕМАТИКЕ (лицевой прогиб, :meth:`FaceParams.face_deflection`);
+в v0.7.0 и ранее докстринг ошибочно приписывал его напряжениям.
 """
 
 from __future__ import annotations
@@ -34,6 +36,44 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class FaceTerms:
+    r"""Переключатели слагаемых лицевого условия (ЛЕСТНИЦА СЛАГАЕМЫХ, v0.8.0).
+
+    Лицевой прогиб уточнённой теории — сумма трёх вкладов
+    (NOTES §21.1, опубликованная формула (9)):
+
+    .. math:: u_c = w + \underbrace{c_{curv}\,\Delta w}_{curvature}
+              - \underbrace{\kappa_q q^+}_{load} - \underbrace{\kappa_r r}_{reaction}
+
+    Флаги позволяют включать их ПО ОТДЕЛЬНОСТИ и тем самым измерять вклад
+    каждого механизма (сдвиг/обжатие кривизной, обжатие нагрузкой, обжатие
+    реакцией) в одном и том же тракте решателя. Все три по умолчанию включены
+    ⇒ поведение штатное. Ключи case-схемы — ``[model.face_terms]``; допустимы
+    ТОЛЬКО для уточнённых теорий (в ``classic``/``karman`` слагаемых нет
+    по построению).
+    """
+
+    curvature: bool = True
+    load: bool = True
+    reaction: bool = True
+
+    @property
+    def all_on(self) -> bool:
+        """Все слагаемые включены (штатный путь, арифметика прежняя)."""
+        return self.curvature and self.load and self.reaction
+
+    @property
+    def any_on(self) -> bool:
+        """Хотя бы одно слагаемое включено (иначе лицевая ≡ срединная)."""
+        return self.curvature or self.load or self.reaction
+
+    def as_dict(self) -> dict:
+        """Словарь для провенанса result.json."""
+        return {"curvature": self.curvature, "load": self.load,
+                "reaction": self.reaction}
 
 
 @dataclass(frozen=True)
@@ -81,6 +121,17 @@ class FaceParams:
         """Коэффициент кривизны при Δw: ``h_c² − h_*² = 2h_c² − h_ψ²`` (§6.1)."""
         return self.h_c_sq - self.h_star_sq
 
+    # -- κ-податливости лицевого условия (формула (9)) ------------------- #
+    @property
+    def kappa_q(self) -> float:
+        """``κ_q > 0`` — податливость лицевой по нагрузке [м/Па] (мост к ``ktn.py``)."""
+        return self.ktn().kappa_q
+
+    @property
+    def kappa_r(self) -> float:
+        """``κ_r > 0`` — податливость лицевой по реакции [м/Па] (мост к ``ktn.py``)."""
+        return self.ktn().kappa_r
+
     # -- мост к выверенным коэффициентам ktn_linear --------------------- #
     def ktn(self):
         """:class:`~plate_solver.ktn.KTNParams` с теми же (E, ν, h).
@@ -119,7 +170,8 @@ class FaceParams:
         return out
 
     # -- лицевой прогиб (§6.1) ------------------------------------------ #
-    def face_deflection(self, w, lap_w, q_n, r=0.0, *, surface: str = "bottom") -> np.ndarray:
+    def face_deflection(self, w, lap_w, q_n, r=0.0, *, surface: str = "bottom",
+                        terms: FaceTerms | None = None) -> np.ndarray:
         r"""Прогиб лицевой поверхности ``u_c`` (§6.1, КАНОН пакета NOTES §21.1).
 
         .. math:: u_c = w + (h_c^2 - h_*^2)\,\Delta w - \kappa_q q_n - \kappa_r D r,
@@ -136,12 +188,13 @@ class FaceParams:
         if surface == "top":
             return w.copy()
         if surface == "bottom":
-            return self.ktn().contact_displacement(w, lap_w, q_n, r)
+            return self.ktn().contact_displacement(w, lap_w, q_n, r, terms=terms)
         raise ValueError(f"surface: ожидалось 'bottom' | 'top', получено {surface!r}")
 
-    def mid_corrected(self, w, lap_w, q_n, r=0.0) -> np.ndarray:
+    def mid_corrected(self, w, lap_w, q_n, r=0.0, *,
+                      terms: FaceTerms | None = None) -> np.ndarray:
         """КТН-поправленный СРЕДИННЫЙ прогиб (для w_max; §6.1, ``corrected_deflection``)."""
-        return self.ktn().corrected_deflection(w, lap_w, q_n, r)
+        return self.ktn().corrected_deflection(w, lap_w, q_n, r, terms=terms)
 
 
 def membrane_face_stress(Nx, Ny, Nxy, h: float) -> dict:
@@ -183,4 +236,4 @@ def face_stresses(Mx, My, Mxy, *, h: float, nu: float, q_top=0.0, q_bottom=0.0,
     return s
 
 
-__all__ = ["FaceParams", "face_stresses", "membrane_face_stress"]
+__all__ = ["FaceParams", "FaceTerms", "face_stresses", "membrane_face_stress"]

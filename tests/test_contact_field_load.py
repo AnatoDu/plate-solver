@@ -1,8 +1,11 @@
 r"""Ворота ПОЛЕВОЙ нагрузки (gaussian/expr) в контакте (v0.7.0).
 
 МОР — свойство ОПЕРАТОРА (теорема 4: β_eff·‖G‖ < 2), нагрузка меняет лишь
-правую часть; нормировка усиления остаётся по амплитуде cfg.q0 (семантика
-классического МОР). Ворота:
+правую часть. Отсюда и нормировка усиления: отклик на РАВНОМЕРНУЮ опорную
+нагрузку амплитуды |q0| (v0.8.0), а не на фактическое поле — для локализованной
+нагрузки отклик мал, и нормировка «по полю» занижала ‖G‖ в разы (при σ = 0.15
+в 6.6 раза), выводя шаг за границу сходимости: итерация уходила к r ≡ 0
+и контакт «терялся». Ворота:
 
 * классический контакт + gaussian: ВЗАИМНЫЙ сертификат КР↔RFM (кирпич
   fd_contact принимает поле q(x, y); измерено rel(w)=2.0e-4, rel(∫r)=1.1e-3);
@@ -72,6 +75,40 @@ def _nl_case(theory="karman", **contact):
     }
 
 
+def test_gain_is_operator_property_not_load_shape():
+    """ГЛАВНЫЕ ВОРОТА (v0.8.0): усиление ‖G‖ не зависит от ФОРМЫ нагрузки.
+
+    Для узкой гауссианы отклик на само поле мал, и нормировка «по полю»
+    занижала оценку нормы оператора в разы ⇒ β_eff·‖G‖ ≫ 2 ⇒ расходимость
+    к r ≡ 0 при формально допустимом β. Проверяем: (i) gain одинаков для трёх
+    ширин пятна; (ii) контакт находится во всех трёх случаях.
+    """
+    from plate_solver.config import Config
+    from plate_solver.contact_nl import NonlinearContactMOR
+    from plate_solver.geometry import make_circle
+    from plate_solver.ktn_solver import KTNSolver
+
+    cfg = Config(E=1e5, nu=0.3, h=0.2, q0=4.0, p=8, Q=48, beta=1.2, max_iter=400,
+                 tol=1e-7, karman_relax=0.7, karman_max_iter=100, karman_tol=1e-10,
+                 grid_n=20)
+    solver = KTNSolver.from_theory_name(make_circle(1.0), cfg, "karman")
+    x, y = solver.quad.x, solver.quad.y
+    gains, contacts = [], []
+    for sigma in (0.5, 0.25, 0.15):
+        f = cfg.q0 * np.exp(-(x**2 + y**2) / (2 * sigma**2))
+        free = solver.solve(f)
+        gap = 0.55 * float(np.max(np.abs(free.w_nodes)))
+        mor = NonlinearContactMOR(solver, cfg, gap=gap, scheme="merged", f_values=f)
+        gains.append(mor.gain)
+        res = mor.solve()
+        contacts.append(res.n_contact)
+        # непроникание выполняется с точностью шага МОР
+        assert res.w_max <= gap * 1.02
+    assert gains[1] == pytest.approx(gains[0], rel=1e-12)   # свойство оператора
+    assert gains[2] == pytest.approx(gains[0], rel=1e-12)
+    assert min(contacts) > 0, "контакт потерян при узком пятне (нормировка ‖G‖)"
+
+
 def test_nl_gaussian_big_gap_reduction():
     """R1: большой зазор ⇒ r ≡ 0, w = свободному нелинейному (машинно)."""
     d = _nl_case(gap=1.0)
@@ -101,12 +138,18 @@ def test_nl_gaussian_nested_equals_merged(theory):
 
 
 def test_nl_gaussian_linear_limit_vs_classic_contact():
-    """Малая нагрузка: karman-контакт → классический контакт (КР-сертиф.).
+    """Малая нагрузка: karman-контакт → классический контакт (КР-сертифицирован).
 
-    Измерено rel(w)=5.0e-3 (зона груба на p=8), rel(∫r)=7.9e-5.
+    Оба тракта доводятся ДО СХОДИМОСТИ (нелинейный: 4615 итераций при tol 1e-9),
+    и тогда совпадение машинно-качественное: rel(w) = 1.3e-5, rel(∫r) = 5.2e-6,
+    зона совпадает узел-в-узел. Прежние допуски (2e-2 и 1e-3) сравнивали
+    НЕсошедшийся нелинейный результат (2000 итераций, KKT-невязка 5e-2) с
+    сошедшимся классическим — v0.8.0 ворота ужесточены на два порядка.
     """
     lk = _nl_case(gap_factor=0.55)
     lk["load"]["q0"] = 0.04
+    lk["contact"]["max_iter"] = 10000
+    lk["contact"]["tol"] = 1.0e-9
     lc = copy.deepcopy(lk)
     lc["model"]["theory"] = "classic"
     lc["contact"] = {"enabled": True, "gap_factor": 0.55, "max_iter": 20000,
@@ -115,8 +158,10 @@ def test_nl_gaussian_linear_limit_vs_classic_contact():
     rc = dispatch.solve(Problem.from_dict(lc))
     tk = float(np.sum(rk.contact.r_nodes * rk._plate.quad.w))
     tc = float(np.sum(rc.contact.r_nodes * rc._plate.quad.w))
-    assert abs(rk.w_max - rc.w_max) / rc.w_max < 2e-2
-    assert abs(tk - tc) / tc < 1e-3
+    assert rk.scalars()["converged"] and rc.scalars()["converged"]
+    assert rk.scalars()["n_contact"] == rc.scalars()["n_contact"] > 0
+    assert abs(rk.w_max - rc.w_max) / rc.w_max < 1e-4
+    assert abs(tk - tc) / tc < 1e-4
 
 
 def test_nl_expr_load_contact_runs():

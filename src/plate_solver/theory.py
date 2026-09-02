@@ -81,6 +81,23 @@ class TheoryParams:
         """
         return self.h_c_sq - self.h_star_sq
 
+    def face_kappas(self, face_params) -> tuple[float, float]:
+        r"""``(κ_q, κ_r)`` лицевого условия, МАСШТАБИРОВАННЫЕ уточнением теории.
+
+        Алгебраические члены формулы (9) существуют только в уточнённых
+        теориях: в ``classic``/``karman`` уточнение выключено (``h_*² = 0``) и
+        обе податливости — нули ПО ПОСТРОЕНИЮ. При непрерывном морфинге
+        (:meth:`with_refinement_scale`) они масштабируются тем же множителем
+        ``α``, что и параметры толщины, — уточнение включается/выключается
+        целиком, а не по частям.
+
+        ``face_params`` — :class:`~plate_solver.faces.FaceParams` с физическими
+        ``(E, ν, h)`` задачи (источник κ; см. ``ktn.py``).
+        """
+        ref = face_params.h_star_sq
+        alpha = (self.h_star_sq / ref) if ref > 0.0 else 0.0
+        return alpha * face_params.kappa_q, alpha * face_params.kappa_r
+
     def with_refinement_scale(self, alpha: float) -> TheoryParams:
         r"""Непрерывный морфинг (§3.5): ``h_ψ²→α h_ψ²``, ``h_*²→α h_*²``, α∈[0,1].
 

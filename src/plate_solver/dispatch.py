@@ -823,6 +823,22 @@ def _uniform(cfg: Config, quad) -> np.ndarray:
     return np.full(quad.x.size, float(cfg.q0))
 
 
+def _face_terms(cfg):
+    """``FaceTerms`` из конфига (``None`` — все слагаемые включены, штатный путь).
+
+    Ключи схемы ``[model.face_terms]`` (v0.8.0): лестница слагаемых лицевого
+    условия уточнённой теории — позволяет измерить вклад кривизны, нагрузки и
+    реакции по отдельности В ТОМ ЖЕ тракте решателя.
+    """
+    ft = getattr(cfg, "face_terms", None)
+    if ft is None:
+        return None
+    from .faces import FaceTerms
+
+    curv, load, reaction = ft
+    return FaceTerms(curvature=bool(curv), load=bool(load), reaction=bool(reaction))
+
+
 def _grid_fields(dom, cfg: Config, evaluate) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Фоновая сетка grid_n × grid_n: (Xg, Yg, w_grid с NaN вне Ω)."""
     x0, x1, y0, y1 = dom.bbox
@@ -906,8 +922,10 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
             # ktn_linear при защемлении: кривизна из кэша Δ(ω²Φ) (A3.3)
             lap_w = solver.laplacian_at_quad(c)
             kp = KTNParams.from_config(cfg)
-            w_ktn = kp.corrected_deflection(w_nodes, lap_w, cfg.q0,
-                                            np.zeros(q.x.size))
+            # q⁺ — ЛОКАЛЬНОЕ поле нагрузки (для равномерной ≡ cfg.q0 бит-точно):
+            # формула (9) содержит давление в точке, а не амплитуду (v0.8.0)
+            w_ktn = kp.corrected_deflection(w_nodes, lap_w, f, np.zeros(q.x.size),
+                                            terms=_face_terms(cfg))
     else:
         cM, cw = (solver.solve(f) if line_b is None
                   else solver.solve_from_b(line_b))
@@ -920,8 +938,8 @@ def _solve_bending(problem, cfg, dom, solver, f_values, warnings) -> Result:
             # изгиб без контакта: corrected_deflection при r = 0
             lap_w = -solver.poisson.evaluate_at_quad(cM) / solver.D
             kp = KTNParams.from_config(cfg)
-            w_ktn = kp.corrected_deflection(w_nodes, lap_w, cfg.q0,
-                                            np.zeros(q.x.size))
+            w_ktn = kp.corrected_deflection(w_nodes, lap_w, f, np.zeros(q.x.size),
+                                            terms=_face_terms(cfg))
     Xg, Yg, W = _grid_fields(dom, cfg, evaluate)
     w_max_classic = float(np.max(np.abs(w_nodes)))
     w_max = w_max_classic if w_ktn is None else float(np.max(np.abs(w_ktn)))
@@ -1242,7 +1260,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
 
     ktn = KTNParams.from_config(cfg) if problem.model.theory == "ktn_linear" else None
     mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=delta_val, ktn=ktn,
-                     load_values=f_values)
+                     load_values=f_values, face_terms=_face_terms(cfg))
     cres = mor.solve()
     warn = list(warnings)
     if not cres.converged:
@@ -1342,7 +1360,7 @@ def _solve_contact_nonlinear(problem, cfg, dom, solver, f_values,
 
     mor = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
                               scheme=cfg.contact_scheme, gain_mode=cfg.contact_gain,
-                              f_values=f_values)
+                              f_values=f_values, face_terms=_face_terms(cfg))
     nres = mor.solve()
     if not nres.converged:
         last = float(nres.residual_history[-1]) if nres.residual_history.size else float("nan")
@@ -1437,7 +1455,8 @@ def _solve_contact_force_nonlinear(problem, cfg, dom, solver, warnings) -> Resul
         gap_val = (level + shape) if np.ndim(shape) else float(level + shape)
         nres = NonlinearContactMOR(solver, cfg, gap=gap_val, foundation_mask=fmask,
                                    scheme=cfg.contact_scheme,
-                                   gain_mode=cfg.contact_gain).solve()
+                                   gain_mode=cfg.contact_gain,
+                                   face_terms=_face_terms(cfg)).solve()
         st["nres"] = nres
         st["iters"] += nres.iters
         st["calls"] += 1
@@ -1792,7 +1811,7 @@ def _solve_contact_force(problem, cfg, dom, solver, f_values, warnings,
     def F(level: float) -> float:
         gap_val = (level + shape) if np.ndim(shape) else float(level + shape)
         mor = ContactMOR(solver, cfg, foundation_mask=fmask, gap=gap_val,
-                         ktn=ktn, load_values=f_values)
+                         ktn=ktn, load_values=f_values, face_terms=_face_terms(cfg))
         res = mor.solve(r0=state["r"])
         state.update(r=res.r_nodes, res=res)
         state["iters"] += res.iters

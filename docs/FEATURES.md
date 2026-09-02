@@ -60,6 +60,7 @@ tests/test_doc_matrix.py).
 | load.y0 | API.md, CASE_SCHEMA.md, README.md | circle_point.toml, circle_point_clamped.toml, circle_point_soft.toml |
 | load.zone | API.md, CASE_SCHEMA.md, dispatch_flow.md | lshape_stamp.toml, lshape_stamp.toml, lshape_stamp_force.toml |
 | model.E | ALGORITHMS.md, API.md, ARCHITECTURE.md | annulus_clamped.toml, annulus_soft.toml, annulus_soft_contact.toml |
+| model.face_terms | API.md, CASE_SCHEMA.md | test_units_invariance.py |
 | model.h | ALGORITHMS.md, API.md, ARCHITECTURE.md | annulus_clamped.toml, annulus_clamped.toml, annulus_soft.toml |
 | model.h_expr | API.md, CASE_SCHEMA.md | test_variable_thickness.py |
 | model.inplane_bc | API.md, CASE_SCHEMA.md, MIGRATION.md | karman_circle_clamped_immovable.toml, karman_circle_clamped_newton.toml, karman_circle_hencky_limit.toml |
@@ -185,6 +186,7 @@ tests/test_doc_matrix.py).
 | contact_nl | `NonlinearTwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py |
 | contact_nl | `NonlinearTwoPlateResult` | API.md | __init__.py, contact_nl.py, dispatch.py |
 | diagnostics | `contact_components` | API.md | test_diagnostics.py |
+| diagnostics | `contact_interior_stats` | API.md | test_diagnostics.py |
 | diagnostics | `contact_report` | API.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, test_diagnostics.py |
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_lshape_contact.py |
 | dispatch | `build_domain` | API.md, dispatch_flow.md | test_dispatch.py, test_gap_field.py, test_lshape_stamp.py |
@@ -197,6 +199,7 @@ tests/test_doc_matrix.py).
 | export | `shear_forces_on_grid` | API.md | test_fields_export.py |
 | export | `to_vtk` | API.md | test_export.py |
 | faces | `FaceParams` | ALGORITHMS.md, API.md, MIGRATION.md | test_contact_ktn.py, test_faces.py |
+| faces | `FaceTerms` | API.md | contact.py, dispatch.py, faces.py |
 | faces | `face_stresses` | ALGORITHMS.md, API.md | test_faces.py |
 | faces | `membrane_face_stress` | API.md | test_faces.py |
 | geometry | `BBox` | API.md | basis.py, geometry.py, quadrature.py |
@@ -207,7 +210,7 @@ tests/test_doc_matrix.py).
 | geometry | `make_annulus` | API.md | test_geometry_registry.py, test_multiply_connected.py, test_soft_hinge_ktn.py |
 | geometry | `make_circle` | API.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
 | geometry | `make_compose` | API.md | test_geometry_registry.py |
-| geometry | `make_ellipse` | API.md | test_ellipse.py, test_soft_hinge_ktn.py |
+| geometry | `make_ellipse` | API.md | test_diagnostics.py, test_ellipse.py, test_soft_hinge_ktn.py |
 | geometry | `make_plate_with_hole` | API.md | test_multiply_connected.py |
 | geometry | `make_rectangle` | API.md, NOTES.md | 09_eigen_verification.ipynb, run_ladder_rect_clamped.py, run_ladder_rect_hinge.py |
 | geometry | `r_and` | ALGORITHMS.md, API.md, ARCHITECTURE.md | test_contact.py, test_contact_nonlinear.py, test_fields_export.py |

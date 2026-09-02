@@ -114,10 +114,14 @@ class ContactMOR:
         gap: float | None = None,
         ktn: KTNParams | None = None,
         load_values: np.ndarray | None = None,
+        face_terms=None,
     ):
         self.plate = plate
         self.cfg = cfg
         self.ktn = ktn
+        # переключатели слагаемых лицевого условия (лестница слагаемых, v0.8.0);
+        # None ⇒ все три включены (штатный путь, арифметика прежняя)
+        self.face_terms = face_terms
         # Неравномерная нагрузка (patch/point из диспетчера): значения в узлах
         # квадратуры; None ⇒ равномерная cfg.q0 (путь и арифметика прежние).
         self.load = None if load_values is None else np.asarray(load_values, dtype=float)
@@ -155,10 +159,29 @@ class ContactMOR:
             self._gap_ref = float(np.min(self._gap_f))
             if self._gap_ref <= 0.0:
                 raise ValueError("Поле зазора: min Δ под основанием должно быть > 0.")
-        # Усиление оператора: макс. прогиб от единичной равномерной нагрузки (~‖G‖).
+        # Масштаб нагрузки для БЕЗРАЗМЕРНЫХ метрик KKT (|q| в узлах): для
+        # равномерной — ровно |cfg.q0| (числа прежние), для поля (patch/point/
+        # gaussian/expr) — пиковое давление, а не «амплитуда» cfg.q0, которая
+        # для таких нагрузок может не иметь отношения к задаче.
+        f_scale = float(np.max(np.abs(cfg.q0 if self.load is None else self.load)))
+        self._q_ref = f_scale if f_scale > 0.0 else 1.0
+        # Усиление оператора (~‖G‖): максимум отклика ТОЙ ЖЕ поверхности, по
+        # которой ставится условие Синьорини, на единичную равномерную нагрузку.
+        # Классика — срединный прогиб (числа прежние); уточнённая теория —
+        # ЛИЦЕВОЙ прогиб плюс диагональная податливость κ_r: в теорему 4
+        # (β_eff·λ_max < 2) входит полный оператор r ↦ u_c(r), а не только его
+        # изгибная часть. Без этого при h/a ≳ 0.35 шаг выходит за границу
+        # сходимости и итерация 2-циклится к r ≡ 0 (см. NOTES §10, §11).
         state_unit = plate.solve(np.ones(q.x.size))
         w_unit = plate.w_at_quad(state_unit)
-        self.gain = float(np.max(np.abs(w_unit)))
+        if ktn is None:
+            self.gain = float(np.max(np.abs(w_unit)))
+        else:
+            lap_unit = plate.lap_w_at_quad(state_unit)
+            face_unit = ktn.contact_displacement(w_unit, lap_unit, 0.0, 0.0,
+                                                 terms=face_terms)
+            use_r = face_terms is None or face_terms.reaction
+            self.gain = float(np.max(np.abs(face_unit))) + (ktn.kappa_r if use_r else 0.0)
         self.beta_eff = cfg.beta / self.gain
 
     def solve(self, r0: np.ndarray | None = None) -> ContactResult:
@@ -235,7 +258,8 @@ class ContactMOR:
         w_ktn = None
         if self.ktn is not None:
             lap_w = self.plate.lap_w_at_quad(state)
-            w_ktn = self.ktn.corrected_deflection(w, lap_w, cfg.q0, r)
+            w_ktn = self.ktn.corrected_deflection(w, lap_w, self._q_load(), r,
+                                                  terms=self.face_terms)
         # Диагностика комплементарности по финальному состоянию (алгоритм не меняется):
         # то же смещение u, что входит в условие контакта (классика: u = w).
         disp = self._contact_disp(state, w, r)
@@ -254,7 +278,18 @@ class ContactMOR:
         if self.ktn is None:
             return w
         lap_w = self.plate.lap_w_at_quad(state)
-        return self.ktn.contact_displacement(w, lap_w, self.cfg.q0, r)
+        return self.ktn.contact_displacement(w, lap_w, self._q_load(), r,
+                                             terms=self.face_terms)
+
+    def _q_load(self):
+        """Давление ``q⁺`` на верхней лицевой: ЛОКАЛЬНОЕ поле или скаляр ``cfg.q0``.
+
+        Формула (9) содержит локальное давление; для равномерной нагрузки это
+        ровно ``cfg.q0`` (числа прежние), для patch/point/gaussian/expr —
+        значения в узлах квадратуры (до v0.8.0 подставлялась скалярная
+        амплитуда — постоянный нефизический сдвиг вне пятна нагрузки).
+        """
+        return self.cfg.q0 if self.load is None else self.load
 
     def _kkt_residual(self, disp, r) -> float:
         r"""Безразмерная KKT-невязка Синьорини состояния (r, u(r)); Δ > 0.
@@ -264,7 +299,7 @@ class ContactMOR:
 
         (комплементарность + проникание; см. докстринг :meth:`solve`).
         """
-        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self._gap_ref))
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self._q_ref * self._gap_ref))
         pen = float(np.max(np.maximum(disp[self.fmask] - self._gap_f, 0.0), initial=0.0)
                     / self._gap_ref)
         return max(comp, pen)
@@ -274,7 +309,7 @@ class ContactMOR:
 
         comp_residual = max|r·(u−Δ)| / (q0·Δ);  gap_overshoot = (max u|_{r>0} − Δ)/Δ.
         """
-        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self.cfg.q0 * self._gap_ref))
+        comp = float(np.max(np.abs(r * (disp - self.gap))) / (self._q_ref * self._gap_ref))
         contact = r > 0.0
         over = (float(np.max((disp - self.gap)[contact])) / self._gap_ref
                 if contact.any() else float("nan"))
@@ -349,10 +384,20 @@ def solve_contact(
     foundation_mask: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
     gap: float | None = None,
     ktn: KTNParams | None = None,
+    *,
+    r0: np.ndarray | None = None,
+    face_terms=None,
 ) -> ContactResult:
-    """Фасад: собрать PlateBending по конфигу и решить контакт методом МОР."""
+    """Фасад: собрать PlateBending по конфигу и решить контакт методом МОР.
+
+    ``r0`` — тёплый старт реакции в узлах квадратуры (серии по параметру:
+    соседние точки дают близкие реакции, что экономит итерации);
+    ``face_terms`` — переключатели слагаемых лицевого условия
+    (:class:`~plate_solver.faces.FaceTerms`, только для уточнённой теории).
+    """
     plate = PlateBending.from_config(domain, cfg)
-    return ContactMOR(plate, cfg, foundation_mask=foundation_mask, gap=gap, ktn=ktn).solve()
+    return ContactMOR(plate, cfg, foundation_mask=foundation_mask, gap=gap, ktn=ktn,
+                      face_terms=face_terms).solve(r0=r0)
 
 
 

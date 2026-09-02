@@ -233,6 +233,10 @@ class KarmanResult:
     cw : коэффициенты прогиба ``w = ω^m·Σ c_k T_k``.
     w_nodes : прогиб в узлах квадратуры (источник ``w_max``).
     w_max, w_max_classic : max|w| нелинейный и линейный (Кирхгоф, ``N=0``).
+        Линейный эталон считается по КЛАССИЧЕСКОМУ вектору нагрузки: у полной
+        КТН уточняющий член A (``−h_*²∫Δq·ψ``) в него НЕ входит, иначе «классика»
+        под неравномерной нагрузкой не была бы решением Кирхгофа (v0.8.0).
+    cw_classic : коэффициенты этого линейного решения.
     cu, cv : коэффициенты перемещений ``u, v`` в плане.
     Nx, Ny, Nxy : мембранные усилия в узлах квадратуры.
     converged : достигнут ли ``karman_tol`` на ПОСЛЕДНЕМ уровне нагрузки.
@@ -253,6 +257,9 @@ class KarmanResult:
     converged: bool
     n_iter: int
     history: list = field(default_factory=list)
+    #: коэффициенты ЛИНЕЙНОГО (Кирхгоф, N ≡ 0) решения той же нагрузки —
+    #: источник ``w_max_classic`` и линейной податливости для нормировки МОР
+    cw_classic: np.ndarray | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -561,6 +568,22 @@ class KarmanPlate:
         forces = self._membrane_forces(c @ self._psi_x, c @ self._psi_y)
         return self._nonlinear_operator(c, forces) - b_level
 
+    def _classic_load_vector(self, f_values, b_extra=None) -> np.ndarray:
+        r"""Вектор нагрузки КЛАССИКИ (Кирхгоф) для линейного эталона ``w_max_classic``.
+
+        Базовое ``∫q·ψ`` плюс внешние добавки (линейная нагрузка, термомомент),
+        но БЕЗ уточняющих членов теории: у :class:`~plate_solver.ktn_full.KTNPlate`
+        переопределённый ``_load_vector`` вычитает ``h_*²∫Δq·ψ`` (член A), и с
+        ним «классический» эталон под НЕравномерной нагрузкой переставал быть
+        решением Кирхгофа (расхождение 7.3 % на гауссиане; аудит P07).
+        """
+        b = KarmanPlate._load_vector(self, np.asarray(f_values, float))
+        if b_extra is not None:
+            b = b + np.asarray(b_extra, float)
+        if self._b_thermal is not None:
+            b = b + self._b_thermal
+        return b
+
     def _solve_newton(self, f_values, c0=None, b_extra=None) -> KarmanResult:
         r"""Ньютон с согласованным касательным оператором и бэктрекингом (§5.4).
 
@@ -616,11 +639,12 @@ class KarmanPlate:
             history.append((step / n_steps, it, rn))
         a, b, Nx, Ny, Nxy = forces
         w_nodes = c @ self._psi
-        c_lin = self._bending_solve(b_full)
+        c_lin = self._bending_solve(self._classic_load_vector(f_values, b_extra))
         self._cw = c
         return KarmanResult(
             cw=c, w_nodes=w_nodes, w_max=float(np.max(np.abs(w_nodes))),
             w_max_classic=float(np.max(np.abs(c_lin @ self._psi))),
+            cw_classic=c_lin,
             cu=a, cv=b, Nx=Nx, Ny=Ny, Nxy=Nxy, converged=converged,
             n_iter=total_iter, history=history)
 
@@ -710,11 +734,13 @@ class KarmanPlate:
         # финальные поля на достигнутом уровне (полная нагрузка)
         w_nodes = c @ self._psi
         w_max = float(np.max(np.abs(w_nodes)))
-        c_lin = self._bending_solve(b_full)                  # линейный Кирхгоф (N=0)
+        # линейный Кирхгоф (N ≡ 0) по КЛАССИЧЕСКОМУ вектору нагрузки
+        c_lin = self._bending_solve(self._classic_load_vector(f_values, b_extra))
         w_max_classic = float(np.max(np.abs(c_lin @ self._psi)))
         self._cw = c
         return KarmanResult(
             cw=c, w_nodes=w_nodes, w_max=w_max, w_max_classic=w_max_classic,
+            cw_classic=c_lin,
             cu=a, cv=b, Nx=Nx, Ny=Ny, Nxy=Nxy, converged=converged,
             n_iter=total_iter, history=history)
 

@@ -4,10 +4,17 @@ r"""Ворота диагностики зоны контакта (diagnostics.p
 синтетических масках (топология известна точно) и на согласованность сводки
 ``contact_report`` с прямым счётом.
 
-Мат. обоснование. Порог смежности ``radius = 1.8·s`` (s — медиана шага сетки)
-разделяет пятна, отстоящие дальше ``1.8·s``, и связывает соседей внутри пятна
-(шаг ~``s``). Для регулярной сетки это корректно при зазорах между пятнами ≥ 2
-шагов — что и обеспечивают тесты ниже.
+Мат. обоснование (v0.8.0). Штатный путь — разметка 4-связностью ПО РЕШЁТКЕ
+квадратуры: узлы тензорного правила отображаются в индексы по осям, и топология
+считается на индексной решётке. Это не зависит от НЕРАВНОМЕРНОСТИ шага: узлы
+Гаусса сгущены у кромок bbox, поэтому прежний порог ``1.8·медиана(шаг)``
+определялся кромочными узлами и рвал одно центральное пятно на десятки
+«компонент» (на прямоугольнике — по одной на узел). Запасной путь (граф
+близости) сохранён для нерегулярных наборов точек и при явном ``radius``;
+он корректен при зазорах между пятнами ≥ 2 шагов.
+
+Ниже проверяются ОБА пути: синтетические маски на равномерной сетке (топология
+известна точно) и те же топологии на РЕАЛЬНЫХ узлах Гаусса–Лежандра.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from plate_solver.diagnostics import contact_components, contact_report
 
@@ -65,6 +73,82 @@ def test_ring_is_one_component():
     m = (rr < 0.35**2) & (rr > 0.2**2)
     assert m.sum() > 10
     assert contact_components(x, y, m) == 1
+
+
+# --------------------------------------------------------------------------- #
+#  РЕАЛЬНЫЕ узлы квадратуры Гаусса–Лежандра (неравномерный шаг) — регресс v0.8.0
+# --------------------------------------------------------------------------- #
+def _gauss_nodes(kind="rectangle", Q=64):
+    from plate_solver import geometry
+    from plate_solver.quadrature import interior_nodes
+
+    dom = {"rectangle": lambda: geometry.make_rectangle(-1.0, 1.0, -1.0, 1.0),
+           "circle": lambda: geometry.make_circle(1.0),
+           "L": lambda: geometry.make_L(1.0, 0.5),
+           "ellipse": lambda: geometry.make_ellipse(1.0, 0.6)}[kind]()
+    q = interior_nodes(dom, Q)
+    return q.x, q.y
+
+
+def test_gauss_nodes_single_patch_is_one_component():
+    """ГЛАВНЫЕ ВОРОТА (v0.8.0): сплошное пятно на узлах Гаусса ⇒ РОВНО 1 компонента.
+
+    Прежняя реализация (глобальный порог по медиане шага) давала на
+    прямоугольнике по компоненте на каждый узел зоны: узлы Гаусса у кромок
+    bbox сгущены, медиана меньше центрального шага, и соседи в центре не
+    связывались.
+    """
+    for kind in ("rectangle", "circle", "L", "ellipse"):
+        x, y = _gauss_nodes(kind)
+        cx, cy = 0.5 * (x.min() + x.max()), 0.5 * (y.min() + y.max())
+        mask = (x - cx) ** 2 + (y - cy) ** 2 < 0.3**2
+        assert mask.sum() > 20, kind
+        assert contact_components(x, y, mask) == 1, kind
+
+
+def test_gauss_nodes_two_patches_are_two_components():
+    """Два разнесённых пятна на узлах Гаусса ⇒ 2 компоненты."""
+    x, y = _gauss_nodes("rectangle")
+    left = (x + 0.6) ** 2 + (y + 0.6) ** 2 < 0.2**2
+    right = (x - 0.6) ** 2 + (y - 0.6) ** 2 < 0.2**2
+    assert left.sum() > 5 and right.sum() > 5
+    assert contact_components(x, y, left | right) == 2
+
+
+def test_scattered_points_use_proximity_fallback():
+    """Нерегулярный набор точек: работает запасной путь (граф близости)."""
+    rng = np.random.default_rng(12345)
+    pts = rng.uniform(0.0, 1.0, size=(400, 2))
+    x, y = pts[:, 0], pts[:, 1]
+    far = np.array([[5.0, 5.0], [5.02, 5.0], [5.0, 5.02]])
+    x = np.concatenate([x, far[:, 0]])
+    y = np.concatenate([y, far[:, 1]])
+    mask = np.zeros(x.size, bool)
+    mask[-3:] = True                       # три близких узла вдали от облака
+    assert contact_components(x, y, mask) == 1
+
+
+def test_interior_stats_detect_plateau():
+    """Статистика внутренности: плато ``r ≈ q`` отделено от кромочного пика."""
+    from plate_solver.diagnostics import contact_interior_stats
+
+    x, y = _grid(n=40)
+    quad = SimpleNamespace(x=x, y=y, w=np.full(x.size, (1.0 / 39) ** 2))
+    rr = np.hypot(x - 0.5, y - 0.5)
+    r = np.zeros(x.size)
+    zone = rr < 0.3
+    r[zone] = 4.0                                   # плато r = q
+    edge = zone & (rr > 0.27)
+    r[edge] = 40.0                                  # кромочный пик
+    st = contact_interior_stats(r, quad, q_ref=4.0)
+    assert st["n_interior"] > 10
+    assert st["mean"] == pytest.approx(1.0, rel=1e-9)     # внутри — ровно плато
+    assert st["std"] < 1e-9
+    assert st["share_within_band"] == 1.0
+    assert st["max_depth"] > 0.2
+    # без контакта — пустая сводка
+    empty = contact_interior_stats(np.zeros(x.size), quad, q_ref=4.0)
+    assert empty["n_interior"] == 0 and empty["share_within_band"] == 0.0
 
 
 def test_contact_report_fields_consistent():

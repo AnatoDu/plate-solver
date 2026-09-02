@@ -57,6 +57,9 @@ THEORY_ALIASES = {"ktn": "ktn_linear"}
 # Нелинейные теории (мембранная итерация Пикара/Ньютона + шаги по нагрузке):
 # для них осмысленны inplane_bc и параметры итерации.
 NONLINEAR_THEORIES = ("karman", "ktn_full")
+
+#: теории с УТОЧНЕНИЕМ (сдвиг/обжатие): у них есть лицевое условие формулы (9)
+REFINED_THEORIES = ("ktn_linear", "ktn_full")
 # Закрепление кромки в плане (осмысленно только для нелинейных теорий, §3.3):
 #   immovable — u = v = 0 на ∂Ω (кромка не втягивается, натяжение максимально);
 #   movable   — N·n = 0 (кромка свободна в плане; эффект слабее, но НЕнулевой).
@@ -249,6 +252,9 @@ class ModelSpec:
     winkler: float | None = None            # упругое основание Винклера k_w ≥ 0 (v0.6.6)
     orthotropy: OrthotropySpec | None = None  # ортотропия классики (v0.7.0)
     h_expr: str | None = None               # переменная толщина h(x, y) (v0.7.0)
+    #: (curvature, load, reaction) — слагаемые лицевого условия (v0.8.0);
+    #: None ⇒ все включены (штатный путь)
+    face_terms: tuple | None = None
 
 
 GAP_KINDS = ("const", "plane", "paraboloid", "steps")
@@ -530,6 +536,8 @@ class Problem:
             kw["supports_stiffness"] = self.supports.stiffness
         if self.model.h_expr is not None:              # переменная толщина (v0.7.0)
             kw["h_expr"] = self.model.h_expr
+        if self.model.face_terms is not None:          # слагаемые лицевой (v0.8.0)
+            kw["face_terms"] = self.model.face_terms
         o = self.model.orthotropy                      # ортотропия (v0.7.0)
         if o is not None:
             if o.D11 is not None:                      # прямой набор жёсткостей
@@ -826,7 +834,7 @@ def _parse_model(data) -> ModelSpec:
                   {"theory", "E", "nu", "h", "inplane_bc", "n_load_steps",
                    "karman_relax", "karman_max_iter", "karman_tol",
                    "karman_method", "ktn_method", "winkler", "orthotropy",
-                   "h_expr"},
+                   "h_expr", "face_terms"},
                   "model")
     raw_theory = data.get("theory", "classic")
     if raw_theory in THEORY_ALIASES:
@@ -887,6 +895,8 @@ def _parse_model(data) -> ModelSpec:
     if winkler is not None and winkler < 0.0:
         _fail("model.winkler", winkler, "число ≥ 0 (жёсткость основания Винклера)",
               "model")
+    face_terms = (_parse_face_terms(data["face_terms"], theory)
+                  if "face_terms" in data else None)
     orthotropy = (_parse_orthotropy(data["orthotropy"])
                   if "orthotropy" in data else None)
     if orthotropy is not None and (E is not None or nu is not None):
@@ -909,7 +919,35 @@ def _parse_model(data) -> ModelSpec:
                      n_load_steps=n_load_steps, karman_relax=karman_relax,
                      karman_max_iter=karman_max_iter, karman_tol=karman_tol,
                      karman_method=karman_method, ktn_method=ktn_method,
-                     winkler=winkler, orthotropy=orthotropy, h_expr=h_expr)
+                     winkler=winkler, orthotropy=orthotropy, h_expr=h_expr,
+                     face_terms=face_terms)
+
+
+def _parse_face_terms(data, theory: str) -> tuple:
+    """Подсекция ``[model.face_terms]`` (v0.8.0): слагаемые лицевого условия.
+
+    Три булевых ключа ``curvature``, ``load``, ``reaction`` — члены формулы (9)
+    ``u_c = w + c_curv·Δw − κ_q·q⁺ − κ_r·r``. Пропущенный ключ = включён.
+    Осмысленны ТОЛЬКО для уточнённых теорий: в ``classic``/``karman``
+    слагаемых нет по построению (h_*² = 0), и молчаливое игнорирование ключей
+    было бы тихо неверной постановкой.
+    """
+    sec = "model.face_terms"
+    if not isinstance(data, dict):
+        _fail(sec, data, "таблица (подсекция TOML)", "model")
+    if theory not in REFINED_THEORIES:
+        _fail(sec, "present",
+              "ключ осмыслен только для уточнённых теорий "
+              f"({' | '.join(REFINED_THEORIES)}): в classic/karman слагаемых "
+              "лицевого условия нет по построению", "model")
+    _require_keys(sec, data, {"curvature", "load", "reaction"}, "model")
+    flags = []
+    for key in ("curvature", "load", "reaction"):
+        val = data.get(key, True)
+        if not isinstance(val, bool):
+            _fail(f"{sec}.{key}", val, "true | false", "model")
+        flags.append(val)
+    return tuple(flags)
 
 
 def _parse_orthotropy(data) -> OrthotropySpec:

@@ -134,7 +134,7 @@ class KTNParams:
         return -self.cr_contact
 
     # -- поля -------------------------------------------------------------- #
-    def contact_displacement(self, w, lap_w, q0, r) -> np.ndarray:
+    def contact_displacement(self, w, lap_w, q0, r, *, terms=None) -> np.ndarray:
         r"""Прогиб контактирующей (НИЖНЕЙ) лицевой поверхности u_c по КТН.
 
         Этой величиной проверяется зазор в контактном условии (обновление r):
@@ -148,34 +148,53 @@ class KTNParams:
         канон/восстановление = 0.763) — в пределах O(h²)-точности теории.
         Синоним: :meth:`w_face_bottom`.
 
+        ``terms`` (:class:`~plate_solver.faces.FaceTerms`) включает слагаемые
+        по отдельности (лестница слагаемых); ``None`` — все три (штатный путь,
+        арифметика прежняя).
+
         v0.8.0: член реакции — ``κ_r·r`` (ранее ошибочно ``κ_r·D·r``, см.
         докстринг модуля и ворота ``tests/test_units_invariance.py``).
         """
-        r = np.asarray(r, float)
-        return (
-            np.asarray(w, float)
-            + self.c_curv * np.asarray(lap_w, float)
-            + self.cq_contact * q0
-            + self.cr_contact * r
-        )
+        return self._face_sum(w, lap_w, q0, r, self.cq_contact, self.cr_contact, terms)
 
-    def w_face_bottom(self, w, lap_w, q0, r) -> np.ndarray:
+    @staticmethod
+    def _terms_flags(terms) -> tuple[bool, bool, bool]:
+        """(кривизна, нагрузка, реакция); ``None`` ⇒ все включены."""
+        if terms is None:
+            return True, True, True
+        return bool(terms.curvature), bool(terms.load), bool(terms.reaction)
+
+    def _face_sum(self, w, lap_w, q0, r, c_q, c_r, terms) -> np.ndarray:
+        """Общая сборка лицевой/срединной поправки с переключателями слагаемых."""
+        use_curv, use_q, use_r = self._terms_flags(terms)
+        if use_curv and use_q and use_r:                 # штатный путь: без ветвлений
+            return (
+                np.asarray(w, float)
+                + self.c_curv * np.asarray(lap_w, float)
+                + c_q * q0
+                + c_r * np.asarray(r, float)
+            )
+        out = np.array(np.asarray(w, float), copy=True)
+        if use_curv:
+            out = out + self.c_curv * np.asarray(lap_w, float)
+        if use_q:
+            out = out + c_q * q0
+        if use_r:
+            out = out + c_r * np.asarray(r, float)
+        return out
+
+    def w_face_bottom(self, w, lap_w, q0, r, *, terms=None) -> np.ndarray:
         """Прогиб нижней лицевой (синоним :meth:`contact_displacement`)."""
-        return self.contact_displacement(w, lap_w, q0, r)
+        return self.contact_displacement(w, lap_w, q0, r, terms=terms)
 
-    def corrected_deflection(self, w, lap_w, q0, r) -> np.ndarray:
+    def corrected_deflection(self, w, lap_w, q0, r, *, terms=None) -> np.ndarray:
         """КТН-поправленный прогиб срединной поверхности (для w_max).
 
         ``w_KTN = w + (2h_*²−h_Ψ²)·Δw + a·q⁺ + b·r`` (v0.8.0: член реакции без
         множителя D — та же размерная поправка, что в :meth:`contact_displacement`).
+        ``terms`` — переключатели слагаемых (см. :meth:`contact_displacement`).
         """
-        r = np.asarray(r, float)
-        return (
-            np.asarray(w, float)
-            + self.c_curv * np.asarray(lap_w, float)
-            + self.cq_defl * q0
-            + self.cr_defl * r
-        )
+        return self._face_sum(w, lap_w, q0, r, self.cq_defl, self.cr_defl, terms)
 
     @classmethod
     def from_config(cls, cfg) -> KTNParams:

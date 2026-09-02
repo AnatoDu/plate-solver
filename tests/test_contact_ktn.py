@@ -74,18 +74,28 @@ def test_face_curv_coeff_is_physical_for_refined_theories():
 
 
 def test_gain_mode_linear_normalizes_by_linear_compliance():
-    """gain_mode='linear': β_eff нормируется ЛИНЕЙНОЙ податливостью w_lin/q0.
+    """gain_mode='linear': β_eff нормируется ЛИНЕЙНОЙ податливостью лицевой.
 
     Обоснование (теорема 4): при неподвижной кромке ``K_geo(N) ⪰ 0`` ⇒
     ``w_nl ≤ w_lin`` ⇒ линейная податливость — верхняя грань ``‖G‖`` вдоль
     всего пути МОР ⇒ ``β_eff·‖G‖ ≤ β < 2`` равномерно. Секущая занижает
     ``‖G‖`` в ``w_lin/w_free`` раз (расходимость при сильном ужесточении).
+
+    v0.8.0: нормировка берётся по ТОЙ ЖЕ поверхности, по которой ставится
+    условие Синьорини (лицевой прогиб = изгибный отклик + ``c_curv·Δw``), плюс
+    ДИАГОНАЛЬНАЯ податливость ``κ_r`` — она входит в оператор задачи
+    дополнительности наравне с изгибной частью.
     """
     cfg = _cfg(Q=48)
     s = _solver(cfg)
     sec = NonlinearContactMOR(s, cfg, gap=100.0, scheme="merged")
     lin = NonlinearContactMOR(s, cfg, gap=100.0, scheme="merged", gain_mode="linear")
-    assert lin.gain == pytest.approx(sec._free.w_max_classic / cfg.q0)
+    # состав нормировки: лицевой отклик линейного решения + κ_r
+    cw_lin = sec._free.cw_classic
+    w_lin_face = cw_lin @ s._psi + s.params.face_curv_coeff * (cw_lin @ s._lap_psi)
+    expected = float(np.max(np.abs(w_lin_face))) / cfg.q0 + lin._kappa_r
+    assert lin.gain == pytest.approx(expected, rel=1e-12)
+    assert lin._kappa_r > 0.0                           # уточнённая теория: член есть
     assert lin.gain >= sec.gain * (1.0 - 1e-12)         # w_lin ≥ w_nl (K_geo ⪰ 0)
     assert lin.beta_eff <= sec.beta_eff                 # шаг осторожнее
     with pytest.raises(ValueError, match="gain_mode"):
