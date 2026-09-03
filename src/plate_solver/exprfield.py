@@ -22,7 +22,9 @@ r"""exprfield.py — безопасный разбор выражений ``f(x,
 
 from __future__ import annotations
 
+import ast
 import io
+import math
 import tokenize
 from functools import lru_cache
 
@@ -56,6 +58,7 @@ _ALLOWED_TXT = ("разрешены имена: " + ", ".join(sorted(_NAMES)) +
 _MAX_LEN = 20_000            # длина строки-выражения
 _MAX_INT_DIGITS = 12         # целочисленный литерал (координаты — float'ы)
 _MAX_POW_EXP = 64            # целый показатель сразу после '**'
+_MAX_POW_DIGITS = 100        # десятичных знаков у ЧИСЛОВОЙ степени (9**9 — 9 знаков)
 
 
 def _is_int_literal(s: str) -> bool:
@@ -66,9 +69,11 @@ def _is_int_literal(s: str) -> bool:
 def _fence(key: str, s: str) -> None:
     """Токен-ограда ДО sympy: только числа, белый список имён, арифметика.
 
-    Плюс ресурсные пороги: длина строки, размер целочисленных литералов,
-    целый показатель степени ≤ 64 и запрет башен ``a**b**c`` — иначе sympy
-    вычисляет гигантские целые прямо при разборе case-файла (DoS).
+    Плюс ресурсные пороги: длина строки, размер целочисленных литералов и
+    СТРУКТУРНАЯ ограда степеней (:func:`_check_powers`: башни в любой записи,
+    включая скобочные, показатель ≤ 64, числовые степени ограниченного
+    порядка) — иначе sympy вычисляет гигантские целые прямо при разборе
+    case-файла и чтение постановки подвисает (DoS).
     """
     if len(s) > _MAX_LEN:
         raise ValueError(f"{key}: выражение длиннее {_MAX_LEN} символов")
@@ -122,6 +127,88 @@ def _fence(key: str, s: str) -> None:
                 and sig[j + 1].type == tokenize.OP and sig[j + 1].string == "**"):
             raise ValueError(f"{key}: степенная башня a**b**c не допускается "
                              "(риск гигантских целых при разборе)")
+    # структурная ограда степеней по дереву (башни в скобках, числовые взрывы)
+    _check_powers(key, s)
+
+
+def _numeric_value(node) -> float | None:
+    """Значение ЧИСЛОВОГО поддерева (без имён) во float; ``None`` — не числовое.
+
+    Считается во float (быстро и без гигантских целых): нужна лишь ОЦЕНКА
+    порядка, чтобы понять, во что развернётся степень при разборе sympy.
+    Переполнение float даёт ``inf`` — это законный ответ «слишком большое».
+    """
+    if isinstance(node, ast.Constant):
+        return float(node.value) if isinstance(node.value, (int, float)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        v = _numeric_value(node.operand)
+        return None if v is None else (v if isinstance(node.op, ast.UAdd) else -v)
+    if isinstance(node, ast.BinOp):
+        a, b = _numeric_value(node.left), _numeric_value(node.right)
+        if a is None or b is None:
+            return None
+        try:
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b if b != 0.0 else float("inf")
+            if isinstance(node.op, ast.Pow):
+                return float(a) ** float(b)
+        except (OverflowError, ZeroDivisionError, ValueError):
+            return float("inf")
+    return None
+
+
+def _check_powers(key: str, s: str) -> None:
+    r"""Ограда СТЕПЕНЕЙ по дереву разбора (v0.8.0): башни в любых скобках.
+
+    Прежняя проверка смотрела на пару СМЕЖНЫХ токенов и ловила лишь запись
+    ``a**b**c``; скобочная башня ``9**(9**(9**9))`` (тридцать символов)
+    проходила ограду и подвешивала ЧТЕНИЕ case-файла — sympy разворачивает
+    целую степень прямо при разборе (аудит 0.8.0). Дерево ``ast`` строится
+    БЕЗ вычислений, поэтому проверять на нём безопасно:
+
+    * ``**`` внутри ПОКАЗАТЕЛЯ другой степени — отказ (башня в любой записи);
+    * целый показатель > :data:`_MAX_POW_EXP` — отказ;
+    * ЧИСЛОВАЯ степень (в основании нет ``x``/``y``) оценивается во float:
+      больше :data:`_MAX_POW_DIGITS` десятичных знаков — отказ.
+
+    Числа операций ``**`` ограда НЕ ограничивает: длинные многочлены (в том
+    числе MMS-подстановки на десятки степеней) законны, а опасна не их
+    численность, а вложенность и порядок числовой степени.
+    """
+    try:
+        tree = ast.parse(s, mode="eval")
+    except SyntaxError as exc:                    # до sympy: понятный отказ
+        raise ValueError(f"{key}: не разбирается как выражение ({exc}); "
+                         f"{_ALLOWED_TXT}") from None
+    pows = [n for n in ast.walk(tree)
+            if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Pow)]
+    for node in pows:
+        if any(isinstance(m, ast.BinOp) and isinstance(m.op, ast.Pow)
+               for m in ast.walk(node.right)):
+            raise ValueError(f"{key}: степенная башня a**b**c не допускается "
+                             "(риск гигантских целых при разборе), в том числе "
+                             "в скобках")
+        exp = _numeric_value(node.right)
+        if exp is not None and abs(exp) > _MAX_POW_EXP:
+            raise ValueError(f"{key}: показатель степени {exp:g} по модулю "
+                             f"больше {_MAX_POW_EXP}")
+        base = _numeric_value(node.left)
+        if base is None or exp is None:
+            continue                              # символьная степень безопасна
+        mag = abs(base)
+        digits = float("inf") if (mag > 1.0 and math.isinf(mag)) else (
+            abs(exp) * math.log10(mag) if mag > 1.0 else 0.0)
+        if digits > _MAX_POW_DIGITS:
+            raise ValueError(
+                f"{key}: числовая степень разворачивается в число примерно из "
+                f"{digits:.3g} десятичных знаков (порог {_MAX_POW_DIGITS}) — "
+                "разбор такого выражения подвешивает чтение case-файла")
 
 
 @lru_cache(maxsize=128)

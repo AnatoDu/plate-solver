@@ -158,3 +158,48 @@ def test_every_schema_key_documented_in_case_schema():
     # проверка не вакуумна: несуществующий ключ и ключ ЧУЖОЙ секции не проходят
     assert ("geometry", "radius") not in documented
     assert ("model", "tol") not in documented and "tol" in schema
+
+
+# --------------------------------------------------------------------------- #
+#  Сигнатуры docs/API.md против фактических (аудит 0.8.0)
+# --------------------------------------------------------------------------- #
+def test_api_md_signatures_match_code():
+    r"""Приведённые в API.md сигнатуры вызываются БЕЗ переделки.
+
+    Несколько записей приводили keyword-only параметры как позиционные
+    (``faces.face_stresses(Mx, My, Mxy, h, nu, …)``), и копипаста из
+    документации падала ``TypeError``. Ворота сверяют по каждой
+    зарегистрированной функции: множество имён параметров и НАЛИЧИЕ
+    разделителя ``*`` там, где код требует именованных аргументов.
+    """
+    import inspect
+    import re
+
+    from plate_solver import contact_nl, diagnostics, faces
+
+    registry = {
+        "faces.face_stresses": faces.face_stresses,
+        "diagnostics.contact_components": diagnostics.contact_components,
+        "diagnostics.contact_report": diagnostics.contact_report,
+        "diagnostics.contact_interior_stats": diagnostics.contact_interior_stats,
+        "contact_nl.NonlinearContactMOR": contact_nl.NonlinearContactMOR.__init__,
+        "contact_nl.NonlinearTwoPlateMOR": contact_nl.NonlinearTwoPlateMOR.__init__,
+    }
+    text = (_ROOT / "docs" / "API.md").read_text(encoding="utf-8")
+    # запись может переноситься на следующую строку — склеиваем абзацы списка
+    flat = re.sub(r"\n\s+", " ", text)
+    for name, fn in registry.items():
+        m = re.search(r"`" + re.escape(name) + r"\((.*?)\)`", flat, re.DOTALL)
+        assert m is not None, f"docs/API.md: не найдена запись для {name}"
+        doc_params = [p.strip().split("=")[0].strip()
+                      for p in m.group(1).split(",") if p.strip()]
+        sig = inspect.signature(fn)
+        code_params = [p for p in sig.parameters if p != "self"]
+        kw_only = [p.name for p in sig.parameters.values()
+                   if p.kind is inspect.Parameter.KEYWORD_ONLY]
+        assert ("*" in doc_params) == bool(kw_only), (
+            f"{name}: разделитель '*' в документации не соответствует коду "
+            f"(keyword-only: {kw_only})")
+        assert [p for p in doc_params if p != "*"] == code_params, (
+            f"{name}: список параметров в API.md разошёлся с кодом\n"
+            f"в доке: {doc_params}\nв коде: {code_params}")

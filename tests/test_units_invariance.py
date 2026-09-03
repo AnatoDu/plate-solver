@@ -37,7 +37,7 @@ SCALES = (1.0, 1.0e3)
 RTOL = 1e-9
 
 
-def _dimensionless(cfg, ktn, budget=400, stop="dr"):
+def _dimensionless(cfg, ktn):
     """Безразмерные характеристики контактного решения при данном масштабе единиц."""
     dom = geometry.make_circle(1.0)
     pb = PlateBending.from_config(dom, cfg)
@@ -66,7 +66,7 @@ def _run_pair(theory: str, budget: int = 400):
     for s in SCALES:
         cfg = Config(E=2.1e6 * s, nu=0.3, q0=4.0 * s, h=0.15, p=8, Q=40,
                      beta=1.0, max_iter=budget, tol=0.0, grid_n=20)
-        out.append(_dimensionless(cfg, theory, budget=budget))
+        out.append(_dimensionless(cfg, theory))
     return out
 
 

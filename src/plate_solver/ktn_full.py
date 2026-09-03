@@ -181,6 +181,11 @@ def _boundary_quad(domain):
     return _contour_boundary_quad(domain)
 
 
+#: относительная невязка линейного шага, выше которой ньютоновская касательная
+#: считается нерешённой (почти вырожденная матрица при большой степени базиса)
+_TANGENT_RESID_TOL = 1.0e-6
+
+
 def _lin_solve(A: np.ndarray, b: np.ndarray, *, sink: list | None = None) -> np.ndarray:
     r"""Решение НЕсимметричной системы (член B несимметричен) с диаг. предобусл.
 
@@ -226,11 +231,17 @@ def _lin_solve(A: np.ndarray, b: np.ndarray, *, sink: list | None = None) -> np.
         # пивот»), а не исключением: перехватываем его как признак отказа
         # наравне с неконечным решением
         with warnings.catch_warnings(record=True) as rec:
-            warnings.simplefilter("always")
+            # перехватываем ТОЛЬКО LinAlgWarning: прочие предупреждения (чужие
+            # DeprecationWarning, наши FactorizationWarning) обязаны дойти до
+            # пользователя, а не гаснуть внутри блока (аудит 0.8.0)
+            warnings.simplefilter("always", sla.LinAlgWarning)
             try:
                 x = sla.lu_solve(sla.lu_factor(An), b * s) * s
             except (sla.LinAlgError, np.linalg.LinAlgError):
                 x = None
+        for w in rec:                       # чужие предупреждения — наружу
+            if not issubclass(w.category, sla.LinAlgWarning):
+                warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
         singular = any(issubclass(w.category, sla.LinAlgWarning) for w in rec)
         if x is not None and not singular and np.all(np.isfinite(x)):
             return x
@@ -382,6 +393,39 @@ class KTNPlate(KarmanPlate):
         if self._soft_hinge_bnd:
             J = J - self._h_psi_sq * self._ktn_boundary_term(a, b, c)
         return J
+
+    def _tangent_solve(self, J, rhs):
+        """Ньютоновский шаг уточнённой теории — НЕсимметричным решателем.
+
+        Касательная КТН равна кармановской плюс член (B), несимметричный по
+        построению (``M_2 = (Δψ)ᵀ(...)``; относительная несимметрия порядка
+        ``h²`` — на поставляемом ci-случае 3.4·10⁻²). Симметричный каскад
+        ``membrane._spd_solve`` для такой матрицы неприменим: Холецкий
+        отказывает, и спектральная ступень решает задачу с ``½(A + Aᵀ)`` —
+        МОЛЧА, потому что ранг симметричной части полный. Ошибка шага доходила
+        до 5 %, квадратичность терялась (7 шагов Ньютона вместо 5, аудит
+        0.8.0). Здесь шаг считается LU по ИСХОДНОЙ матрице
+        (:func:`_lin_solve`, с честным фолбэком и предупреждением).
+        """
+        if not self._include_ktn:
+            return super()._tangent_solve(J, rhs)
+        dc = _lin_solve(J, rhs, sink=self._lin_fallbacks)
+        scale = float(np.linalg.norm(rhs))
+        resid = (float(np.linalg.norm(J @ dc - rhs)) / scale if scale > 0.0
+                 else float(np.linalg.norm(J @ dc - rhs)))
+        if np.all(np.isfinite(dc)) and resid <= _TANGENT_RESID_TOL:
+            return dc
+        # ЛИНЕЙНЫЙ шаг не решён (почти вырожденная касательная на высоких p):
+        # берём СИММЕТРИЗОВАННУЮ касательную как предобусловливатель — это
+        # квази-Ньютон, направление остаётся спуском, а неподвижная точка
+        # задаётся ИСТИННОЙ невязкой R(c) и потому не смещается. Симметризация
+        # здесь ЯВНАЯ и записывается в журнал фолбэков (молчаливой её сделал бы
+        # только вызов симметричного каскада на исходной матрице — ровно то,
+        # что запрещено контрактом SPDFactorization).
+        from .membrane import _spd_solve
+
+        self._lin_fallbacks.append(("sym-tangent", 0))
+        return _spd_solve(0.5 * (J + J.T), rhs, label="J_sym (квази-Ньютон КТН)")
 
     def _nonlinear_operator(self, c, forces) -> np.ndarray:
         r"""Оператор невязки КТН: Карман ``+ h_ψ²(M_2 − B_∂Ω)`` (§3.5), применённый к ``c``."""

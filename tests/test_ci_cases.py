@@ -35,8 +35,12 @@ def test_ci_case_verifies(case, tmp_path):
 def test_every_contact_case_is_actually_gated():
     """ВОРОТА против «вакуумного PASS»: у каждого контактного случая есть гейты.
 
-    Проверяется НАЛИЧИЕ гейтуемых строк (эталон и/или инварианты) — чтобы
-    зелёный реестр означал проверку, а не молчание.
+    Проверяется наличие гейтуемых строк, причём хотя бы одной СОДЕРЖАТЕЛЬНОЙ:
+    строка «r ≥ 0» структурно непроваливаема (проекция МОР даёт r ≥ 0 всегда),
+    поэтому сама по себе она вакуумность не опровергает — до v0.8.0 ею и
+    удовлетворялся этот тест (аудит 0.8.0). Содержательными считаются строки,
+    которые способны покраснеть: эталон, проникание, существование/отсутствие
+    контакта, замыкание ∫r = P.
     """
     from plate_solver.dispatch import solve
     from plate_solver.problem import Problem
@@ -51,6 +55,10 @@ def test_every_contact_case_is_actually_gated():
         gated = [r for r in report.rows if r.gated]
         assert gated, f"{path.name}: ни одной гейтуемой строки (вакуумный PASS)"
         assert any("инвариант" in r.name for r in gated), path.name
+        substantive = [r for r in gated if "r ≥ 0" not in r.name]
+        assert substantive, (
+            f"{path.name}: единственные ворота — структурно непроваливаемая "
+            "строка «r ≥ 0»; это и есть вакуумный PASS")
         assert report.ok, f"{path.name}: {[r.name for r in gated if not r.passed]}"
         checked += 1
     assert checked >= 10, f"контактных ci-случаев найдено {checked}"

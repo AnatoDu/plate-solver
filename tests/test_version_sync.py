@@ -34,6 +34,17 @@ def _read_json_version(name: str) -> str:
     return json.loads((ROOT / name).read_text(encoding="utf-8"))["version"]
 
 
+def test_codemeta_download_url_points_at_current_tag():
+    """``downloadUrl`` codemeta обязан указывать на тег ТЕКУЩЕЙ версии.
+
+    В волне 0.8.0 поле осталось на архиве v0.7.0: ворота сверяли только
+    ``version``, и харвестеру (Zenodo/CodeMeta) достался бы архив прошлого
+    релиза при верной версии в записи (аудит 0.8.0).
+    """
+    url = json.loads((ROOT / "codemeta.json").read_text(encoding="utf-8"))["downloadUrl"]
+    assert f"v{plate_solver.__version__}" in url, url
+
+
 def test_citation_cff_version_matches_package():
     assert _read_cff_version() == plate_solver.__version__
 

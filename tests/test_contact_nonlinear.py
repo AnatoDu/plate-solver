@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -365,6 +367,35 @@ def test_ktn_pair_rigid_second_reduces_to_support(tmp_path):
     assert stiff.w_max == pytest.approx(compression, rel=0.25)   # это обжатие, не изгиб
     assert compression < 1e-2 * soft.w_free_max                  # опёрта на жёсткое основание
     assert stiff.w_max < 1e-2 * soft.w_free_max
+
+
+def test_pair_honours_contact_stop(tmp_path):
+    """Ключ ``contact.stop`` уважается и ПАРОЙ пластин (аудит 0.8.0).
+
+    До исправления нелинейный парный тракт ключ не читал: ``stop = "comp"``
+    давал БИТ-В-БИТ тот же результат, что ``"dr"``, хотя схема документирует
+    оба значения, а релиз 0.7.0 объявлял ключ проведённым во все тракты.
+    Ворота требуют, чтобы критерий действительно менял ход итерации и чтобы
+    KKT-невязка при ``"comp"`` была не хуже.
+    """
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    data = tomllib.loads(
+        (root / "cases" / "ci" / "ktn_full_two_plates_contact.toml").read_text(
+            encoding="utf-8"))
+    data.pop("output", None)
+
+    def run(stop):
+        d = {k: (dict(v) if isinstance(v, dict) else v) for k, v in data.items()}
+        if stop is not None:
+            d["contact"] = {**d["contact"], "stop": stop}
+        return dispatch.solve(Problem.from_dict(d)).contact
+
+    dr, comp = run("dr"), run("comp")
+    assert dr.converged and comp.converged
+    assert comp.iters != dr.iters, "критерий останова не влияет — ключ снова игнорируется"
+    assert comp.comp_residual <= dr.comp_residual
 
 
 def test_reject_mixed_theory_pair(tmp_path):

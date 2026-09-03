@@ -71,6 +71,7 @@ Gate L). Слоистая архитектура: КТН-члены полной
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -221,6 +222,8 @@ def _spd_solve(A: np.ndarray, b: np.ndarray, *, label: str = "K (Карман)")
     предупреждением ``FactorizationWarning`` и попадает в ``Result.warnings``
     (аудит P02). ``b`` — вектор или матрица столбцов правых частей.
     """
+    from .poisson import FactorizationWarning
+
     d = np.diag(A)
     if np.all(d > 0.0):
         s = 1.0 / np.sqrt(d)
@@ -230,6 +233,17 @@ def _spd_solve(A: np.ndarray, b: np.ndarray, *, label: str = "K (Карман)")
 
         xn = SPDFactorization(An, label=label).solve(bn)
         return (xn.T * s).T if b.ndim > 1 else xn * s
+    # НЕПОЛОЖИТЕЛЬНАЯ ДИАГОНАЛЬ — масштабирование неприменимо, и это уже не
+    # вопрос обусловленности: SPD-матрица обязана иметь A_kk > 0. Уходим в МНК,
+    # но ГРОМКО (прежде эта ветка молчала — вопреки собственному докстрингу,
+    # аудит 0.8.0).
+    n_bad = int(np.count_nonzero(d <= 0.0))
+    warnings.warn(
+        f"{label}: {n_bad} из {d.size} диагональных элементов ≤ 0 — матрица не "
+        "положительно определена, симметричное масштабирование неприменимо; "
+        "решение получено МНК (минимально-нормальное), то есть НЕ решением "
+        "исходной системы, если она вырождена. Проверьте постановку.",
+        FactorizationWarning, stacklevel=3)
     return np.linalg.lstsq(A, b, rcond=1e-13)[0]
 
 
@@ -610,6 +624,17 @@ class KarmanPlate:
             b = b + self._b_thermal
         return b
 
+    def _tangent_solve(self, J: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+        """Решение ньютоновского шага ``J·dc = rhs``.
+
+        У Кармана касательный оператор СИММЕТРИЧЕН (вторая вариация энергии),
+        поэтому идёт симметричный каскад. Уточнённая теория добавляет к нему
+        несимметричный член (B) и переопределяет этот хук на несимметричный
+        решатель (:func:`ktn_full._lin_solve`): симметричный каскад в таком
+        случае молча решал бы СИММЕТРИЗОВАННУЮ задачу (аудит 0.8.0).
+        """
+        return _spd_solve(J, rhs)
+
     def _solve_newton(self, f_values, c0=None, b_extra=None) -> KarmanResult:
         r"""Ньютон с согласованным касательным оператором и бэктрекингом (§5.4).
 
@@ -657,7 +682,7 @@ class KarmanPlate:
                 if rn < tol:
                     converged = True
                     break
-                dc = _spd_solve(self._newton_tangent(c, forces), -r)
+                dc = self._tangent_solve(self._newton_tangent(c, forces), -r)
                 alpha = 1.0
                 new_norm = r_norm
                 for _ in range(30):             # бэктрекинг по норме остатка

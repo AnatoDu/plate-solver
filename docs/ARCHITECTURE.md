@@ -80,6 +80,7 @@ flowchart TD
     clamped --> problem
     clamped --> quadrature
     clamped --> verify_fem
+    cli --> config
     cli --> dispatch
     cli --> problem
     cli --> references
@@ -92,6 +93,7 @@ flowchart TD
     contact_face --> ktn
     contact_face --> ktn_solver
     contact_face --> membrane
+    contact_face --> poisson
     contact_nl --> config
     contact_nl --> diagnostics
     contact_nl --> faces

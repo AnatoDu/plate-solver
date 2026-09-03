@@ -23,9 +23,10 @@ curvature+reaction 15.48      28   да (4220)
 
 Вывод (важен для NOTES §11, §18): регуляризацию контакта даёт член ПОДАТЛИВОСТИ
 ``−κ_r·r`` — положительная диагональная добавка к оператору задачи
-дополнительности; кривизный член лишь перераспределяет реакцию (при h = 0.06 он
-даже ПОВЫШАЕТ пик на 10 %), а член нагрузки — почти постоянный сдвиг лицевой
-(< 1 %). До v0.8.0 сглаживание ошибочно приписывалось кривизному члену.
+дополнительности; кривизный член лишь перераспределяет реакцию (пика он не
+снижает: при h = 0.06 и том же бюджете 6000 — +0.4 %), а член нагрузки —
+почти постоянный сдвиг лицевой (< 1 %). До v0.8.0 сглаживание ошибочно
+приписывалось кривизному члену.
 """
 
 from __future__ import annotations
@@ -234,3 +235,43 @@ def test_exported_face_matches_mor_constraint_for_ktn_full():
     err_mid = float(np.nanmax(np.abs(res.w_grid[zone] - delta))) / delta
     assert err_face < 1e-2, "экспортируемая лицевая не совпадает с условием МОР"
     assert err_face < err_mid, "лицевая обязана лежать к препятствию ближе срединной"
+
+
+def test_local_pressure_and_kkt_scale_for_nonuniform_load(setup):
+    r"""Неравномерная нагрузка: в формулу (9) идёт ДАВЛЕНИЕ В ТОЧКЕ (v0.8.0).
+
+    Формула (9) содержит локальное давление ``q⁺(x, y)``; до v0.8.0
+    подставлялась скалярная амплитуда ``cfg.q0``, что давало постоянный
+    нефизический сдвиг лицевой ВНЕ пятна нагрузки. Проверяется тремя
+    независимыми признаками:
+
+    * ``_q_load()`` возвращает ПОЛЕ, а не скаляр, когда задан ``load_values``;
+    * лицевой прогиб отличается от «скалярного» варианта именно там, где поле
+      отличается от амплитуды, и ровно на ``κ_q·(q₀ − q(x, y))``;
+    * масштаб KKT-метрик — ``max|q|`` поля, а не ``cfg.q0`` (для гауссианы это
+      разные числа; при ``q₀ = 0`` прежняя нормировка давала NaN).
+    """
+    pb, cfg, gap, fmask = setup
+    q = pb.quad
+    kp = KTNParams.from_config(cfg)
+    # локализованная гауссиана с ПИКОМ ниже амплитуды cfg.q0
+    f = 0.5 * cfg.q0 * np.exp(-((q.x - 0.3) ** 2 + (q.y - 0.3) ** 2) / 0.02)
+
+    mor_field = ContactMOR(pb, cfg, foundation_mask=fmask, gap=gap, ktn=kp,
+                           load_values=f)
+    mor_scalar = ContactMOR(pb, cfg, foundation_mask=fmask, gap=gap, ktn=kp)
+
+    assert isinstance(mor_field._q_load(), np.ndarray)          # поле, не скаляр
+    assert mor_scalar._q_load() == cfg.q0
+    assert mor_field._q_ref == pytest.approx(float(np.max(np.abs(f))))
+    assert mor_field._q_ref < abs(cfg.q0)                       # пик поля ниже амплитуды
+
+    # разность лицевых при одном и том же прогибе — ровно κ_q·(q₀ − q(x, y))
+    state = pb.solve(f)
+    w = pb.w_at_quad(state)
+    r0 = np.zeros(q.x.size)
+    u_field = mor_field._contact_disp(state, w, r0)
+    u_scalar = mor_scalar._contact_disp(state, w, r0)
+    assert np.allclose(u_scalar - u_field, kp.kappa_q * (f - cfg.q0), rtol=1e-12,
+                       atol=1e-18)
+    assert np.max(np.abs(u_scalar - u_field)) > 0.0             # ворота невакуумны

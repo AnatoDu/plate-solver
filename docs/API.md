@@ -89,7 +89,9 @@ print(res.w_max)
 ## Контакт (метод обобщённой реакции)
 
 - `contact.solve_contact(cfg, domain, foundation_mask=None, gap=None,
-  ktn=None)` — фасад: изгиб + односторонний контакт с жёстким основанием.
+  ktn=None, *, r0=None, face_terms=None)` — `r0` (v0.8.0): тёплый старт
+  реакции (проекция на допустимое множество автоматическая);
+  `face_terms` (v0.8.0): лестница слагаемых лицевого условия — фасад: изгиб + односторонний контакт с жёстким основанием.
 - `contact.ContactMOR` — итерация r ← [r + β(u − Δ)]₊ (тёплый старт
   `solve(r0)`, поле зазора, критерии останова dr|comp).
 - `contact.ContactResult` — r в узлах/на сетке, зона, история сходимости,
@@ -123,8 +125,8 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 
 ## Нелинейный контакт МОР+КТН (`contact_nl.py`, v0.6.0)
 
-- `contact_nl.NonlinearContactMOR(solver, cfg, gap, foundation_mask, scheme,
-  f_values)` — `f_values` (v0.7.0): произвольное поле нагрузки в узлах
+- `contact_nl.NonlinearContactMOR(solver, cfg, *, gap, foundation_mask=None,
+  scheme=None, gain_mode="secant", f_values=None, face_terms=None)` — `f_values` (v0.7.0): произвольное поле нагрузки в узлах
   квадратуры (позиционное основание; gaussian/expr через case);
   метод обобщённой реакции вокруг полного нелинейного `KTNSolver` (§4). Лицевое
   условие Синьорини `u_c = w + (h_c²−h_*²)Δw ≤ z` (кривизна масштабируется
@@ -143,8 +145,8 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 - `contact_nl.NonlinearContactResult` — реакция `r`, прогибы `w`/`u_c`, маска
   зоны контакта, число контактных узлов и связных пятен (`n_components`), пиковая
   реакция и её локализация, история МОР.
-- `contact_nl.NonlinearTwoPlateMOR(solver1, solver2, cfg, gap, f1, f2, q2,
-  foundation_mask, face_terms)` — ВЗАИМНЫЙ контакт двух пластин КТН (§9.2):
+- `contact_nl.NonlinearTwoPlateMOR(solver1, solver2, cfg, *, gap=0.0, f1=None,
+  f2=None, q2=None, foundation_mask=None, gain_mode="secant", face_terms=None)` — ВЗАИМНЫЙ контакт двух пластин КТН (§9.2):
   общая реакция `r` определяется совместно, `f₁−r` / `f₂+r` (3-й закон
   Ньютона), непроникание лицевых `u_c1 − u_c2 ≤ z`; лицевые — по полной
   формуле (9) обеих пластин (метод `faces(c1, c2, r)`), податливости граней
@@ -159,15 +161,15 @@ viz.plot_contact_summary(cfg, res, save="contact_L.png")
 
 Постобработка результата контакта (§8): размер, топология, сила.
 
-- `diagnostics.contact_components(x, y, mask, radius=None)` — число связных пятен
+- `diagnostics.contact_components(x, y, mask, *, radius=None)` — число связных пятен
   контакта. Штатный путь (v0.8.0) — разметка 4-связностью ПО РЕШЁТКЕ тензорной
   квадратуры (не зависит от неравномерности шага Гаусса); граф близости
   (union–find, порог `1.8·s`) остаётся запасным для нерегулярных наборов точек
   и при явном `radius`.
-- `diagnostics.contact_report(r_nodes, quad, radius=None)` — сводка: `n_contact`,
+- `diagnostics.contact_report(r_nodes, quad, *, radius=None)` — сводка: `n_contact`,
   `contact_fraction` (доля площади), `r_max`/`peak_xy` (пик и локализация),
   `r_total` (суммарная сила `∫r dA`), `n_components` (число пятен).
-- `diagnostics.contact_interior_stats(r_nodes, quad, q_ref, depth=0.15, band=0.10)`
+- `diagnostics.contact_interior_stats(r_nodes, quad, *, q_ref, depth=0.15, band=0.10)`
   — статистика ВНУТРЕННОСТИ зоны (v0.8.0): отделяет глубину от кромки по
   расстоянию до ближайшего неконтактного узла и даёт `mean`, `std` величины
   `r/q_ref`, долю узлов на «плато» `|r/q − 1| ≤ band` и максимальную глубину
@@ -274,9 +276,10 @@ Exit-код 0 ⇔ все случаи воспроизвелись.
 - `faces.FaceParams` — параметры лицевых величин с КАНОНИЧЕСКИМИ именами (§3.2):
   `h_psi_sq` (h_ψ²), `h_star_sq` (h_*²), `h_c_sq` (h_c² = h_ψ²−h_*², assert),
   `c_curv`, `mu`, `D`; `from_config`, `introspection(length)` (§6.3: h/L и
-  порядок (h/L)²), `face_deflection(w, Δw, q, r, surface)` (нижняя грань — канон
+  порядок (h/L)²), `face_deflection(w, Δw, q, r=0.0, *, surface="bottom", terms=None)` (нижняя грань — канон
   §21.1, число-в-число `ktn_linear` через `ktn()`), `mid_corrected` (для w_max).
-- `faces.face_stresses(Mx, My, Mxy, h, nu, q_top, q_bottom, Nx, Ny, Nxy)` —
+- `faces.face_stresses(Mx, My, Mxy, *, h, nu, q_top=0.0, q_bottom=0.0,
+  Nx=None, Ny=None, Nxy=None)` —
   полные лицевые напряжения: изгиб + обжатие (`ktn.stresses_faces`) + мембрана
   `N/h` (нелинейные теории).
 - `faces.membrane_face_stress(Nx, Ny, Nxy, h)` — мембранная составляющая `N/h`.

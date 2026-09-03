@@ -109,10 +109,19 @@ from plate_solver.geometry import make_L
 
 cfg = Config(h=0.06, p=10, Q=120, Delta=5.0e-5, max_iter=8000)
 res = solve_contact(cfg, make_L(side=1.0, cut=0.5))  # изгиб + односторонний контакт (МОР)
-print(f"итераций МОР: {res.iters}, узлов контакта: {int((res.r_nodes > 0).sum())}")
+print(f"итераций МОР: {res.iters}, сошлось: {res.converged}")   # ЧИТАТЬ ОБЯЗАТЕЛЬНО
+print(f"узлов контакта: {int((res.r_nodes > 0).sum())}")
 print(f"комплементарность: {res.comp_residual:.1e}, перелёт зазора: {res.gap_overshoot:.1e}")
 viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 ```
+
+Флаг `res.converged` в этом примере — `False`: классический контакт под
+жёстким основанием «полусходится» (пик давления у кромки зоны растёт с
+бюджетом — особенность решения Кирхгофа, docs/NOTES.md §11), поэтому
+смотреть надо на невязку комплементарности и перелёт зазора, а не на
+флаг. Тракт case-файла в таком случае пишет предупреждение в
+`Result.warnings`; уточнённые теории (`ktn_linear`/`ktn_full`) сходятся
+за счёт члена податливости.
 
 ## Числа ↔ скрипты ↔ тесты
 
@@ -139,7 +148,7 @@ viz.plot_contact_summary(cfg, res).savefig("contact_L.png", dpi=150)
 ## Запуск
 
 ```bash
-pytest -m "not big and not fem"     # быстрые ворота (~1 мин)
+pytest -m "not big and not fem"     # быстрые ворота (~15–20 мин на ядре)
 pytest                              # все ворота (big: Q≥1024; fem: scikit-fem)
 python examples/circular_plate.py   # минимальный пример (аналитика)
 python scripts/run_reference.py     # единый эталонный прогон (из корня)

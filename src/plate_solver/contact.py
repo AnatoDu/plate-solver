@@ -184,6 +184,34 @@ class ContactMOR:
             self.gain = float(np.max(np.abs(face_unit))) + (ktn.kappa_r if use_r else 0.0)
         self.beta_eff = cfg.beta / self.gain
 
+    def free_overlap(self) -> float:
+        r"""Перекрытие зазора СВОБОДНЫМ решением В ЗОНЕ основания (v0.8.0).
+
+        .. math:: \max_{i \in \text{зона}} \big(u_i(r = 0) - \Delta_i\big)
+
+        Положительная величина означает, что при выключенном контакте
+        поверхность пластины зашла бы за препятствие, то есть касание ОБЯЗАНО
+        существовать; неположительная — что верный ответ ``r ≡ 0``.
+
+        Меряется ТА ЖЕ поверхность, по которой стоит условие непроникания
+        (лицевая при уточнённых теориях), и ТОЛЬКО под основанием. Прежде
+        ворота инвариантов сравнивали с зазором ГЛОБАЛЬНЫЙ ``max|w_free|``:
+        при штампе, не накрывающем точку максимума прогиба, они требовали
+        контакта там, где его физически быть не должно, и ``plate-verify``
+        краснел на верном результате (аудит волны 0.8.0).
+        """
+        q = self.plate.quad
+        state = self.plate.solve(self._f_field())
+        w = self.plate.w_at_quad(state)
+        u = self._contact_disp(state, w, np.zeros(q.x.size))
+        return float(np.max(u[self.fmask] - self._gap_f, initial=-np.inf))
+
+    def _f_field(self) -> np.ndarray:
+        """Поле нагрузки в узлах (скаляр ``cfg.q0`` разворачивается в массив)."""
+        n = self.plate.quad.x.size
+        return np.full(n, float(self.cfg.q0)) if self.load is None else np.asarray(
+            self.load, float)
+
     def solve(self, r0: np.ndarray | None = None) -> ContactResult:
         r"""Запустить внешний цикл МОР и вернуть :class:`ContactResult`.
 
@@ -516,6 +544,12 @@ class TwoPlateMOR:
         sf2 = plate2.solve_from_b(self.b2_base)
         self.w_scale = (float(np.max(np.abs(plate1.w_at_quad(sf1))))
                         + float(np.max(np.abs(plate2.w_at_quad(sf2)))))
+        # МАСШТАБ НАГРУЗКИ для KKT-метрик: max|q| обеих пластин, а не знаковый
+        # cfg.q0 (при q₀ < 0 знак портил невязку, при q₀ = 0 давал NaN —
+        # одиночный тракт исправлен в 0.8.0, пара оставалась на q0)
+        self._q_ref = max(float(np.max(np.abs(self.f1))),
+                          float(np.max(np.abs(np.atleast_1d(f2)))),
+                          abs(float(cfg.q0)), 1e-300)
 
     def _u_contact(self, state1, cw2) -> tuple[np.ndarray, np.ndarray]:
         """(w₁ в узлах первой, u = w₁ − w₂ в контактных узлах)."""
@@ -527,10 +561,26 @@ class TwoPlateMOR:
         """Безразмерная KKT-невязка пары (нормировка w_scale, Δ может быть 0)."""
         rm = r[self.mask]
         comp = float(np.max(np.abs(rm * (u - self.gap_c))) /
-                     (self.cfg.q0 * self.w_scale))
+                     (self._q_ref * self.w_scale))
         pen = float(np.max(np.maximum(u - self.gap_c, 0.0), initial=0.0)
                     / self.w_scale)
         return max(comp, pen)
+
+    def free_overlap(self) -> float:
+        r"""Свободное СБЛИЖЕНИЕ пары минус зазор, в зоне возможного контакта.
+
+        .. math:: \max_{i \in \text{зона}} \big((w_1 - w_2)\big|_{r=0} - z_i\big)
+
+        Для пары условие непроникания стоит на СБЛИЖЕНИИ, а не на прогибе
+        первой пластины: две одинаковые пластины под одинаковой нагрузкой
+        не соприкасаются никогда, как бы велик ни был их прогиб (аудит
+        волны 0.8.0).
+        """
+        s1 = self.plate1.solve(self.f1 if np.ndim(self.f1) else
+                               np.full(self.plate1.quad.x.size, self.f1))
+        cw2 = self.plate2.coeffs_w(self.plate2.solve_from_b(self.b2_base))
+        _, u = self._u_contact(s1, cw2)
+        return float(np.max(u - self.gap_c, initial=-np.inf))
 
     def solve(self, r0: np.ndarray | None = None) -> TwoPlateResult:
         """Внешний цикл МОР пары пластин; критерии останова — как у ContactMOR."""
@@ -552,7 +602,7 @@ class TwoPlateMOR:
             w1, u = self._u_contact(state1, cw2)
             if self.stop == "comp":
                 comp = float(np.max(np.abs(r[self.mask] * (u - self.gap_c))) /
-                             (cfg.q0 * self.w_scale))
+                             (self._q_ref * self.w_scale))
                 pen = float(np.max(np.maximum(u - self.gap_c, 0.0), initial=0.0)
                             / self.w_scale)
                 if max(comp, pen) < cfg.tol:
@@ -576,7 +626,7 @@ class TwoPlateMOR:
         w1, u = self._u_contact(state1, cw2)
         rm = r[self.mask]
         comp = float(np.max(np.abs(rm * (u - self.gap_c))) /
-                     (cfg.q0 * self.w_scale))
+                     (self._q_ref * self.w_scale))
         contact = rm > 0.0
         over = (float(np.max((u - self.gap_c)[contact])) / self.w_scale
                 if contact.any() else float("nan"))

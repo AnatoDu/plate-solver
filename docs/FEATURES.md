@@ -147,7 +147,7 @@ tests/test_doc_matrix.py).
 | analytic | `simply_supported_uniform_wmax` | API.md | test_analytic.py |
 | analytic_auto | `CertifiedSolution` | API.md | analytic_auto.py |
 | analytic_auto | `FactoryError` | API.md | test_analytic_factory.py |
-| analytic_auto | `axisym_contact_solution` | API.md | test_analytic_factory.py, test_contact_certified.py |
+| analytic_auto | `axisym_contact_solution` | API.md | test_analytic_factory.py, test_contact_certified.py, test_contact_ktn_certificate.py |
 | analytic_auto | `axisym_solution` | API.md | test_analytic_factory.py |
 | analytic_auto | `levy_solution` | API.md | test_analytic_factory.py, test_free_edge.py |
 | analytic_auto | `navier_solution` | API.md | test_analytic_factory.py |
@@ -177,17 +177,17 @@ tests/test_doc_matrix.py).
 | config | `Config` | API.md, CASE_SCHEMA.md, README.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
 | contact | `ContactMOR` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, run_ktn.py |
 | contact | `ContactResult` | API.md | run_lshape_contact.py |
-| contact | `TwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py, test_two_plates.py |
+| contact | `TwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py, test_doc_matrix.py |
 | contact | `TwoPlateResult` | API.md | __init__.py, contact.py, contact_nl.py |
 | contact | `sample_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `sample_pair_fields_on_grid` | API.md | contact.py, dispatch.py |
 | contact | `solve_contact` | API.md, README.md, dispatch_flow.md | test_analytic_factory.py, test_contact_nonlinear.py, test_face_deflection.py |
 | contact_nl | `NonlinearContactMOR` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, test_contact_face.py |
 | contact_nl | `NonlinearContactResult` | API.md | __init__.py, contact_nl.py, dispatch.py |
-| contact_nl | `NonlinearTwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py |
+| contact_nl | `NonlinearTwoPlateMOR` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 08_stamp_two_plates.ipynb, test_contact_ktn.py, test_doc_matrix.py |
 | contact_nl | `NonlinearTwoPlateResult` | API.md | __init__.py, contact_nl.py, dispatch.py |
-| diagnostics | `contact_components` | API.md | test_diagnostics.py |
-| diagnostics | `contact_interior_stats` | ALGORITHMS.md, API.md, ARCHITECTURE.md | test_diagnostics.py |
+| diagnostics | `contact_components` | API.md | test_diagnostics.py, test_doc_matrix.py |
+| diagnostics | `contact_interior_stats` | ALGORITHMS.md, API.md, ARCHITECTURE.md | test_diagnostics.py, test_doc_matrix.py, test_lshape_plateau.py |
 | diagnostics | `contact_report` | API.md | 07_theory_ladder.ipynb, 08_stamp_two_plates.ipynb, test_diagnostics.py |
 | dispatch | `Result` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, run_lshape_contact.py |
 | dispatch | `build_domain` | API.md, dispatch_flow.md | test_dispatch.py, test_dispatch_guards.py, test_gap_field.py |
@@ -201,7 +201,7 @@ tests/test_doc_matrix.py).
 | export | `to_vtk` | API.md | test_export.py |
 | faces | `FaceParams` | ALGORITHMS.md, API.md, MIGRATION.md | test_contact_ktn.py, test_contact_nonlinear.py, test_faces.py |
 | faces | `FaceTerms` | ALGORITHMS.md, API.md, ARCHITECTURE.md | test_face_terms.py |
-| faces | `face_stresses` | ALGORITHMS.md, API.md | test_faces.py |
+| faces | `face_stresses` | ALGORITHMS.md, API.md | test_doc_matrix.py, test_faces.py |
 | faces | `membrane_face_stress` | API.md | test_faces.py |
 | geometry | `BBox` | API.md | basis.py, geometry.py, quadrature.py |
 | geometry | `Domain` | API.md | run_ladder_mms.py, test_mms_ktn.py, test_stresses.py |
@@ -221,7 +221,7 @@ tests/test_doc_matrix.py).
 | geometry | `rectangle_expr` | API.md | geometry.py |
 | geometry | `x` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
 | geometry | `y` | ALGORITHMS.md, API.md, ARCHITECTURE.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
-| ktn | `KTNParams` | API.md, MIGRATION.md, NOTES.md | run_ktn.py, test_contact_ktn.py, test_face_deflection.py |
+| ktn | `KTNParams` | API.md, MIGRATION.md, NOTES.md | run_ktn.py, test_contact_ktn.py, test_contact_ktn_certificate.py |
 | ktn | `PlateMaterial` | API.md | circular_plate.py, conftest.py, test_smoke.py |
 | ktn | `flexural_rigidity` | API.md | test_analytic.py, test_smoke.py |
 | ktn | `stresses_faces` | ALGORITHMS.md, API.md, MIGRATION.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb, test_faces.py |

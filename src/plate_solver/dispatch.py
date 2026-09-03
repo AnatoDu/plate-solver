@@ -144,6 +144,11 @@ def _suggest_Q(cfg, m_nodes: int, n_basis: int) -> int:
     return int(np.ceil(np.sqrt(2.0 * n_basis / frac)))
 
 
+#: доля размера пластины: перекрытие УЖЕ этой ширины — предупреждение
+#: (измерения занижения прогиба — в докстринге _check_union_overlap)
+NARROW_OVERLAP_FRACTION = 0.25
+
+
 def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
     r"""Ограда операндов ``union`` (v0.8.0): внутренние линии ``ω = 0`` и связность.
 
@@ -159,17 +164,25 @@ def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
     должны перекрываться ПО МЕРЕ, ``max min(ω_i, ω_j) > 0``. Строим граф
     «перекрываются» и требуем его СВЯЗНОСТИ: иначе область либо распадается на
     независимые пластины (сводные w_max и зона контакта бессмысленны), либо
-    склеена по линии нулевой меры. Узкое перекрытие (< 10 % масштаба ``ω``,
-    т.е. примерно < 3 % размера пластины) — предупреждение: в «долине» почти
-    нулевой ``ω`` структура вырождается, прогиб занижается (при 10 %
-    перекрытия и p = 8 — на 18 %), обусловленность падает.
+    склеена по линии нулевой меры.
+
+    Узкое перекрытие — ПРЕДУПРЕЖДЕНИЕ, и меряется оно ШИРИНОЙ зоны перекрытия
+    (длиной!) относительно размера пластины, а не значением ``ω``. Значение
+    ``ω`` для этого не годится: на объединении двух полос в единичный квадрат
+    отношение ``min_ov/scale`` равно 0.12 даже при ширине перекрытия 0.40, так
+    что прежний порог «< 10 % масштаба ω» срабатывал лишь при ширине ≲ 0.025 —
+    ровно там, где занижение уже 87 %, а вся зона 3…20 % (занижение 86 → 8 %)
+    проходила МОЛЧА (аудит 0.8.0). Измерено (защемление, p = 8): ширина 0.03 —
+    −87 %, 0.05 — −84 %, 0.10 — −18 %, 0.20 — −8 %, 0.40 — −4.6 %; мягкий
+    шарнир мягче (−63 %, −30 %, −3 %, −0.7 %). Отсюда порог
+    :data:`NARROW_OVERLAP_FRACTION`. ОСТАТОЧНАЯ погрешность в несколько
+    процентов сохраняется и при широком перекрытии: составная ``ω`` — иная
+    структура, чем ``ω`` одного примитива; где область выражается одним
+    примитивом, его и следует задавать.
     """
     from .geometry import _compose_node
 
     x0, x1, y0, y1 = dom.bbox
-    gx, gy = np.linspace(x0, x1, probe), np.linspace(y0, y1, probe)
-    XX, YY = np.meshgrid(gx, gy)
-    scale = float(np.max(dom.omega(XX, YY)))          # масштаб ω самой области
 
     def walk(node: dict) -> None:
         if "op" not in node:
@@ -189,6 +202,7 @@ def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
             return a
 
         min_ov = float("inf")
+        min_width = float("inf")                        # ШИРИНА перекрытия (длина!)
         for i in range(n):
             for j in range(i + 1, n):
                 (e1, b1), (e2, b2) = parts[i], parts[j]
@@ -201,9 +215,18 @@ def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
                 px = np.linspace(lo_x, hi_x, probe)
                 py = np.linspace(lo_y, hi_y, probe)
                 PX, PY = np.meshgrid(px, py)
-                ov = float(np.max(np.minimum(d1.omega(PX, PY), d2.omega(PX, PY))))
+                w1, w2 = d1.omega(PX, PY), d2.omega(PX, PY)
+                ov = float(np.max(np.minimum(w1, w2)))
                 if ov > 0.0:                            # перекрытие ненулевой меры
                     min_ov = min(min_ov, ov)
+                    # линейная ШИРИНА зоны перекрытия по «тонкому» направлению:
+                    # именно она (а не значение ω) определяет качество структуры
+                    both = (w1 > 0.0) & (w2 > 0.0)
+                    cols = np.count_nonzero(both.any(axis=0))
+                    rows_ = np.count_nonzero(both.any(axis=1))
+                    dx = (hi_x - lo_x) / max(probe - 1, 1)
+                    dy = (hi_y - lo_y) / max(probe - 1, 1)
+                    min_width = min(min_width, min(cols * dx, rows_ * dy))
                     ri, rj = find(i), find(j)
                     if ri != rj:
                         parent[ri] = rj
@@ -217,12 +240,17 @@ def _check_union_overlap(tree: dict, dom, *, probe: int = 257) -> None:
                 "операнды — это две независимые пластины, для которых сводные "
                 "величины бессмысленны. Задайте примитивы с ПЕРЕКРЫТИЕМ; "
                 f"см. {_SCHEMA_DOC}#compose")
-        if np.isfinite(min_ov) and min_ov < 0.1 * scale:
+        size = min(x1 - x0, y1 - y0)                   # характерный размер пластины
+        if np.isfinite(min_width) and min_width < NARROW_OVERLAP_FRACTION * size:
             warnings.warn(
-                "geometry.compose: операнды union перекрываются УЗКО "
-                f"(max min(ω_i, ω_j) = {min_ov:.2e} против масштаба ω {scale:.2e}): "
-                "в «долине» почти нулевой ω структура вырождается — прогиб "
-                "занижается, обусловленность падает. Увеличьте перекрытие.",
+                "geometry.compose: операнды union перекрываются УЗКО (ширина "
+                f"перекрытия {min_width:.3g} против размера пластины {size:.3g}, "
+                f"порог {NARROW_OVERLAP_FRACTION:.0%}): в «долине» почти нулевой ω "
+                "структура вырождается — прогиб ЗАНИЖАЕТСЯ (измерено на "
+                "объединении двух полос в единичный квадрат, защемление, p = 8: "
+                "−87 % при ширине 0.03, −84 % при 0.05, −18 % при 0.10, −8 % при "
+                "0.20), обусловленность падает. Увеличьте перекрытие; там, где "
+                "область выражается ОДНИМ примитивом, задавайте её примитивом.",
                 RuntimeWarning, stacklevel=2)
 
     walk(tree)
@@ -256,6 +284,11 @@ class Result:
     level: float | None = None         # силовой штамп (A2): найденный уровень
     force_total: float | None = None   # ∫r dΩ при решении (силовой режим)
     w_free_max: float | None = None    # max|w| без контакта (опора gap_factor)
+    # ОЖИДАЕМОСТЬ КОНТАКТА (v0.8.0): max по ЗОНЕ основания от (свободное смещение
+    # контактной поверхности − Δ). > 0 ⇒ касание обязано быть. Глобальный
+    # w_free_max для этого не годится: под штампом у кромки прогиб иной, а у пары
+    # условие стоит на СБЛИЖЕНИИ лицевых, а не на прогибе первой пластины.
+    free_overlap: float | None = None
     # нагрузка point (после защиты ≥ MIN_ZONE_NODES узлов)
     eps_eff: float | None = None
     # чистый изгиб
@@ -274,6 +307,7 @@ class Result:
             "w_max_classic": self.w_max_classic,
             "delta": self.delta,
             "w_free_max": self.w_free_max,
+            "free_overlap": self.free_overlap,
             "eps_eff": self.eps_eff,
             "level": self.level,
             "force_total": self.force_total,
@@ -467,7 +501,12 @@ class Result:
         fp = FaceParams.from_config(self.config)
         # u_c контактирующей (нижней) лицевой — та же кинематика (§21.1); для
         # ktn_full прогиб w и кривизна Δw уже несут КТН-регуляризацию.
-        w_bot = fp.face_deflection(self.w_grid, lap, q_top, q_bot, surface="bottom")
+        # ЛЕСТНИЦА СЛАГАЕМЫХ обязана дойти и до экспорта: при выключенном члене
+        # (`[model.face_terms]`) МОР держит непроникание по УСЕЧЁННОЙ лицевой, и
+        # поле w_bot должно быть той же величиной, иначе экспорт расходится с
+        # условием ровно на выброшенный член (аудит O04 через новый ключ).
+        w_bot = fp.face_deflection(self.w_grid, lap, q_top, q_bot, surface="bottom",
+                                   terms=_face_terms(self.config))
         return self.w_grid.copy(), w_bot, w_bot - self.w_grid
 
     def thickness_params(self) -> dict:
@@ -1345,7 +1384,7 @@ def _check_pair_gap_expr(spec, gap_val) -> None:
 
 def _check_support_points(problem, cfg, dom, warnings: list) -> None:
     """Проверка точек [supports] (v0.7.0): внутри Ω; предупреждения у кромки/при
-    экстремальной жёсткости (риск потери ПД — МНК-fallback)."""
+    экстремальной жёсткости (риск потери положительной определённости)."""
     pts = problem.supports.points
     xs = np.array([pt[0] for pt in pts])
     ys = np.array([pt[1] for pt in pts])
@@ -1366,18 +1405,22 @@ def _check_support_points(problem, cfg, dom, warnings: list) -> None:
     k = float(cfg.supports_stiffness)
     scale = cfg.D / min(x1 - x0, y1 - y0) ** 3
     if k >= 1e12 * scale:
-        # при k ~ 1e14·D МНК-fallback молча искажает реакции на десятки
-        # процентов — жёсткий отказ вместо тихой деградации
+        # при k ~ 1e14·D матрица теряет положительную определённость, и
+        # спектральная ступень каскада возвращает ПРОЕКЦИЮ: реакции искажаются
+        # на десятки процентов. Жёсткий отказ вместо деградации (в v0.8.0
+        # деградация ещё и громкая, но результат от этого не становится верным)
         raise CaseError(
             f"supports.stiffness = {k:.3g} ≥ 1e12·D/a³ — матрица теряет "
-            "положительную определённость, МНК-fallback искажает реакции; "
+            "положительную определённость, каскад факторизации возвращает "
+            "проекцию и реакции искажаются; "
             f"жёсткая опора достигается уже при k ≈ 1e6·D/a³, "
             f"см. {_SCHEMA_DOC}#supports")
     if k >= 1e8 * scale:
         warnings.append(
             f"supports.stiffness = {k:.3g} ≥ 1e8·D/a³ — риск потери "
-            "положительной определённости (МНК-fallback, потеря точности "
-            "реакции ~1e-4); жёсткая опора достигается уже при k ≈ 1e6·D/a³")
+            "положительной определённости (каскад факторизации, потеря "
+            "точности реакции ~1e-4); жёсткая опора достигается уже при "
+            "k ≈ 1e6·D/a³")
 
 
 def _gap_field_values(spec, quad):
@@ -1484,6 +1527,7 @@ def _solve_contact(problem, cfg, dom, solver, f_values, warnings) -> Result:
                  cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
                  w_grid=cres.w_grid, warnings=tuple(warn), contact=cres,
                  delta=float(delta), w_free_max=w_free,
+                 free_overlap=mor.free_overlap(),
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
@@ -1592,7 +1636,8 @@ def _solve_contact_nonlinear(problem, cfg, dom, solver, f_values,
                  w_max=float(np.max(np.abs(nres.w_nodes))),
                  cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w_grid,
                  warnings=tuple(warn), contact=cres, delta=float(delta),
-                 w_free_max=w_free, w_max_classic=float(free.w_max_classic))
+                 w_free_max=w_free, free_overlap=mor.free_overlap(),
+                 w_max_classic=float(free.w_max_classic))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", nres.cw)
     if nres.cu is not None:                              # мембрана сошедшегося состояния
@@ -1737,6 +1782,17 @@ def _plate2_solver(problem: Problem, cfg: Config, dom, *, nonlinear_theory=None)
     if p2.load.q0 is not None:
         kw["q0"] = p2.load.q0
     cfg2 = dataclasses.replace(cfg, **kw)
+    # ОГРАДА РАЗРЕШЕНИЯ и для ВТОРОЙ пластины: у неё своя дискретизация и своя
+    # область, поэтому M ≥ N надо проверять отдельно. Прежде [plate2] с M < N
+    # проходил молча и давал w_max ~ 1e85 (аудит 0.8.0).
+    warn2: list[str] = []
+    try:
+        _check_resolution(cfg2, dom2, warn2)
+    except CaseError as e:
+        raise CaseError(str(e).replace("discretization:", "plate2.discretization:",
+                                       1)) from None
+    for w in warn2:
+        warnings.warn(f"plate2: {w}", RuntimeWarning, stacklevel=2)
     if nonlinear_theory is not None:
         from .ktn_solver import KTNSolver
 
@@ -1807,6 +1863,7 @@ def _solve_two_plates(problem, cfg, dom, solver, f_values, warnings,
                  cond=_cond_of(solver), Xg=cres.Xg, Yg=cres.Yg,
                  w_grid=cres.w_grid, warnings=tuple(warnings), contact=cres,
                  delta=delta_repr, w_free_max=w_free,
+                 free_overlap=mor.free_overlap(),
                  w_max_classic=float(np.max(np.abs(cres.w_nodes))))
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", cres.cw)
@@ -1977,6 +2034,7 @@ def _solve_two_plates_nonlinear(problem, cfg, dom, solver, warnings) -> Result:
                  cond=_cond_of(solver), Xg=Xg, Yg=Yg, w_grid=w1g,
                  warnings=tuple(warn), contact=cres, delta=delta_repr,
                  w_free_max=w_free1, w_max_classic=float(nres.w1_max),
+                 free_overlap=(mor.free_overlap() if c.force is None else None),
                  force_total=force_total, level=level_star)
     object.__setattr__(res, "_plate_ref", solver)
     object.__setattr__(res, "_c_ref", nres.cw1)

@@ -64,7 +64,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import scipy.linalg as sla
 
 from .config import Config
 from .faces import FaceParams
@@ -91,7 +90,13 @@ class _FaceBasis:
         self.Phi_v, self.Phi_vx, self.Phi_vy = Phi_v, Phi_vx, Phi_vy
         W = solver._W
         G = (Phi_v * W) @ Phi_v.T
-        self.G_chol = sla.cho_factor(0.5 * (G + G.T))
+        # КАСКАД, а не сырой Холецкий: матрица лицевой массы теряет
+        # положительную определённость на тех же p, что и матрица Ритца, и
+        # прежде эксперимент падал сырым LinAlgError LAPACK на конфигурации,
+        # которую сам пакет числит здоровой (аудит 0.8.0).
+        from .poisson import SPDFactorization
+
+        self._G_fact = SPDFactorization(0.5 * (G + G.T), label="G (лицевая масса)")
 
     def project(self, solver, cw, c_curv, extra) -> tuple[np.ndarray, np.ndarray]:
         r"""Слабое (Галёркин) лицевое поле: ``(c_v, v_узлы)`` из (9) по частям."""
@@ -103,7 +108,7 @@ class _FaceBasis:
             wy = cw @ solver._psi_y
             # ∫ c_curv Δw φ = −c_curv ∫ ∇w·∇φ  (граничный член ноль: φ=0 на ∂Ω)
             b = b - c_curv * (self.Phi_vx @ (W * wx) + self.Phi_vy @ (W * wy))
-        cv = sla.cho_solve(self.G_chol, b)
+        cv = self._G_fact.solve(b)
         return cv, cv @ self.Phi_v
 
 

@@ -14,6 +14,16 @@
    `git push origin main --tags`.
 5. GitHub → Releases → Draft new release из тега (текст из CHANGELOG).
 
+### Эталонный отчёт и его спутники
+
+`results/reference/reference_v0.8.md` и его CSV заморожены SHA-256
+(`tests/test_reference_hash.py`); оба обновляются ТОЛЬКО осознанным коммитом
+(перегенерация `scripts/run_reference.py` + новые строки хешей + обоснование
+в CHANGELOG). Отчёт ссылается на `provenance.json` рядом с собой — файл
+git-ом НЕ отслеживается намеренно (git-хеш, дата и версии сделали бы отчёт
+недетерминированным и сломали бы хеш-ворота): он появляется у того, кто
+запускает прогон локально, и в архив релиза не входит.
+
 ## DOI через Zenodo (однократная настройка + на каждый релиз)
 
 1. Однократно: zenodo.org → Log in with GitHub → GitHub-интеграция →

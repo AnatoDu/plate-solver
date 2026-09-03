@@ -1178,7 +1178,13 @@ PLATE2_MODEL_KEYS = ("theory", "E", "nu", "h", "inplane_bc")
 
 
 def _parse_plate2(data) -> Plate2Spec:
-    """Секция ``[plate2]`` (A4): bc и load обязательны, прочее — от первой."""
+    """Секция ``[plate2]`` (A4): bc и load обязательны, прочее — от первой.
+
+    ИСКЛЮЧЕНИЕ (уточнено в v0.8.0): ``[plate2.model] theory`` НЕ наследуется —
+    её умолчание ``classic``. Для нелинейной пары теорию второй пластины
+    задают явно, и она обязана совпадать с теорией первой (иначе — отказ с
+    указанием обеих теорий).
+    """
     if not isinstance(data, dict):
         _fail("plate2", data, "таблица (секция TOML)", "plate2")
     _require_keys("plate2", data, {"bc", "load", "geometry", "model",
@@ -1586,6 +1592,14 @@ def _validate_cross(p: Problem) -> None:
                       "положительную нагрузку при [contact] (МОР прижимает "
                       "пластину к основанию: при q0 ≤ 0 контакт недостижим, а "
                       "безразмерные KKT-метрики не определены)", "contact")
+        # ТОЧЕЧНАЯ сила: та же физика, но амплитуда задаётся ключом P, и до
+        # v0.8.0 ограда её не видела — P ≤ 0 давал ту же неопределённость
+        # KKT-метрик, ради которой ограда и введена
+        if p.load.type == "point" and p.load.P is not None and p.load.P <= 0.0:
+            _fail("load.P", p.load.P,
+                  "положительную силу при [contact] (МОР прижимает пластину к "
+                  "основанию: при P ≤ 0 контакт недостижим, а безразмерные "
+                  "KKT-метрики не определены)", "contact")
     if p.plate2 is not None:
         # Теория пары ЕДИНА: оба решателя строятся по теории первой пластины,
         # поэтому отличная [plate2.model] theory была бы молча потеряна.
@@ -1604,8 +1618,8 @@ def _validate_cross(p: Problem) -> None:
             inherited.append("model.orthotropy")
         if p.model.h_expr is not None:
             inherited.append("model.h_expr")
-        if p.load.thermal_moment is not None:
-            inherited.append("load.thermal_moment")
+        if p.load.thermal_moment is not None and p.load.thermal_moment != 0.0:
+            inherited.append("load.thermal_moment")   # нулевой ≡ отсутствию ключа
         if p.supports.points:
             inherited.append("supports.points")
         if inherited:
