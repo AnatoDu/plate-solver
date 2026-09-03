@@ -474,3 +474,75 @@ def test_cascade_rejects_incompatible_rhs():
         fact.solve(np.ones(A.shape[0] + 1))
     with pytest.raises(ValueError, match="несовместима"):
         fact.solve(np.ones((2, A.shape[0], 3)))
+
+
+# --------------------------------------------------------------------------- #
+#  (е) контракт симметрии: округление ПРОПУСКАЕТСЯ, содержательная — отказ
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("inplane_bc", ["immovable", "movable"])
+@pytest.mark.parametrize("kind", ["circle", "ellipse", "annulus"])
+def test_karman_newton_survives_symmetry_contract(kind, inplane_bc):
+    r"""РЕГРЕСС: кармановский Ньютон на криволинейной области СЧИТАЕТСЯ.
+
+    Касательная Кармана симметрична ПО ПОСТРОЕНИЮ (гессиан приведённой
+    энергии), но собирается квадратурой и конденсацией плоских степеней
+    свободы через псевдообращение, поэтому её численная асимметрия доходит до
+    ~1e-8 относительных на плохо обусловленных задачах. Первый вариант
+    контракта симметрии (единый порог 1e-10) принимал это за содержательную
+    асимметрию и валил ``LinAlgError`` законные постановки, которые выпуск
+    0.8.0 считал: круг/эллипс/кольцо при ``inplane_bc = movable`` (11 из 11
+    конфигураций) и тонкие криволинейные пластины при ``immovable``.
+
+    Ворота держат обе стороны контракта: округление ПРОПУСКАЕТСЯ (расчёт
+    доходит до конца), а решение совпадает с независимым — кармановским
+    Пикаром на той же сетке.
+    """
+    from plate_solver.geometry import make_annulus, make_ellipse
+    from plate_solver.membrane import KarmanPlate
+
+    dom = {"circle": lambda: make_circle(1.0),
+           "ellipse": lambda: make_ellipse(1.0, 0.6),
+           "annulus": lambda: make_annulus(1.0, 0.35)}[kind]()
+    h, P_bar = 0.05, 6.0
+    base = dict(E=1.0, h=h, nu=0.3, a=1.0, q0=P_bar * h**4, p=10, Q=120,
+                n_load_steps=2, karman_tol=1e-9, karman_max_iter=200)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FactorizationWarning)
+        newton = KarmanPlate.from_config(
+            dom, Config(**base, karman_method="newton"),
+            bc_type="clamped", inplane_bc=inplane_bc).solve_uniform()
+        picard = KarmanPlate.from_config(
+            dom, Config(**base, karman_method="picard"),
+            bc_type="clamped", inplane_bc=inplane_bc).solve_uniform()
+
+    assert np.isfinite(newton.w_max) and newton.w_max > 0.0
+    assert newton.w_max == pytest.approx(picard.w_max, rel=1e-6)
+
+
+def test_symmetry_contract_bands():
+    """Три полосы контракта: молча / громко / отказ (пороги — измеренные)."""
+    from plate_solver.poisson import ASYM_REFUSE, ASYM_ROUNDING
+
+    assert ASYM_ROUNDING < ASYM_REFUSE
+    n = 6
+    A0 = np.diag(np.arange(1.0, n + 1.0))
+    A0[0, 0] = 0.0                                  # Холецкий обязан отказать
+    scale = float(np.max(np.abs(A0)))
+
+    def probe(ratio):
+        A = A0.copy()
+        A[0, 1] += ratio * scale                    # асимметрия заданной величины
+        A[1, 0] -= 0.0
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            try:
+                SPDFactorization(A, label="полоса")
+            except np.linalg.LinAlgError as e:
+                return "отказ" if "НЕсимметрична" in str(e) else "иной отказ"
+        return ("громко" if any("асимметричен" in str(w.message) for w in rec)
+                else "молча")
+
+    assert probe(0.1 * ASYM_ROUNDING) == "молча"     # округление сборки
+    assert probe(10.0 * ASYM_ROUNDING) == "громко"   # полоса неизвестного
+    assert probe(10.0 * ASYM_REFUSE) == "отказ"      # содержательная асимметрия

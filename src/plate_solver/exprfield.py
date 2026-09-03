@@ -172,7 +172,9 @@ def _check_powers(key: str, s: str) -> None:
     целую степень прямо при разборе (аудит 0.8.0). Дерево ``ast`` строится
     БЕЗ вычислений, поэтому проверять на нём безопасно:
 
-    * ``**`` внутри ПОКАЗАТЕЛЯ другой степени — отказ (башня в любой записи);
+    * ЧИСЛОВАЯ башня — ``**`` внутри ПОКАЗАТЕЛЯ другой степени, когда весь
+      показатель числовой (в любой записи, включая скобочную) — отказ;
+      символьная башня (``x**(y**2)``) безопасна и допускается;
     * целый показатель > :data:`_MAX_POW_EXP` — отказ;
     * ЧИСЛОВАЯ степень (в основании нет ``x``/``y``) оценивается во float:
       больше :data:`_MAX_POW_DIGITS` десятичных знаков — отказ.
@@ -189,8 +191,12 @@ def _check_powers(key: str, s: str) -> None:
     pows = [n for n in ast.walk(tree)
             if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Pow)]
     for node in pows:
-        if any(isinstance(m, ast.BinOp) and isinstance(m.op, ast.Pow)
-               for m in ast.walk(node.right)):
+        nested = [m for m in ast.walk(node.right)
+                  if isinstance(m, ast.BinOp) and isinstance(m.op, ast.Pow)]
+        # ЧИСЛОВАЯ башня опасна (sympy разворачивает целое при разборе);
+        # СИМВОЛЬНАЯ (x**(y**2), 2.0**(x**2)) безвредна — sympy держит её
+        # символически, и запрещать её значило бы обеднять язык выражений
+        if nested and _numeric_value(node.right) is not None:
             raise ValueError(f"{key}: степенная башня a**b**c не допускается "
                              "(риск гигантских целых при разборе), в том числе "
                              "в скобках")

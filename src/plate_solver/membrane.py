@@ -647,9 +647,10 @@ class KarmanPlate:
         Останов — ``‖R(c)‖/‖b‖ < karman_tol`` с ФИКСИРОВАННОЙ нормировкой
         ``‖b‖`` по ПОЛНОЙ нагрузке (та же величина, что у Пикара с v0.8.0).
         ⚠️ ``karman_relax`` Ньютоном НЕ используется: длину шага задаёт
-        бэктрекинг ``α``; параметр остаётся в силе только для Пикара
-        (валидатор case-схемы его при ``karman_method="newton"`` пока
-        принимает молча — см. docs/CASE_SCHEMA.md#model).
+        бэктрекинг ``α``; параметр остаётся в силе только для Пикара, и
+        валидатор case-схемы с v0.8.0 ОТКЛОНЯЕТ его вместе с
+        ``karman_anderson`` при ``karman_method = "newton"``
+        (см. docs/CASE_SCHEMA.md#model).
         """
         b_full = self._load_vector(np.asarray(f_values, float))
         if b_extra is not None:

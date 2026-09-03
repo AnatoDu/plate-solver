@@ -60,7 +60,7 @@ class ContactResult:
     w_ktn_nodes : КТН-поправленный прогиб в узлах (None для классики).
     comp_residual : безразмерная невязка комплементарности условий Синьорини
 
-        .. math:: \max_i |r_i\,(u_i - \Delta)| \,/\, (q_0\,\Delta),
+        .. math:: \max_i |r_i\,(u_i - \Delta)| \,/\, (q_{ref}\,\Delta),
 
         где ``u`` — смещение контактной поверхности (классика: ``u = w``;
         КТН: с поправками). В точном решении ``r·(u−Δ) ≡ 0`` (либо нет
@@ -239,7 +239,7 @@ class ContactMOR:
           поверхности; классика: :math:`u = w`):
 
           .. math:: \eta_k = \max\!\Big(
-                    \frac{\max_i |r_i\,(u_i - \Delta)|}{q_0\,\Delta},\;
+                    \frac{\max_i |r_i\,(u_i - \Delta)|}{q_{ref}\,\Delta},\;
                     \frac{\max_i (u_i - \Delta)_+}{\Delta}\Big) < \mathrm{tol}.
 
           Первый член — нарушение комплементарности
@@ -322,7 +322,7 @@ class ContactMOR:
     def _kkt_residual(self, disp, r) -> float:
         r"""Безразмерная KKT-невязка Синьорини состояния (r, u(r)); Δ > 0.
 
-        .. math:: \eta = \max\Big(\frac{\max_i |r_i (u_i - \Delta)|}{q_0 \Delta},\;
+        .. math:: \eta = \max\Big(\frac{\max_i |r_i (u_i - \Delta)|}{q_{ref} \Delta},\;
                   \frac{\max_i (u_i - \Delta)_+}{\Delta}\Big)
 
         (комплементарность + проникание; см. докстринг :meth:`solve`).
@@ -335,7 +335,8 @@ class ContactMOR:
     def _complementarity(self, disp, r) -> tuple[float, float]:
         r"""Безразмерные метрики Синьорини по финальному состоянию (Δ > 0).
 
-        comp_residual = max|r·(u−Δ)| / (q0·Δ);  gap_overshoot = (max u|_{r>0} − Δ)/Δ.
+        comp_residual = max|r·(u−Δ)| / (q_ref·Δ);  gap_overshoot = (max u|_{r>0} − Δ)/Δ,
+        где q_ref = max|q| поля нагрузки (v0.8.0).
         """
         comp = float(np.max(np.abs(r * (disp - self.gap))) / (self._q_ref * self._gap_ref))
         contact = r > 0.0
@@ -487,7 +488,9 @@ class TwoPlateMOR:
     ``w_scale = max|w₁_free| + max|w₂_free|`` (свободные прогибы от
     фактических нагрузок — максимальный размах u = w₁ − w₂ без
     взаимодействия; Δ может быть нулевым — касание):
-    comp = max|r·(u−Δ)| / (q₀·w_scale), overshoot = max(u−Δ)|контакт / w_scale.
+    comp = max|r·(u−Δ)| / (q_ref·w_scale), overshoot = max(u−Δ)|контакт / w_scale,
+    где q_ref = max|q| обеих пластин (v0.8.0; прежде знаковый q₀: при q₀ < 0
+    портился знак невязки, при q₀ = 0 получался NaN).
     Нормировка шага β_eff = β/(gain₁+gain₂) отдельна — по теореме 4
     gain берётся от ЕДИНИЧНОЙ нагрузки (оценка ‖G₁+G₂‖).
     """

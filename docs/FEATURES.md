@@ -208,10 +208,10 @@ tests/test_doc_matrix.py).
 | geometry | `circle_expr` | API.md | test_geometry_registry.py |
 | geometry | `ellipse_expr` | API.md | geometry.py |
 | geometry | `make_L` | API.md, NOTES.md, README.md | run_clamped_lshape.py, run_ktn.py, run_lshape_contact.py |
-| geometry | `make_annulus` | API.md | test_geometry_registry.py, test_multiply_connected.py, test_soft_hinge_ktn.py |
+| geometry | `make_annulus` | API.md | test_factorization.py, test_geometry_registry.py, test_multiply_connected.py |
 | geometry | `make_circle` | API.md, CASE_SCHEMA.md | 01_circle_api.ipynb, 06_theory_comparison.ipynb, 07_theory_ladder.ipynb |
 | geometry | `make_compose` | API.md | test_geometry_registry.py |
-| geometry | `make_ellipse` | API.md | test_diagnostics.py, test_ellipse.py, test_soft_hinge_ktn.py |
+| geometry | `make_ellipse` | API.md | test_diagnostics.py, test_ellipse.py, test_factorization.py |
 | geometry | `make_plate_with_hole` | API.md | test_multiply_connected.py |
 | geometry | `make_rectangle` | API.md, NOTES.md | 09_eigen_verification.ipynb, run_ladder_rect_clamped.py, run_ladder_rect_hinge.py |
 | geometry | `r_and` | ALGORITHMS.md, API.md, ARCHITECTURE.md | test_cli.py, test_contact.py, test_contact_nonlinear.py |

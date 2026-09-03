@@ -71,24 +71,23 @@ def test_notebook_outputs_are_current(nb_path, tmp_path):
     number = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
     def numbers(nb):
-        out = []
-        for cell in nb["cells"]:
-            for o in cell.get("outputs", []):
-                if o.get("output_type") == "stream":
-                    text = volatile.sub("", "".join(o.get("text", [])))
-                    out.append(number.findall(text))
-        return out
+        # ВСЕ потоковые выводы склеиваются в один поток: Jupyter объединяет
+        # подряд идущие print'ы в одну запись НЕДЕТЕРМИНИРОВАННО (по таймингу
+        # iopub), поэтому сравнивать их поштучно нельзя — под нагрузкой ворота
+        # краснели при бит-в-бит одинаковых числах (регрессия волны 0.8.0)
+        text = "".join("".join(o.get("text", []))
+                       for cell in nb["cells"] for o in cell.get("outputs", [])
+                       if o.get("output_type") == "stream")
+        return number.findall(volatile.sub("", text))
 
     a, b = numbers(stored), numbers(fresh)
-    assert len(a) == len(b), f"{nb_path.name}: изменилось число текстовых выводов"
-    for old, new in zip(a, b, strict=True):
-        assert len(old) == len(new), (
-            f"{nb_path.name}: изменился состав вывода — перезапустите ноутбук\n"
-            f"было: {old[:12]}\nстало: {new[:12]}")
-        for o, n in zip(old, new, strict=True):
-            # сравнение ЧИСЛЕННОЕ с относительным допуском: последний знак
-            # печатного вывода зависит от BLAS и порядка суммирования, а ворота
-            # ловят СМЫСЛОВОЕ устаревание (в аудите 0.8.0 это были 40…60 %)
-            assert float(n) == pytest.approx(float(o), rel=1e-5, abs=1e-12), (
-                f"{nb_path.name}: числа сохранённого вывода устарели — "
-                f"перезапустите ноутбук ({o} → {n})")
+    assert len(a) == len(b), (
+        f"{nb_path.name}: изменился состав вывода — перезапустите ноутбук\n"
+        f"было: {a[:12]}\nстало: {b[:12]}")
+    for o, n in zip(a, b, strict=True):
+        # сравнение ЧИСЛЕННОЕ с относительным допуском: последний знак
+        # печатного вывода зависит от BLAS и порядка суммирования, а ворота
+        # ловят СМЫСЛОВОЕ устаревание (в аудите 0.8.0 это были 40…60 %)
+        assert float(n) == pytest.approx(float(o), rel=1e-5, abs=1e-12), (
+            f"{nb_path.name}: числа сохранённого вывода устарели — "
+            f"перезапустите ноутбук ({o} → {n})")
