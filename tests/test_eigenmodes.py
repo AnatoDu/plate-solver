@@ -220,7 +220,11 @@ def test_vibration_matches_symmetric_definite_solver(dom, bc, Q, E):
     K, M = _bending_stiffness(plate), _mass_matrix(plate, 1.0)
     w2 = natural_frequencies(plate, rho_h=1.0, n_modes=4).values**2
     ref = np.sort(sla.eigh(K, M, eigvals_only=True))[:4]
-    assert np.max(np.abs(w2 - ref) / ref) < 1e-9
+    # порог с запасом на ИНОЙ BLAS: сравниваются РАЗНЫЕ маршруты LAPACK
+    # (пучок пакета против sla.eigh), измерено 3.7e-11 — запас 270×;
+    # смысловую поломку тракта (иные моды, иная нормировка) ловит с тем же
+    # успехом, она даёт расхождение порядка единицы
+    assert np.max(np.abs(w2 - ref) / ref) < 1e-8
 
 
 def test_vibration_overcritical_compression_raises():

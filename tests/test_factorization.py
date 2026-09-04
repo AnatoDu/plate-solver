@@ -452,7 +452,15 @@ def test_cascade_solves_matrix_rhs_on_every_stage():
             cols = np.column_stack([fact.solve(Bm[:, j]) for j in range(k)])
         seen.add(fact.fallback)
         assert X.shape == (n, k)
-        assert np.array_equal(X, cols), f"{name}: матричный путь разошёлся с поколоночным"
+        # НЕ array_equal: матричный и поколоночный пути — разные вызовы BLAS
+        # (dtrsm с nrhs = k против nrhs = 1, GEMM против GEMV), и порядок
+        # накопления у них совпадает лишь до порога блочности конкретной
+        # библиотеки. Проверено: на x86_64/OpenBLAS побитовое равенство не
+        # держится уже на ступени 1, расхождение 7e-16…1e-15. Ловимый дефект
+        # (трансляция диагональных множителей по столбцам вместо строк) даёт
+        # расхождение ПОРЯДКА ЕДИНИЦЫ, поэтому rtol = 1e-12 его не пропускает.
+        assert np.allclose(X, cols, rtol=1e-12, atol=0.0), (
+            f"{name}: матричный путь разошёлся с поколоночным")
         if healthy:                                      # здоровая SPD: точное решение
             assert fact.fallback is None
             assert np.allclose(A @ X, Bm, rtol=1e-10, atol=1e-12)

@@ -160,12 +160,20 @@ def test_support_eigen_frequencies_monotone():
     import copy
     with_sup = copy.deepcopy(base)
     with_sup["supports"] = {"points": [[0.3, 0.2]], "stiffness": 1e6 * _D}
-    e0 = dispatch.solve(Problem.from_dict(base)).eigen.values
-    e1 = dispatch.solve(Problem.from_dict(with_sup)).eigen.values
-    # зазор 1e-8 — шум eig-решателя на вырожденных парах (зависит от BLAS);
-    # существо ворот — монотонность Куранта–Фишера — сохранено
-    assert all(v1 >= v0 * (1.0 - 1e-8) for v0, v1 in zip(e0, e1, strict=False))
+    e0 = np.asarray(dispatch.solve(Problem.from_dict(base)).eigen.values, float)
+    e1 = np.asarray(dispatch.solve(Problem.from_dict(with_sup)).eigen.values, float)
+    # ЗАЗОР — шум eig-решателя на ВЫРОЖДЕННЫХ парах, и он зависит от BLAS: у
+    # круга вторая и третья моды совпадают (9372.24613…), опора лежит на узловой
+    # линии одной из них и её не поднимает, поэтому разность там — чистое
+    # округление. Измерено на этой же постановке: +9.9e-10 (Accelerate) и
+    # −4.0e-8 (OpenBLAS) ⇒ порог 1e-6 держит запас 25× к худшему. Смысловую
+    # поломку (опора СНИЖАЕТ частоту — например знак ранг-1 добавки) ворота
+    # ловят с тем же успехом: там падение процентами, а не 1e-8.
+    assert np.all(e1 >= e0 * (1.0 - 1e-6)), (e0, e1)
     assert e1[0] > e0[0] * 1.05                        # первая мода растёт заметно
+    # глобальный признак, не зависящий от вырождения пар: суммарная жёсткость
+    # выросла (ранг-1 PSD добавка ⇒ сумма собственных значений строго больше)
+    assert e1.sum() > e0.sum() * 1.05
 
 
 def test_support_symmetry():

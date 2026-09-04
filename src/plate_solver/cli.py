@@ -840,6 +840,9 @@ def main_replot(argv: list[str] | None = None) -> int:
     Каталог результата (``[output] dir``) обязан содержать ``fields.npz``;
     решатель не запускается — фигуры строятся из снимка полей (v0.6.6).
     """
+    # headless-бэкенд ДО импорта pyplot (в CI нет DISPLAY): setdefault не
+    # ломает осознанный выбор пользователя, в отличие от matplotlib.use
+    os.environ.setdefault("MPLBACKEND", "Agg")
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -881,6 +884,9 @@ def main_profile(argv: list[str] | None = None) -> int:
     Один каталог — профиль + CSV; несколько — НАЛОЖЕНИЕ (сравнение
     теорий/кейсов вдоль одного сечения). Всё из fields.npz, без пересчёта.
     """
+    # headless-бэкенд ДО импорта pyplot (в CI нет DISPLAY): setdefault не
+    # ломает осознанный выбор пользователя, в отличие от matplotlib.use
+    os.environ.setdefault("MPLBACKEND", "Agg")
     import argparse
 
     parser = argparse.ArgumentParser(

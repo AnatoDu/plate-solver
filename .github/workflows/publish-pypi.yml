@@ -18,9 +18,28 @@ jobs:
       id-token: write        # OIDC — обязательно для Trusted Publishing
     steps:
       - uses: actions/checkout@v5
+        with:
+          # публикуем ИМЕННО выпущенный тег: без ref ручной запуск
+          # (workflow_dispatch) собрал бы ветку по умолчанию
+          ref: ${{ github.event.release.tag_name || github.ref }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Версия пакета совпадает с тегом
+        # дешёвая ограда: тег vX.Y.Z обязан отвечать plate_solver.__version__,
+        # иначе на PyPI уедет не та версия, что объявлена в релизе
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys
+          src = pathlib.Path("src/plate_solver/__init__.py").read_text(encoding="utf-8")
+          version = re.search(r'__version__ = "([^"]+)"', src).group(1)
+          tag = os.environ.get("RELEASE_TAG", "")
+          print(f"версия пакета {version}, тег {tag!r}")
+          if tag and tag.lstrip("v") != version:
+              sys.exit(f"тег {tag} не отвечает версии пакета {version}")
+          PY
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
       - name: Сборка sdist + wheel
         run: |
           pip install build twine
@@ -28,3 +47,8 @@ jobs:
           twine check dist/*
       - name: Публикация на PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # ручной повтор (workflow_dispatch) не валится, если версия уже
+          # опубликована: PyPI запрещает перезалив, а до-публикация — законный
+          # сценарий (часть файлов ушла, часть нет)
+          skip-existing: true

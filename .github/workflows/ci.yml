@@ -3,10 +3,25 @@
 # см. pyproject [tool.pytest.ini_options] markers. Секретов нет — только публичное.
 name: ci
 
+# Только чтение: заданиям CI ничего писать не нужно (стиль и тесты).
+permissions:
+  contents: read
+
 on:
   push:
-    branches: [main]
+    # ветки волн аудита тоже гоняются: красноту надо видеть ДО слияния в main,
+    # иначе первый прогон новых ног матрицы приходится на сам выкат
+    branches: [main, 'audit-*']
   pull_request:
+  # кнопка «Run workflow» на ЛЮБОЙ ветке: прогнать матрицу до слияния,
+  # не открывая PR
+  workflow_dispatch:
+
+# Новый пуш в ту же ветку отменяет предыдущий прогон (матрица из четырёх ног
+# по часу — экономия и очереди, и минут).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -27,7 +42,9 @@ jobs:
       - name: Стиль (ruff)
         run: ruff check .
       - name: Тесты (без big и fem)
-        run: pytest -m "not big and not fem" -q
+        # без -q: в pyproject addopts уже есть -q, второй ключ даёт -qq и
+        # съедает итоговую строку «N passed» — в логе CI её нужно видеть
+        run: pytest -m "not big and not fem"
 
   build:
     runs-on: ubuntu-latest

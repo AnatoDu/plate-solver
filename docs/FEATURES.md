@@ -301,7 +301,7 @@ tests/test_doc_matrix.py).
 | viz | `plot_modes` | API.md | test_eigenmodes.py |
 | viz | `plot_pair_summary` | API.md | 05_two_plates.ipynb, test_two_plates.py |
 | viz | `plot_reaction` | API.md | test_viz.py |
-| viz | `replot` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, test_cli.py, test_fields_export.py |
+| viz | `replot` | API.md, ARCHITECTURE.md, CASE_SCHEMA.md | 01_circle_api.ipynb, make_registration_kit.py, test_cli.py |
 | viz | `stress_maps` | API.md | 01_circle_api.ipynb, 03_compose_cutout.ipynb |
 | viz | `surface3d` | API.md | 01_circle_api.ipynb, 02_annulus_case.ipynb, 03_compose_cutout.ipynb |
 
