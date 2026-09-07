@@ -18,6 +18,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 import plate_solver
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,7 +90,10 @@ def test_ci_matrix_matches_declared_python_support():
     """
     import tomllib
 
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+    if not ci_path.exists():                 # архив исходников (sdist) без .github
+        pytest.skip("нет .github/workflows/ci.yml — прогон вне репозитория")
+    ci = ci_path.read_text(encoding="utf-8")
     m = re.search(r"python-version:\s*\[([^\]]+)\]", ci)
     assert m is not None, "в ci.yml не найдена матрица python-version"
     matrix = {v.strip().strip('"\'') for v in m.group(1).split(",")}

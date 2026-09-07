@@ -1,6 +1,9 @@
 # Состав sdist: документация, реестры случаев, эталон Maple,
 # лицензия и цитирование едут вместе с исходником.
-include LICENSE CITATION.cff CHANGELOG.md README.md codemeta.json CONTRIBUTING.md
+# .zenodo.json — витрина версии наравне с CITATION.cff и codemeta.json:
+# без него тест согласованности версий (tests/test_version_sync.py) не мог
+# исполниться из распакованного архива исходников (v0.8.0)
+include LICENSE CITATION.cff CHANGELOG.md README.md codemeta.json CONTRIBUTING.md .zenodo.json
 graft docs
 graft cases
 graft examples
