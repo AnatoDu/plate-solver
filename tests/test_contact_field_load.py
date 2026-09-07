@@ -110,7 +110,20 @@ def test_gain_is_operator_property_not_load_shape():
 
 
 def test_nl_gaussian_big_gap_reduction():
-    """R1: большой зазор ⇒ r ≡ 0, w = свободному нелинейному (машинно)."""
+    r"""R1: большой зазор ⇒ ``r ≡ 0``, а прогиб — свободный нелинейный.
+
+    Реакция обязана быть ТОЧНЫМ нулём (проекция ``[·]₊`` структурна), а вот
+    прогиб сравнивается между ДВУМЯ РАЗНЫМИ путями итерации: контактный тракт
+    идёт совмещённой схемой (шаг Пикара на шаг МОР), свободный — обычным
+    Пикаром до ``karman_tol``. Сойтись бит-в-бит они не обязаны: расхождение
+    имеет порядок сходимости нелинейной итерации, а не машинного эпсилон.
+    Измерено 6.0e-13 (macOS/Accelerate) и 1.06e-12 (Linux/OpenBLAS, Python
+    3.11) — прежний порог 1e-12 имел запас 1.66× и в CI отказал. Порог 1e-9
+    держит запас ~10³ к худшему измеренному и при этом на четыре порядка
+    строже собственного допуска решателя (``karman_tol = 1e-8``); смысловую
+    поломку (контактный тракт меняет решение ТАМ, ГДЕ КОНТАКТА НЕТ) он ловит
+    с огромным запасом — она даёт расхождение процентами.
+    """
     d = _nl_case(gap=1.0)
     d["contact"]["max_iter"] = 300
     d["contact"]["tol"] = 1.0e-6
@@ -118,8 +131,8 @@ def test_nl_gaussian_big_gap_reduction():
     free = copy.deepcopy(d)
     free["contact"] = {"enabled": False}
     r_free = dispatch.solve(Problem.from_dict(free))
-    assert float(np.max(r_big.contact.r_nodes)) == 0.0
-    assert abs(r_big.w_max - r_free.w_max) / r_free.w_max < 1e-12
+    assert float(np.max(r_big.contact.r_nodes)) == 0.0     # реакция — ТОЧНЫЙ ноль
+    assert abs(r_big.w_max - r_free.w_max) / r_free.w_max < 1e-9
 
 
 @pytest.mark.parametrize("theory", ["karman", "ktn_full"])
