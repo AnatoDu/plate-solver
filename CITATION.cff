@@ -27,6 +27,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.22234611
     description: Version DOI v0.7.0 (version-DOI каждого релиза минтуется Zenodo автоматически — см. Versions на странице записи)
+  - type: doi
+    value: 10.5281/zenodo.22653950
+    description: Version DOI v0.8.0
 license: MIT
 keywords:
   - пластины
